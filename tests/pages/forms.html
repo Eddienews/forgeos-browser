@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head><title>Sensitive Fields Fixture (TEST G)</title></head>
+<body>
+  <h1>Sensitive form field fixture</h1>
+  <form action="/submit" method="post">
+    <label>Username <input type="text" name="username" value="someone" /></label>
+    <label>Password <input type="password" name="password" value="hunter2s3cret" /></label>
+    <label>Card number <input type="text" name="cc_number" value="4111111111111111" autocomplete="cc-number" /></label>
+    <label>Note <input type="text" name="note" value="visible value" /></label>
+    <button type="submit">Send</button>
+  </form>
+  <script>
+    window.__fixture = 'forms';
+  </script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+{
+  "kind": "ad-domains",
+  "version": 1,
+  "notes": "Compact, curated starter subset for the laboratory prototype. Full EasyList can be dropped into lists/easylist.txt and the loader (scripts/update-lists.js) will parse and merge it. Matching is by full host or subdomain.",
+  "domains": [
+    "doubleclick.net", "googleadservices.com", "googlesyndication.com", "googlesyndication-cn.com",
+    "adnxs.com", "adsrvr.org", "adsafeprotected.com", "adform.net", "adroll.com",
+    "amazon-adsystem.com", "bidswitch.net", "casalemedia.com", "contextweb.com", "criteo.com",
+    "criteo.net", "doubleverify.com", "dotomi.com", "eyeota.net", "moatads.com",
+    "soogifcdn.com", "pubmatic.com", "openx.net", "rubiconproject.com", "gumgum.com",
+    "indexww.com", "lijit.com", "media.net", "onetag.io", "sovrn.com", "spotxchange.com",
+    "taboola.com", "outbrain.com", "revcontent.com", "zergnet.com", "sharethrough.com",
+    "mopub.com", "smartadserver.com", "teads.tv", "tremorhub.com", "undertone.com",
+    "advertising.com", "adtechus.com", "adtegrity.net", "burstnet.com", "propellerads.com",
+    "popads.net", "popcash.net", "exoclick.com", "juicyads.com", "trafficjunky.net",
+    "mgid.com", "adsterra.com", "hilltopads.net", "adbrix.com", "smartyads.com",
+    "adkernel.com", "admatic.com.tr", "adpushup.com", "adbutler.com", "advertserve.com",
+    "adsymptotic.com", "adcolony.com", "fyber.com", "inmobi.com", "vungle.com",
+    "chartboost.com", "startappservice.com", "applovin.com", "unityads.unity3d.com", "supersonicads.com",
+    "ad.gt", "pagead2.googlesyndication.com"
+  ]
+}

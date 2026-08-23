@@ -1,0 +1,12 @@
+{
+  "kind": "analytics-domains",
+  "version": 1,
+  "notes": "Domains whose primary purpose is audience analytics / usage measurement. Classified as ANALYTICS (blocked by default per policy). Subset of tracker-domains.",
+  "domains": [
+    "google-analytics.com", "googletagmanager.com", "scorecardresearch.com", "hotjar.com",
+    "mixpanel.com", "amplitude.com", "segment.io", "segment.com", "tealium.com",
+    "tiqcdn.com", "optimizely.com", "kissmetrics.com", "mouseflow.com", "inspectlet.com",
+    "fullstory.com", "logrocket.com", "sentry.io", "newrelic.com", "clarity.ms",
+    "chartbeat.com", "comscore.com", "quantserve.com", "quantcount.com", "house.grailbox.com"
+  ]
+}

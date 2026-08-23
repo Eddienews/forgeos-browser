@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+<head><title>Tracking URL Cleanup Fixture (TEST D)</title></head>
+<body>
+  <h1>Tracking parameter cleanup</h1>
+  <p>This page is served with tracking parameters and the navigation must be
+     rewritten to strip them.</p>
+  <script>
+    window.__finalUrl = location.href;
+    window.__fixture = 'clean';
+  </script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+{
+  "kind": "tracking-parameters",
+  "version": 1,
+  "maintained_separately": true,
+  "notes": "This list is data, not code. It lives outside the application logic so it can be reviewed and updated independently (see scripts/update-lists.js and README). Only parameters that are safe to strip without changing page functionality should be added.",
+  "params": [
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "utm_id", "utm_source_platform", "utm_creative_format", "utm_creative",
+    "utm_matchtype", "utm_pubreferrer", "utm_referrer", "utm_userid",
+    "fbclid", "gclid", "gclsrc", "dclid", "msclkid", "wbraid", "gbraid",
+    "yclid", "mc_cid", "mc_eid", "igshid", "igsh", "ttclid", "twclid",
+    "twcamp", "twterm", "twsource", "oly_enc_id", "vero_id", "wt_mc",
+    "mkt_tok", "_hsenc", "_hsmi", "hsctatracking", "s_cid", "s_kwcid",
+    "li_fat_id", "ref_source", "ref_medium", "ref_campaign", "ref_content",
+    "cmpid", "cid_enc", "cjid", "external_id", "icid", "irclickid",
+    "wickedid", "soc_src", "soc_trk", "spm", "scm", "mtm_source",
+    "mtm_medium", "mtm_campaign", "mtm_keyword", "mtm_content", "mtm_cid",
+    "ml_subscriber", "ml_subscriber_hash", "pk_source", "pk_medium",
+    "pk_campaign", "pk_keyword", "pk_content", "piwik_campaign",
+    "piwik_kwd", "piwik_source", "dclid", "ck_subscriber_id", "gallery_id"
+  ]
+}

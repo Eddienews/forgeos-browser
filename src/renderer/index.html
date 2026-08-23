@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:;" />
+  <title>Forge Browser Lab</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="chrome">
+  <!-- Tab strip -->
+  <div id="tabstrip">
+    <div id="tabs"></div>
+    <button id="btn-newtab" title="New tab">＋</button>
+  </div>
+
+  <!-- Toolbar -->
+  <div id="toolbar">
+    <button id="btn-back" title="Back">←</button>
+    <button id="btn-fwd" title="Forward">→</button>
+    <button id="btn-reload" title="Reload">⟳</button>
+    <div id="addrbar">
+      <span id="sec-badge" class="badge" title="Security indicator">BLANK</span>
+      <input id="addr" type="text" spellcheck="false" placeholder="Enter address or search" autocomplete="off" />
+    </div>
+    <select id="mode-select" title="Privacy mode">
+      <option value="standard">Standard</option>
+      <option value="strict">Strict</option>
+      <option value="ephemeral">Ephemeral</option>
+    </select>
+    <label id="forget-label" title="Remove this site's cookies, storage and cache when the tab closes">
+      <input type="checkbox" id="forget-check" /> Forget on close
+    </label>
+    <button id="btn-panels" title="Privacy dashboard / agent view / logs">☰ Panels</button>
+    <button id="btn-clear" title="Clear history, cookies, site storage, cache, agent context">Clear session</button>
+  </div>
+  <div id="modemeta"></div>
+
+  <script src="ui.js"></script>
+</body>
+</html>

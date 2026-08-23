@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head><title>Fingerprint Exposure Fixture (Phase 7 study)</title></head>
+<body>
+  <h1>Fingerprinting exposure study fixture</h1>
+  <p>Records which fingerprint channels a page CAN observe. The prototype's
+     mitigations are permission-gating (Phase 15) and documented policy
+     (fingerprint.js); canvas/WebGL/font/audio entropy stays engine-dependent
+     by design and is NOT claimed as protected. See THREAT_MODEL.md.</p>
+  <script>
+    window.__fp = {
+      userAgent: navigator.userAgent,
+      platform: navigator.platform,
+      hardwareConcurrency: navigator.hardwareConcurrency,
+      deviceMemory: navigator.deviceMemory,
+      language: navigator.language,
+      languages: navigator.languages,
+      screen: { width: screen.width, height: screen.height, availWidth: screen.availWidth },
+      colorDepth: screen.colorDepth,
+      tzOffset: new Date().getTimezoneOffset(),
+      canvas: !!document.createElement('canvas').getContext,
+      webgl: !!((window.WebGLRenderingContext && document.createElement('canvas').getContext('webgl'))),
+      geolocation: 'geolocation' in navigator,
+      permissions: !!(navigator.permissions && navigator.permissions.query),
+    };
+    window.__fixture = 'fingerprint';
+  </script>
+</body>
+</html>

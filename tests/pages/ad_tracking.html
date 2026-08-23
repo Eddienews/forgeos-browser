@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head><title>Ad &amp; Tracker Fixture (TEST A)</title></head>
+<body>
+  <h1>Advertisement request fixture</h1>
+  <p>This page references real ad/tracker domains. All such requests are expected to be
+     BLOCKED at the network layer (webRequest.onBeforeRequest), so no external traffic
+     ever leaves the laboratory for these hosts.</p>
+
+  <!-- Third-party advertising (must be blocked) -->
+  <img src="https://ad.doubleclick.net/ad/fixture" onload="window.__adLoaded=1" onerror="window.__adErr=1" />
+
+  <!-- Third-party analytics (must be blocked) -->
+  <script src="https://www.google-analytics.com/ga.js" onload="window.__gaLoaded=1" onerror="window.__gaErr=1"></script>
+
+  <!-- First-party resource (must be allowed) -->
+  <img src="/ok.png" onload="window.__okLoaded=1" onerror="window.__okErr=1" />
+
+  <script>
+    // Marker set by the test harness after load:
+    window.__fixture = 'ad_tracking';
+  </script>
+</body>
+</html>

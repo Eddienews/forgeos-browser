@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:;" />
+  <title>Forge — Control Center</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="panel">
+  <header>
+    <h1>FORGE PRIVACY &amp; AGENT</h1>
+    <span id="panel-mode" class="badge">standard</span>
+  </header>
+
+  <nav id="panel-nav">
+    <button data-sec="privacy" class="active">Privacy</button>
+    <button data-sec="agent">Agent view</button>
+    <button data-sec="events">Event log</button>
+    <button data-sec="downloads">Downloads</button>
+    <button data-sec="demo">Demo agent</button>
+  </nav>
+
+  <!-- Privacy dashboard (Phase 14/22) -->
+  <section id="sec-privacy" class="sec">
+    <div class="kv">
+      <span class="lbl">This page — ads blocked</span><span id="p-ads" class="val">0</span>
+      <span class="lbl">This page — trackers blocked</span><span id="p-trackers" class="val">0</span>
+      <span class="lbl">This page — third-party blocked</span><span id="p-thirdparty" class="val">0</span>
+      <span class="lbl">Third-party cookies blocked</span><span id="p-cookies" class="val">0</span>
+      <span class="lbl">Tracking parameters removed</span><span id="p-params" class="val">0</span>
+      <span class="lbl">Prompt injection</span><span id="p-injection" class="val">None</span>
+      <span class="lbl">Site storage</span><span id="p-storage" class="val">First-party only</span>
+      <span class="lbl">Agent access</span><span id="p-agent" class="val">Read-only (gated)</span>
+    </div>
+    <details>
+      <summary>Permission &amp; fingerprint posture (Phase 7/15)</summary>
+      <pre id="p-perms"></pre>
+    </details>
+  </section>
+
+  <!-- Agent view (Phase 8/10) -->
+  <section id="sec-agent" class="sec hidden">
+    <div class="kv small">
+      <span class="lbl">URL</span><span id="a-url" class="val mono">—</span>
+      <span class="lbl">Title</span><span id="a-title" class="val">—</span>
+      <span class="lbl">Boundary</span><span id="a-boundary" class="val">UNTRUSTED</span>
+      <span class="lbl">Instruction authority</span><span id="a-auth" class="val">NONE</span>
+      <span class="lbl">Injection scan</span><span id="a-scan" class="val">—</span>
+    </div>
+    <h2>Structured content (always untrusted data)</h2>
+    <pre id="a-json" class="json">(no page loaded yet)</pre>
+  </section>
+
+  <!-- Event log (Phase 23) -->
+  <section id="sec-events" class="sec hidden">
+    <pre id="e-log" class="log">(no events)</pre>
+  </section>
+
+  <!-- Downloads (Phase 13) -->
+  <section id="sec-downloads" class="sec hidden">
+    <table id="d-table">
+      <thead><tr><th>file</th><th>source</th><th>size</th><th>type</th><th>state</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="note">Downloads go to <code>ForgeBrowserLab/downloads/</code>. Nothing is ever executed automatically.</p>
+  </section>
+
+  <!-- Mock agent demo (Phase 25) -->
+  <section id="sec-demo" class="sec hidden">
+    <p class="note">A scripted mock agent driving the internal interface. Every action passes the permission gate.</p>
+    <div class="demo-actions">
+      <button data-act="read">read_page()</button>
+      <button data-act="links">get_links()</button>
+      <button data-act="click">click(link #1)</button>
+      <button data-act="submit">SUBMIT_FORM</button>
+      <button data-act="upload">UPLOAD_FILE</button>
+      <button data-act="password">ENTER_PASSWORD</button>
+      <button data-act="purchase">PURCHASE</button>
+    </div>
+    <pre id="d-out" class="json">(run an action)</pre>
+  </section>
+
+  <script src="panels.js"></script>
+</body>
+</html>

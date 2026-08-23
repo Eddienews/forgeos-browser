@@ -1,0 +1,17 @@
+{
+  "kind": "tracking-cookies",
+  "version": 1,
+  "notes": "Cookie name patterns for known tracking cookies (first-party and third-party). 'prefix*' means a name prefix match. Matched cookies are blocked even when they arrive on a first-party response.",
+  "names": [
+    "_ga", "_ga_*", "_gid", "_gat", "_gat_*", "_gcl_au", "_gcl_aw", "_gcl_dc", "_gcl_gs", "_gcl_*",
+    "_fbp", "_fbc", "_fb*", "AMP_TOKEN", "_gaexp", "_opt_*", "__utm*", "_utma", "_utmb", "_utmc",
+    "_utmt", "_utmv", "_utmz", "_hj*", "_hjid", "_hkid", "_mkto_trk", "_s*", "_scid", "_scid_r",
+    "__zlcmid", "_pin_unauth", "_pinterest_*", "_uetsid", "_uetvid", "lidc", "bcookie", "bscookie",
+    "_sp_id*", "_sp_ses*", "_mkto_*", "intercom-*", "intercom-id-*", "intercom-session-*",
+    "hubspotutk", "__hssc", "__hssrc", "__hstc", "_hssc", "mp_*", "ajs_*", "ajs_anonymous_id",
+    "amplitude_*", "sentry_*", "sentryReplaySession", "fs_*", "hotjar_*", "Inspectlet*",
+    "__storejs_*", "klaviyo", "klaviyo_*", "NID", "1P_JAR", "CONSENT", "SNID", "SIDCC",
+    "IDE", "DSID", "ANID", "AID", "TAID", "_gid_*", "_gaexp_*", "gf_*", "NewUser1", "pixel_*",
+    "wd", "reg_fb_*", "mc_*", "_guil*", "_ch*", "hubspot*"
+  ]
+}

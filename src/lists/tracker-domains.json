@@ -1,0 +1,26 @@
+{
+  "kind": "tracker-domains",
+  "version": 1,
+  "notes": "Compact, curated starter subset. Cross-site trackers and analytics endpoints. Full EasyPrivacy can be merged via scripts/update-lists.js.",
+  "domains": [
+    "google-analytics.com", "googletagmanager.com", "googletagservices.com", "googlesyndication.com",
+    "scorecardresearch.com", "quantserve.com", "quantcount.com", "chartbeat.com", "comscore.com",
+    "hotjar.com", "mixpanel.com", "amplitude.com", "segment.io", "segment.com",
+    "tealium.com", "tiqcdn.com", "optimizely.com", "kissmetrics.com", "mouseflow.com",
+    "inspectlet.com", "fullstory.com", "logrocket.com", "sentry.io", "newrelic.com",
+    "clarity.ms", "bat.bing.com", "adservice.google.com", "analytics.twitter.com",
+    "ads-twitter.com", "static.ads-twitter.com", "analytics.yahoo.com", "advertising.yahoo.com",
+    "gemini.yahoo.com", "pixel.quantserve.com", "connect.facebook.net", "staticxx.facebook.com",
+    "an.facebook.com", "analytics.pinterest.com", "ct.pinterest.com", "ads.linkedin.com",
+    "analytics.tiktok.com", "ads.tiktok.com", "app-measurement.com", "safeframe.googlesyndication.com",
+    "mxpnl.com", "cdn.mxpnl.com",
+    "tapad.com", "addthis.com", "addthisedge.com", "disqusads.com", "bluekai.com",
+    "demdex.net", "omtrdc.net", "agkn.com", "rlcdn.com", "mathtag.com",
+    "2mdn.net", "flashtalking.com", "everesttech.net", "everestjs.net", "exelator.com",
+    "mediamath.com", "krxd.net", "moatads.com", "adsymptotic.com", "adroll.com",
+    "criteo.com", "criteo.net", "taboola.com", "outbrain.com", "revcontent.com",
+    "mgid.com", "adnxs.com", "adsrvr.org", "pubmatic.com", "openx.net",
+    "rubiconproject.com", "casalemedia.com", "contextweb.com", "bidswitch.net", "adform.net",
+    "smartadserver.com", "1rx.io", "adsrvr.org", "zedo.com", "zogzog.com"
+  ]
+}
