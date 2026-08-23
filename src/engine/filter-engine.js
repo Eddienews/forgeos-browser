@@ -92,15 +92,15 @@ class ABPRule {
     }
   }
 
-  matchesUrl(url, hostname, resourceType) {
+  matchesUrl(url, hostname, resourceType, urlLower) {
     switch (this.kind) {
       case 'hostname':
         return hostMatches(hostname, this.host) &&
           (this.path === '' || url.includes(this.host + '/' + this.path));
       case 'prefix-url':
-        return url.toLowerCase().startsWith(this.body.toLowerCase());
+        return (urlLower || url.toLowerCase()).startsWith(this.body);
       case 'substring':
-        return url.toLowerCase().includes(this.body.toLowerCase());
+        return (urlLower || url.toLowerCase()).includes(this.body);
       case 'regexp':
         return this.regex.test(url);
       default:
@@ -138,12 +138,44 @@ function parseOptions(str) {
 /**
  * Compile a list of filter-list lines (array of strings) into an engine.
  * Cosmetic/comment lines are counted and skipped.
+ *
+ * Performance: rules are indexed by an anchor token so a request only tests
+ * the tiny subset of rules that could possibly match it, instead of scanning
+ * all ~110k lines per request.
  */
 function compileFilterList(lines, { source = 'inline' } = {}) {
   const blocks = [];
   const exceptions = [];
+  const index = new Map(); // anchor -> rule[]
   let cosmeticSkipped = 0;
   let commentSkipped = 0;
+
+  // Extract candidate anchors from a rule body: the longest run of
+  // word characters (letters/digits), lowercased. Rules without any
+  // word char go to the always-check bucket.
+  function anchorsFor(body) {
+    const tokens = String(body).toLowerCase().match(/[a-z0-9]{3,}/g);
+    if (!tokens || !tokens.length) return [];
+    // longest token first — best discrimination
+    return [...new Set(tokens)].sort((a, b) => b.length - a.length).slice(0, 3);
+  }
+
+  function addRule(rule, isException) {
+    rule.isException = isException === true;
+    const anchors = rule.kind === 'hostname'
+      ? [] // hostname rules are handled by their own fast path below
+      : anchorsFor(rule.body);
+    if (!anchors.length) {
+      rule._alwaysCheck = true;
+      return;
+    }
+    for (const a of anchors) {
+      if (!index.has(a)) index.set(a, []);
+      index.get(a).push(rule);
+    }
+    rule._anchors = anchors;
+  }
+
   for (const rawLine of lines) {
     const line = rawLine.replace(/\r/g, '').trim();
     if (!line) continue;
@@ -152,32 +184,74 @@ function compileFilterList(lines, { source = 'inline' } = {}) {
     if (line.includes('##') || line.includes('#@#') || line.includes('#?#') ||
         line.includes('$#') || line.endsWith('#$#')) { cosmeticSkipped++; continue; }
     if (line.startsWith('@@')) {
-      exceptions.push(parseRule(line.slice(2), true));
+      const r = parseRule(line.slice(2), true);
+      addRule(r, true);
+      exceptions.push(r);
     } else {
-      blocks.push(parseRule(line, false));
+      const r = parseRule(line, false);
+      addRule(r, false);
+      blocks.push(r);
     }
   }
   return {
     source,
     blocks,
     exceptions,
+    index,
     cosmeticSkipped,
     commentSkipped,
+
     matches(url, hostname, resourceType, tabHost) {
-      // ABP semantics: exceptions are evaluated before blocks and win.
-      for (const e of exceptions) {
-        if (e.matchesUrl(url, hostname, resourceType) && domainChecks(e, tabHost)) {
-          return { matched: true, kind: 'exception', rule: e.raw };
-        }
+      // Candidate selection via suffix trie (built once at compile time):
+      //  - hostname rules (~95%): O(labels) trie walk collects all rules
+      //    whose ||host^ is a suffix of this request's hostname.
+      //  - non-hostname rules (~5%): small always-scan bucket.
+      if (!this._trie) {
+        const node = { children: new Map(), rules: [] };
+        const insert = (rule) => {
+          let cur = node;
+          for (const lab of String(rule.host).split('.').reverse()) {
+            if (!cur.children.has(lab)) cur.children.set(lab, { children: new Map(), rules: [] });
+            cur = cur.children.get(lab);
+          }
+          cur.rules.push(rule);
+        };
+        for (const b of blocks) if (b.kind === 'hostname') insert(b);
+        for (const e of exceptions) if (e.kind === 'hostname') insert(e);
+        this._trie = node;
       }
-      for (const b of blocks) {
-        if (!b.matchesUrl(url, hostname, resourceType)) continue;
+
+      const candidates = [];
+      // Walk the trie with the request's labels, reversed.
+      let cur = this._trie;
+      const labels = hostname.split('.').reverse();
+      for (const r of cur.rules) candidates.push(r);
+      for (const lab of labels) {
+        cur = cur.children && cur.children.get(lab);
+        if (!cur) break;
+        for (const r of cur.rules) candidates.push(r);
+      }
+      for (const r of blocks) if (r.kind !== 'hostname') candidates.push(r);
+      for (const r of exceptions) if (r.kind !== 'hostname') candidates.push(r);
+
+      // ABP semantics: exceptions first and win. Precompute lowercase URL
+      // once for the substring bucket (was 4.8k toLowerCase() per request).
+      const urlLower = url.toLowerCase();
+      for (const e of candidates) {
+        if (!e.isException) continue;
+        if (!e.matchesUrl(url, hostname, resourceType, urlLower)) continue;
+        if (!domainChecks(e, tabHost)) continue;
+        return { matched: true, kind: 'exception', rule: e.raw, ruleKind: e.kind };
+      }
+      for (const b of candidates) {
+        if (b.isException) continue;
+        if (!b.matchesUrl(url, hostname, resourceType, urlLower)) continue;
         if (!domainChecks(b, tabHost)) continue;
-        if (b.opts.thirdParty && tabHost && isSameHost(hostname, tabHost)) continue; // $third-party: same origin exempt
-        if (b.opts.firstParty && (!tabHost || !isSameHost(hostname, tabHost))) continue; // $first-party: cross-origin exempt
-        return { matched: true, kind: 'block', rule: b.raw };
+        if (b.opts.thirdParty && tabHost && isSameHost(hostname, tabHost)) continue;
+        if (b.opts.firstParty && (!tabHost || !isSameHost(hostname, tabHost))) continue;
+        return { matched: true, kind: 'block', rule: b.raw, ruleKind: b.kind };
       }
-      return { matched: false, kind: null, rule: null };
+      return { matched: false, kind: null, rule: null, ruleKind: null };
     },
   };
 }
@@ -197,8 +271,12 @@ function parseRule(rest, isException) {
   if (rest.startsWith('|')) {
     return new ABPRule('prefix-url', rest.slice(1).replace(/\^/g, '').toLowerCase(), opts, (isException ? '@@' : '') + rest);
   }
-  if (rest.startsWith('/') && rest.lastIndexOf('/') > 0) {
-    const body = rest.slice(1, rest.lastIndexOf('/'));
+  if (rest.startsWith('/') && rest.endsWith('/') && rest.length > 2) {
+    // True ABP regex rule: the WHOLE body is wrapped in slashes
+    // (/pattern/). A leading slash alone (/path) or an embedded slash
+    // (/a/?ad=) is a plain substring rule — treating it as a regex made
+    // '/a/?ad=' compile to /a/, matching every URL with the letter 'a'.
+    const body = rest.slice(1, -1);
     return new ABPRule('regexp', body, opts, (isException ? '@@' : '') + rest);
   }
   return new ABPRule('substring', rest.replace(/\^/g, '').toLowerCase(), opts, (isException ? '@@' : '') + rest);
@@ -260,6 +338,7 @@ class FilterEngine {
     let reason = null;
     let matchedRule = null;
     let filterDecision = null; // 'block' | 'exception' | null (ABP list verdict)
+    let matchedKind = null;   // 'hostname' | 'prefix-url' | 'substring' | 'regexp'
 
     // Filter lists are evaluated FIRST: an explicit @@ exception overrides
     // every heuristic/domain-list hit below (ABP semantics), and an explicit
@@ -269,6 +348,7 @@ class FilterEngine {
       if (m.matched) {
         matchedRule = m.rule;
         filterDecision = m.kind;
+        matchedKind = m.ruleKind;
         reason = `filter list rule: ${m.rule}`;
       }
     }
@@ -292,7 +372,7 @@ class FilterEngine {
       category = firstParty ? 'FIRST_PARTY' : 'THIRD_PARTY';
       reason = reason || (firstParty ? 'first-party resource' : 'third-party, no filter match');
     }
-    return { category, firstParty, reason, matchedRule, filterDecision };
+    return { category, firstParty, reason, matchedRule, filterDecision, matchedKind };
   }
 }
 

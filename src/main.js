@@ -14,23 +14,27 @@
  */
 'use strict';
 
-const { app, BrowserWindow, WebContentsView, ipcMain, session, dialog } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, session, dialog, shell } = require('electron');
+const fs = require('fs');
 const path = require('path');
 
 const { FilterEngine } = require('./engine/filter-engine');
 const { EventLog } = require('./engine/event-log');
 const { SessionAdapter } = require('./ext/electron-adapter');
+const { PluginRunner } = require('./ext/plugins');
 const { sessionPlanFor, clearSessionData } = require('./engine/storage-manager');
 const { MODES, isValidMode } = require('./engine/privacy-modes');
 const { analyzeAgentView, IN_PAGE_SCRIPT, readPageView } = require('./engine/agent-view');
+const { applyAppLevelHardening, PAGE_HARDENING_SCRIPT } = require('./engine/fingerprint-hardening');
 const { requestAction } = require('./engine/permissions');
 const { cleanUrlString } = require('./engine/url-cleaner');
 const { classifyField } = require('./engine/sensitive-fields');
 
-const TOOLBAR_H = 100; // must match renderer CSS toolbar height
+const TOOLBAR_H = 42; // must match renderer CSS --bar-h
 const APP_ROOT = __dirname;
 const RENDERER = path.join(APP_ROOT, 'renderer', 'index.html');
 const LOG_FILE = path.join(path.dirname(APP_ROOT), 'logs', 'forge-events.log');
+const DL_DIR = path.join(path.dirname(APP_ROOT), 'downloads');
 
 /* ------------------------------------------------------------------ */
 /* Global state                                                        */
@@ -61,6 +65,7 @@ const tabs = new Map();   // id -> tab
 const sessions = new Map(); // partitionKey -> { session, adapter }
 let activeTabId = null;
 const downloads = [];
+const plugins = new PluginRunner({ log });
 
 function getSessionFor(partitionKey) {
   if (partitionKey == null) {
@@ -107,6 +112,8 @@ function createTab(url = 'about:blank', opts = {}) {
       webSecurity: true,
       allowRunningInsecureContent: false,
       spellcheck: false,
+      // Phase 7: standardized fingerprint values injected before page scripts.
+      preload: path.join(APP_ROOT, 'page-preload.js'),
     },
   });
   const wc = view.webContents;
@@ -442,6 +449,46 @@ function registerIpc() {
     }
   });
   ipcMain.handle('forge:request-action', (_e, action, details) => approveAction(action, details || {}));
+
+  // Plugins (⬇ video / ✎ transcript): URL comes from the ACTIVE tab only;
+  // the action passes the permission gate before yt-dlp ever starts.
+  ipcMain.handle('forge:plugin', (_e, kind) => {
+    const t = activeTab();
+    if (!t || !t.url || !/^https?:/i.test(t.url)) {
+      return { state: 'error', error: 'Open a video page first.' };
+    }
+    const pageUrl = t.url;
+    return plugins.run(
+      kind === 'transcript' ? 'transcript' : 'video',
+      pageUrl,
+      async () => {
+        if (!chromeWin) return { approved: false };
+        const r = await dialog.showMessageBox(chromeWin, {
+          type: 'question',
+          title: 'Forge Browser Lab — approval required',
+          message: `Plugin wants to ${kind === 'transcript' ? 'fetch a transcript' : 'download the video'} from this page`,
+          detail: pageUrl,
+          buttons: ['Deny', 'Approve'],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+        });
+        const approved = r.response === 1 && !r.checkboxChecked;
+        log.log(approved ? 'ALLOW' : 'DENY', 'plugin approval ' + (approved ? 'granted' : 'denied'), { url: pageUrl.slice(0, 200), kind });
+        return { approved };
+      },
+      (evt) => sendToChrome('forge:plugin-event', evt)
+    );
+  });
+  ipcMain.handle('forge:plugin-cancel', (_e, jobId) => plugins.cancel(jobId));
+  // 📁 open the laboratory downloads folder in the OS file manager
+  ipcMain.handle('forge:open-downloads', async () => {
+    fs.mkdirSync(DL_DIR, { recursive: true });
+    log.log('INFO', 'open downloads folder');
+    const err = await shell.openPath(DL_DIR);
+    if (err) log.log('ERROR', 'open downloads failed', { error: String(err).slice(0, 120) });
+    return !err;
+  });
 }
 
 /** Phase 11 approval gate with a human ASK dialog (native, deterministic). */
@@ -475,10 +522,18 @@ function createChromeWindow() {
   chromeWin = new BrowserWindow({
     width: 1280,
     height: 820,
-    minWidth: 940,
-    minHeight: 620,
+    minWidth: 760,
+    minHeight: 520,
     title: 'Forge Browser Lab',
     backgroundColor: '#14110d',
+    // Compact top: native title bar hidden; the single in-page bar drags the
+    // window (see #bar { -webkit-app-region: drag }).
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#1c1813',
+      symbolColor: '#9a8f7d',
+      height: 42,
+    },
     webPreferences: {
       preload: path.join(APP_ROOT, 'preload.js'),
       contextIsolation: true,
@@ -486,7 +541,7 @@ function createChromeWindow() {
       sandbox: true,
     },
   });
-  chromeWin.setMenuBarVisibility(true);
+  chromeWin.setMenuBarVisibility(false);
   chromeWin.on('resize', layoutActiveView);
   chromeWin.on('closed', () => { chromeWin = null; });
   // Attach the loader handler BEFORE loadFile: file:// may finish loading
@@ -502,6 +557,8 @@ function createChromeWindow() {
 
 app.whenReady().then(() => {
   log.log('INFO', 'Forge Browser Lab started', { version: app.getVersion(), electron: process.versions.electron, chromium: process.versions.chrome });
+  applyAppLevelHardening(app);
+  log.log('INFO', 'fingerprint hardening applied', { ua: 'generic-chrome', screen: '1920x1080x24', hw: '8c/8gb' });
   registerIpc();
   createChromeWindow();
 

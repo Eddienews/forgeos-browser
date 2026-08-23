@@ -1,6 +1,6 @@
 /*
- * ui.js — chrome window behavior: tab strip, address bar, mode select,
- * security badge, forget-on-close, control-center panel, clear session.
+ * ui.js — chrome window behavior: single compact bar (tabs + nav + address),
+ * gear menu (mode / forget-on-close / panels / devtools / clear session).
  */
 'use strict';
 
@@ -9,6 +9,25 @@
   const $ = (id) => document.getElementById(id);
 
   let state = null;
+
+  /* ---------------- gear menu ---------------- */
+  const gearBtn = $('btn-gear');
+  const gearMenu = $('gear-menu');
+
+  function closeMenu() {
+    gearMenu.classList.add('hidden');
+    gearBtn.classList.remove('open');
+  }
+  function toggleMenu() {
+    const opening = gearMenu.classList.contains('hidden');
+    gearMenu.classList.toggle('hidden', !opening);
+    gearBtn.classList.toggle('open', opening);
+  }
+  gearBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(); });
+  document.addEventListener('click', (e) => {
+    if (!gearMenu.contains(e.target)) closeMenu();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
 
   /* ---------------- tab strip ---------------- */
   function renderTabs() {
@@ -33,33 +52,81 @@
     }
   }
 
-  /* ---------------- toolbar ---------------- */
-  function bindButtons() {
-    $('btn-newtab').addEventListener('click', () => F.newTab('about:blank'));
-    $('btn-back').addEventListener('click', () => F.back());
-    $('btn-fwd').addEventListener('click', () => F.forward());
-    $('btn-reload').addEventListener('click', () => F.reload());
-    $('btn-panels').addEventListener('click', () => F.togglePanels());
-    $('btn-clear').addEventListener('click', async () => {
-      if (window.confirm('Clear session?\nRemoves: history, cookies, site storage, cache, agent browsing context.')) {
-        await F.clearSession();
-      }
-    });
-    $('addr').addEventListener('keydown', async (e) => {
-      if (e.key === 'Enter' && $('addr').value.trim()) {
-        await F.navigate($('addr').value.trim());
-      }
-    });
-    $('mode-select').addEventListener('change', (e) => F.setMode(e.target.value));
-    $('forget-check').addEventListener('change', (e) => F.setForgetOnClose(e.target.checked));
+  /* ---------------- actions ---------------- */
+  $('btn-newtab').addEventListener('click', () => F.newTab('about:blank'));
+  $('btn-back').addEventListener('click', () => F.back());
+  $('btn-fwd').addEventListener('click', () => F.forward());
+  $('btn-reload').addEventListener('click', () => F.reload());
+  $('mi-panels').addEventListener('click', () => { closeMenu(); F.togglePanels(); });
+  $('mi-devtools').addEventListener('click', () => { closeMenu(); F.openDevTools(); });
+  $('mi-clear').addEventListener('click', async () => {
+    closeMenu();
+    if (window.confirm('Clear session?\nRemoves: history, cookies, site storage, cache, agent browsing context.')) {
+      await F.clearSession();
+    }
+  });
+  $('addr').addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter' && $('addr').value.trim()) {
+      await F.navigate($('addr').value.trim());
+    }
+  });
+  $('mode-select').addEventListener('change', (e) => {
+    F.setMode(e.target.value);
+    closeMenu();
+  });
+  $('forget-check').addEventListener('change', (e) => F.setForgetOnClose(e.target.checked));
+
+  /* ---------------- plugins: ⬇ video / ✎ transcript ---------------- */
+  const toast = document.createElement('div');
+  toast.id = 'plug-toast';
+  document.body.appendChild(toast);
+  let toastTimer = null;
+  function showToast(text, sticky = false) {
+    toast.textContent = text;
+    toast.classList.add('show');
+    if (toastTimer) clearTimeout(toastTimer);
+    if (!sticky) toastTimer = setTimeout(() => toast.classList.remove('show'), 3500);
   }
+
+  function runPlugin(kind) {
+    const t = state && state.tabs.find((x) => x.id === state.activeTabId);
+    if (!t || !/^https?:/i.test(t.url || '')) {
+      showToast('Open a video page first.');
+      return;
+    }
+    closeMenu();
+    F.plugin(kind).then((r) => {
+      if (r && r.state === 'error') showToast('⚠ ' + r.error);
+      else if (r && r.state === 'denied') showToast('✕ Action denied.');
+    }).catch((e) => showToast('⚠ ' + String(e)));
+  }
+  $('btn-dlvideo').addEventListener('click', () => runPlugin('video'));
+  $('btn-transcribe').addEventListener('click', () => runPlugin('transcript'));
+  $('btn-downloads').addEventListener('click', () => { closeMenu(); F.openDownloads(); });
+
+  F.onPluginEvent?.((evt) => {
+    if (!evt) return;
+    if (evt.state === 'progress') showToast(`⬇ ${evt.pct}%`, true);
+    else if (evt.state === 'running') showToast('⏳ working…', true);
+    else if (evt.state === 'done') showToast('✓ Saved to downloads/');
+    else if (evt.state === 'error') showToast('⚠ ' + evt.error);
+    else if (evt.state === 'denied') showToast('✕ Denied.');
+  });
+
+  const MODE_HINTS = {
+    standard: 'Ads + trackers blocked · third-party cookies blocked · persistent first-party cookies allowed.',
+    strict: '+ persistent cookies blocked · most third-party resources restricted · per-tab isolated storage.',
+    ephemeral: 'Everything temporary · no history kept · session wiped on close. Not anonymous.',
+  };
 
   function applyState(s) {
     state = s;
     renderTabs();
     const t = s.tabs.find((x) => x.id === s.activeTabId);
     if (t) {
-      $('addr').value = t.url === 'about:blank' ? '' : t.url;
+      if (document.activeElement !== $('addr')) {
+        $('addr').value = t.url === 'about:blank' ? '' : t.url;
+      }
       $('btn-back').disabled = !t.canGoBack;
       $('btn-fwd').disabled = !t.canGoForward;
       const badge = $('sec-badge');
@@ -68,10 +135,11 @@
       $('forget-check').checked = t.forget;
     }
     $('mode-select').value = s.mode;
-    $('modemeta').textContent = 'MODE — ' + s.modeSummary;
+    $('mode-hint').textContent = MODE_HINTS[s.mode] || '';
   }
 
   F.onState(applyState);
   bindButtons();
+  function bindButtons() { /* reserved for future global shortcuts */ }
   F.getState().then((s) => { if (s) applyState(s); });
 })();

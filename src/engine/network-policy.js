@@ -36,6 +36,13 @@ function applyPolicy(classification, modeId) {
 
   // Explicit filter-list verdicts are authoritative (before category policy).
   if (classification.filterDecision === 'block') {
+    // SAFETY: broad substring/regex rules from full lists must NEVER block
+    // top-level navigation — a false positive there makes whole sites fail
+    // to load (observed: EasyList '/e/cm?' blocked youtube.com mainFrame).
+    if (type === 'mainFrame' &&
+        classification.matchedKind && classification.matchedKind !== 'hostname') {
+      return { decision: 'ALLOW', reason: 'filter match is too broad for mainFrame navigation' };
+    }
     return { decision: 'BLOCK', reason: `filter list: ${classification.matchedRule || 'blocked'}` };
   }
   if (classification.filterDecision === 'exception') {

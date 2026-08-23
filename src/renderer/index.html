@@ -7,33 +7,54 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body class="chrome">
-  <!-- Tab strip -->
-  <div id="tabstrip">
+  <!-- Single compact bar: tabs + nav + address + gear -->
+  <div id="bar">
     <div id="tabs"></div>
     <button id="btn-newtab" title="New tab">＋</button>
-  </div>
 
-  <!-- Toolbar -->
-  <div id="toolbar">
-    <button id="btn-back" title="Back">←</button>
-    <button id="btn-fwd" title="Forward">→</button>
-    <button id="btn-reload" title="Reload">⟳</button>
+    <div class="nav">
+      <button id="btn-back" title="Back">←</button>
+      <button id="btn-fwd" title="Forward">→</button>
+      <button id="btn-reload" title="Reload">⟳</button>
+    </div>
+
     <div id="addrbar">
       <span id="sec-badge" class="badge" title="Security indicator">BLANK</span>
-      <input id="addr" type="text" spellcheck="false" placeholder="Enter address or search" autocomplete="off" />
+      <input id="addr" type="text" spellcheck="false" placeholder="Search or enter address" autocomplete="off" />
     </div>
-    <select id="mode-select" title="Privacy mode">
-      <option value="standard">Standard</option>
-      <option value="strict">Strict</option>
-      <option value="ephemeral">Ephemeral</option>
-    </select>
-    <label id="forget-label" title="Remove this site's cookies, storage and cache when the tab closes">
-      <input type="checkbox" id="forget-check" /> Forget on close
-    </label>
-    <button id="btn-panels" title="Privacy dashboard / agent view / logs">☰ Panels</button>
-    <button id="btn-clear" title="Clear history, cookies, site storage, cache, agent context">Clear session</button>
+
+    <div class="gear-wrap">
+      <button id="btn-dlvideo" title="Plugin: download video from this page" class="plug">⬇</button>
+      <button id="btn-transcribe" title="Plugin: fetch transcript / subtitles" class="plug">✎</button>
+      <button id="btn-downloads" title="Downloads folder" class="plug" style="font-size:14px;">📁</button>
+      <button id="btn-gear" title="Settings &amp; tools">⚙</button>
+      <div id="gear-menu" class="menu hidden">
+        <div class="menu-sec">
+          <label class="menu-row" for="mode-select">
+            <span>Privacy mode</span>
+            <select id="mode-select" title="Privacy mode">
+              <option value="standard">Standard</option>
+              <option value="strict">Strict</option>
+              <option value="ephemeral">Ephemeral</option>
+            </select>
+          </label>
+          <div id="mode-hint" class="menu-hint"></div>
+          <label class="menu-row check">
+            <input type="checkbox" id="forget-check" />
+            <span>Forget this site when closed</span>
+          </label>
+        </div>
+        <div class="menu-sep"></div>
+        <div class="menu-sec">
+          <button class="menu-row action" id="mi-panels">☰&nbsp; Privacy &amp; Agent panels</button>
+          <button class="menu-row action" id="mi-devtools">🛠&nbsp; Developer tools</button>
+          <button class="menu-row action danger" id="mi-clear">✕&nbsp; Clear session</button>
+        </div>
+      </div>
+    </div>
   </div>
-  <div id="modemeta"></div>
+
+  <div id="plug-toast"></div>
 
   <script src="ui.js"></script>
 </body>
