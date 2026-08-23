@@ -185,10 +185,15 @@ function compileFilterList(lines, { source = 'inline' } = {}) {
         line.includes('$#') || line.endsWith('#$#')) { cosmeticSkipped++; continue; }
     if (line.startsWith('@@')) {
       const r = parseRule(line.slice(2), true);
+      // Options-only rules (empty body, e.g. "$popup,domain=a|b") are context
+      // policies, not URL filters — an empty substring body would match
+      // EVERY third-party request. Skip them.
+      if (!r || (r.body === '' && r.kind !== 'regexp')) { cosmeticSkipped++; continue; }
       addRule(r, true);
       exceptions.push(r);
     } else {
       const r = parseRule(line, false);
+      if (!r || (r.body === '' && r.kind !== 'regexp')) { cosmeticSkipped++; continue; }
       addRule(r, false);
       blocks.push(r);
     }

@@ -11,7 +11,7 @@
     "test:e2e": "electron tests/e2e/main.js",
     "verify": "node scripts/verify-gates.js",
     "update-lists": "node scripts/update-lists.js",
-    "package": "electron-packager . ForgeBrowserLab --platform=win32 --arch=x64 --out=dist --overwrite --ignore=\"^/(dist|results|logs|downloads|\\.git)\" --ignore=\"^/node_modules/(?!electron)\" --icon=\"\"",
+    "package": "node scripts/package.js",
     "package:portable": "node scripts/make-portable.js"
   },
   "devDependencies": {

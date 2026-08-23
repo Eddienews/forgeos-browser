@@ -16,11 +16,16 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const DIST = path.join(ROOT, 'dist');
-const APP_DIR = path.join(DIST, 'ForgeBrowserLab-win32-x64');
-const OUT_ZIP = path.join(DIST, 'ForgeBrowserLab-portable-win32-x64.zip');
+const PLATFORM = process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';
+const ARCH = process.arch === 'arm64' ? 'arm64' : 'x64';
+const APP_DIR = path.join(DIST, `ForgeBrowserLab-${PLATFORM}-${ARCH}`);
+const OUT_ZIP = path.join(DIST, `ForgeBrowserLab-portable-${PLATFORM}-${ARCH}.zip`);
 
 function ensureAppPackaged() {
-  if (!fs.existsSync(path.join(APP_DIR, 'ForgeBrowserLab.exe'))) {
+  const exeName = PLATFORM === 'win32' ? 'ForgeBrowserLab.exe'
+    : PLATFORM === 'darwin' ? 'ForgeBrowserLab.app/Contents/MacOS/Electron'
+    : 'ForgeBrowserLab';
+  if (!fs.existsSync(path.join(APP_DIR, exeName))) {
     console.log('Packaged app not found; running electron-packager first...');
     execSync('npm run package', { cwd: ROOT, stdio: 'inherit' });
   }
@@ -51,10 +56,14 @@ Run: double-click **ForgeBrowserLab.exe**
 }
 
 function zip() {
-  if (fs.existsSync(OUT_ZIP)) fs.unlinkSync(OUT_ZIP);
-  // PowerShell Compress-Archive is always available on Windows.
-  const ps = `Compress-Archive -Path '${APP_DIR}\\*' -DestinationPath '${OUT_ZIP}' -Force`;
-  execSync(`powershell -NoProfile -Command "${ps}"`, { cwd: ROOT, stdio: 'inherit' });
+  if (PLATFORM === 'win32') {
+    if (fs.existsSync(OUT_ZIP)) fs.unlinkSync(OUT_ZIP);
+    const ps = `Compress-Archive -Path '${APP_DIR}\\*' -DestinationPath '${OUT_ZIP}' -Force`;
+    execSync(`powershell -NoProfile -Command "${ps}"`, { cwd: ROOT, stdio: 'inherit' });
+  } else {
+    // macOS / Linux: ditto preserves symlinks and metadata for .app bundles.
+    execSync(`ditto -c -k --sequesterRsrc --keepParent "${APP_DIR}" "${OUT_ZIP}"`, { cwd: ROOT, stdio: 'inherit' });
+  }
   const mb = (fs.statSync(OUT_ZIP).size / 1024 / 1024).toFixed(1);
   console.log(`\nOK: ${OUT_ZIP} (${mb} MB)`);
 }
