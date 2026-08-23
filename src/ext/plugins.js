@@ -58,6 +58,42 @@ function extractVideoId(url) {
   return null;
 }
 
+/**
+ * Flatten a WebVTT subtitle file into plain readable text:
+ * strips the header, cue numbers, timestamps, inline tags (<c>, <00:00:01.000>),
+ * duplicate consecutive lines (auto-captions roll), and metadata blocks.
+ */
+function vttToPlainText(vttPath) {
+  const raw = fs.readFileSync(vttPath, 'utf8');
+  const out = [];
+  for (let line of raw.split(/\r?\n/)) {
+    line = line.trim();
+    if (!line) continue;
+    if (/^WEBVTT/i.test(line)) continue;
+    if (/^(Kind|Language|NOTE|STYLE|REGION)\b/i.test(line)) continue;
+    if (/^\d+$/.test(line)) continue;                                   // cue number
+    if (line.includes('-->')) continue;                                 // timestamp line
+    line = line
+      .replace(/<[^>]+>/g, '')          // inline tags <c>, <00:00:01.000>
+      .replace(/\{\\[^}]*\}/g, '')      // ASS-style overrides {\an8}
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/\[\s*[_—-]*\s*\]/g, '') // [ __ ] sound-marker placeholders
+      .replace(/\[[^\]]{0,30}\]/g, (m) => /[a-z]{4}/i.test(m) ? m : ''); // [Music], [Applause]
+    if (!line) continue;
+    // Auto-captions repeat the previous block with one new word; skip dups.
+    if (out.length && out[out.length - 1] === line) continue;
+    // Rolling-caption dedup: drop short lines fully contained in the previous.
+    if (out.length && line.length <= out[out.length - 1].length + 12 &&
+        out[out.length - 1].includes(line)) continue;
+    out.push(line);
+  }
+  const text = out.join(' ').replace(/\s+/g, ' ').trim();
+  return text + '\n';
+}
+
 class PluginRunner {
   constructor({ log }) {
     this.log = log;
@@ -112,6 +148,24 @@ class PluginRunner {
 
     const child = spawn(ytdlp, args, { windowsHide: true, cwd: DOWNLOADS_DIR });
     this.jobs.set(jobId, child);
+
+    // Transcript jobs: after download, flatten the .vtt into clean .txt.
+    if (kind === 'transcript') {
+      child.on('close', (code) => {
+        if (code !== 0) return;
+        try {
+          const files = fs.readdirSync(DOWNLOADS_DIR).filter(f => f.endsWith('.vtt') &&
+            f.includes(vid));
+          for (const vtt of files) {
+            const txtPath = path.join(DOWNLOADS_DIR, vtt.replace(/\.vtt$/, '') + '.txt');
+            fs.writeFileSync(txtPath, vttToPlainText(path.join(DOWNLOADS_DIR, vtt)), 'utf8');
+          }
+          this.log.log('INFO', 'transcript converted to txt', { job: jobId });
+        } catch (e) {
+          this.log.log('ERROR', 'vtt->txt failed', { error: String(e).slice(0, 150), job: jobId });
+        }
+      });
+    }
 
     emit({ jobId, kind, state: 'running', url: pageUrl });
     let lastPct = '';
