@@ -33,8 +33,16 @@ const { classifyField } = require('./engine/sensitive-fields');
 const TOOLBAR_H = 42; // must match renderer CSS --bar-h
 const APP_ROOT = __dirname;
 const RENDERER = path.join(APP_ROOT, 'renderer', 'index.html');
-const LOG_FILE = path.join(path.dirname(APP_ROOT), 'logs', 'forge-events.log');
-const DL_DIR = path.join(path.dirname(APP_ROOT), 'downloads');
+
+// Runtime-writable dirs must live OUTSIDE the asar when packaged.
+// Dev:  <root>/logs, <root>/downloads   (APP_ROOT = <root>/src)
+// Pkg:  next to ForgeBrowserLab.exe     (__dirname ends with .../app.asar/src)
+const IS_PACKAGED = __dirname.includes('app.asar');
+const RUNTIME_BASE = IS_PACKAGED
+  ? path.dirname(process.execPath)                       // dir of the .exe
+  : path.dirname(APP_ROOT);                              // project root
+const LOG_FILE = path.join(RUNTIME_BASE, 'logs', 'forge-events.log');
+const DL_DIR = path.join(RUNTIME_BASE, 'downloads');
 
 /* ------------------------------------------------------------------ */
 /* Global state                                                        */

@@ -77,15 +77,37 @@
   $('forget-check').addEventListener('change', (e) => F.setForgetOnClose(e.target.checked));
 
   /* ---------------- plugins: ⬇ video / ✎ transcript ---------------- */
+  // Persistent progress pill (bottom-right): shows while a job runs.
+  let progressEl = null;
+  function showProgress(label) {
+    if (!progressEl) {
+      progressEl = document.createElement('div');
+      progressEl.id = 'plug-progress';
+      progressEl.innerHTML = '<span class="pp-label"></span><div class="pp-bar"><div class="pp-fill"></div></div>';
+      document.body.appendChild(progressEl);
+    }
+    progressEl.querySelector('.pp-label').textContent = label;
+    progressEl.classList.add('show');
+  }
+  function setProgress(pct, label) {
+    if (!progressEl) return;
+    if (label) progressEl.querySelector('.pp-label').textContent = label;
+    progressEl.querySelector('.pp-fill').style.width = (pct >= 0 ? pct : 8) + '%';
+    progressEl.querySelector('.pp-fill').classList.toggle('indeterminate', pct < 0);
+  }
+  function hideProgress() {
+    if (progressEl) { progressEl.classList.remove('show'); setTimeout(() => { if (progressEl) progressEl.remove(); progressEl = null; }, 400); }
+  }
+
   const toast = document.createElement('div');
   toast.id = 'plug-toast';
   document.body.appendChild(toast);
   let toastTimer = null;
-  function showToast(text, sticky = false) {
+  function showToast(text, ms = 4000) {
     toast.textContent = text;
     toast.classList.add('show');
     if (toastTimer) clearTimeout(toastTimer);
-    if (!sticky) toastTimer = setTimeout(() => toast.classList.remove('show'), 3500);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), ms);
   }
 
   function runPlugin(kind) {
@@ -95,10 +117,12 @@
       return;
     }
     closeMenu();
+    showProgress(kind === 'video' ? '⬇ Downloading video…' : '✎ Fetching transcript…');
+    setProgress(-1);
     F.plugin(kind).then((r) => {
-      if (r && r.state === 'error') showToast('⚠ ' + r.error);
-      else if (r && r.state === 'denied') showToast('✕ Action denied.');
-    }).catch((e) => showToast('⚠ ' + String(e)));
+      if (r && r.state === 'error') { hideProgress(); showToast('⚠ ' + r.error); }
+      else if (r && r.state === 'denied') { hideProgress(); showToast('✕ Action denied.'); }
+    }).catch((e) => { hideProgress(); showToast('⚠ ' + String(e)); });
   }
   $('btn-dlvideo').addEventListener('click', () => runPlugin('video'));
   $('btn-transcribe').addEventListener('click', () => runPlugin('transcript'));
@@ -106,11 +130,25 @@
 
   F.onPluginEvent?.((evt) => {
     if (!evt) return;
-    if (evt.state === 'progress') showToast(`⬇ ${evt.pct}%`, true);
-    else if (evt.state === 'running') showToast('⏳ working…', true);
-    else if (evt.state === 'done') showToast('✓ Saved to downloads/');
-    else if (evt.state === 'error') showToast('⚠ ' + evt.error);
-    else if (evt.state === 'denied') showToast('✕ Denied.');
+    switch (evt.state) {
+      case 'progress':
+        setProgress(evt.pct, `⬇ ${Math.round(evt.pct)}%`);
+        break;
+      case 'done':
+        hideProgress();
+        showToast('✓ Saved to downloads/ — click 📁 to open', 6000);
+        break;
+      case 'error':
+        hideProgress();
+        showToast('⚠ Failed: ' + evt.error, 6000);
+        break;
+      case 'denied':
+        hideProgress();
+        showToast('✕ Denied.');
+        break;
+      default:
+        break;
+    }
   });
 
   const MODE_HINTS = {

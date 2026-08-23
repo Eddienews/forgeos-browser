@@ -21,7 +21,12 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-const DOWNLOADS_DIR = path.join(__dirname, '..', '..', 'downloads'); // src/ext -> project root
+// Downloads dir: outside the asar when packaged (next to the .exe),
+// project root in dev. Mirrors main.js RUNTIME_BASE logic.
+const IS_PACKAGED = __dirname.includes('app.asar');
+const DOWNLOADS_DIR = IS_PACKAGED
+  ? path.join(path.dirname(process.execPath), 'downloads')
+  : path.join(__dirname, '..', '..', 'downloads');
 const YT_DLP_CANDIDATES = [
   process.env.FORGE_YTDLP, // optional override
   'C:/Users/eddie/AppData/Local/hermes/hermes-agent/venv/Scripts/yt-dlp.exe',
