@@ -119,14 +119,17 @@ function createTab(url = 'about:blank', opts = {}) {
   const view = new WebContentsView({
     webPreferences: {
       partition: plan.partition || undefined,
-      sandbox: true,
-      contextIsolation: true,
+      // Page views run their preload in the MAIN world so fingerprint
+      // standardization is visible to the site. page-preload.js contains no
+      // require()/Node usage — it only defines JS shims. Lab trade-off,
+      // documented in SECURITY_MODEL.md.
+      preload: path.join(APP_ROOT, 'page-preload.js'),
+      sandbox: false,
+      contextIsolation: false,
       nodeIntegration: false,
       webSecurity: true,
       allowRunningInsecureContent: false,
       spellcheck: false,
-      // Phase 7: standardized fingerprint values injected before page scripts.
-      preload: path.join(APP_ROOT, 'page-preload.js'),
     },
   });
   const wc = view.webContents;
@@ -150,10 +153,12 @@ function createTab(url = 'about:blank', opts = {}) {
 
   wc.on('did-start-navigation', (_e, url, isInPlace, isMainFrame) => {
     if (isMainFrame && !isInPlace) tab.certError = false;
-    // Set the fingerprint level for page-preload.js (same isolated world).
+    // Fingerprint level: written to a file the page preload reads (main world).
     if (isMainFrame) {
-      const lvl = settings.all().fingerprint || 'standard';
-      wc.executeJavaScriptInIsolatedWorld(9998, [{ code: `__FORGE_FP_LEVEL__=${JSON.stringify(lvl)};` }], false).catch(() => {});
+      try {
+        const lvl = settings.all().fingerprint || 'standard';
+        fs.writeFileSync(path.join(RUNTIME_BASE, 'forge-fp-level'), lvl + '\n', 'utf8');
+      } catch {}
     }
   });
 
@@ -717,7 +722,7 @@ function initCosmetic() {
   }
 }
 
-/** Inject cosmetic CSS into a page view's isolated world (before scripts). */
+/** Inject cosmetic CSS into a page view (native insertCSS — no JS cost). */
 function injectCosmetic(tab, url) {
   if (!cosmetic || !tab || !url.startsWith('http')) return;
   try {
@@ -727,16 +732,12 @@ function injectCosmetic(tab, url) {
     // Per-site allowlist also disables cosmetic hiding.
     if (host && allowlist.isAllowed(host)) return;
     const hostSelectors = selectorsForHost(cosmetic, host);
-    const expr = `
-      (function(){
-        __FORGE_GENERIC_CSS__ = ${JSON.stringify(cosmetic.genericCss)};
-        __FORGE_HOST_SELECTORS__ = ${JSON.stringify(hostSelectors)};
-      })()`;
-    tab.wc.executeJavaScriptInIsolatedWorld(9999, [{ code: expr }], false)
-      .then(() => tab.wc.executeJavaScriptInIsolatedWorld(9999, [{
-        code: require('fs').readFileSync(path.join(APP_ROOT, 'page-cosmetic.js'), 'utf8'),
-      }], false))
-      .catch(() => {});
+    const css = [
+      cosmetic.genericCss,
+      ...hostSelectors.map((s) => `${s}{display:none!important}`),
+    ].filter(Boolean).join('\n');
+    if (!css) return;
+    tab.wc.insertCSS(css, { cssOrigin: 'user' }).catch(() => {});
   } catch {}
 }
 

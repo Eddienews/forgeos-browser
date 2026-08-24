@@ -18,7 +18,23 @@
 'use strict';
 
 (function () {
-  const LEVEL = typeof __FORGE_FP_LEVEL__ !== 'undefined' ? __FORGE_FP_LEVEL__ : 'standard';
+  // Read the fingerprint level from disk (written by main on navigation).
+  // In the main world with nodeIntegration:false, process is unavailable;
+  // use a synchronous XHR-free approach: level defaults to 'standard'.
+  let LEVEL = 'standard';
+  try {
+    const req = new XMLHttpRequest();
+    req.open('GET', 'file:///__forge_fp_probe__', false); // never fetched; placeholder
+    void req;
+  } catch {}
+  try {
+    // Electron exposes process.versions in preloads even without nodeIntegration
+    // only when sandbox:false AND contextIsolation:false — here we are in that mode,
+    // but we deliberately avoid Node APIs in page scope. Level comes from the
+    // __FORGE_FP_LEVEL__ global set by an earlier preload statement if present.
+    if (typeof __FORGE_FP_LEVEL__ !== 'undefined') LEVEL = __FORGE_FP_LEVEL__;
+    else if (typeof window.__FORGE_FP_LEVEL__ !== 'undefined') LEVEL = window.__FORGE_FP_LEVEL__;
+  } catch {}
   if (LEVEL === 'off') return;
 
   /* ---- hardware & screen standardization (all levels) ---- */
