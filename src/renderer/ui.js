@@ -17,11 +17,13 @@
   function closeMenu() {
     gearMenu.classList.add('hidden');
     gearBtn.classList.remove('open');
+    F.setMenuOpen(false);
   }
   function toggleMenu() {
     const opening = gearMenu.classList.contains('hidden');
     gearMenu.classList.toggle('hidden', !opening);
     gearBtn.classList.toggle('open', opening);
+    F.setMenuOpen(opening);
   }
   gearBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(); });
   document.addEventListener('click', (e) => {

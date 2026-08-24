@@ -393,6 +393,22 @@ function registerIpc() {
   });
   ipcMain.handle('forge:close-tab', (_e, id) => closeTab(id));
   ipcMain.handle('forge:switch-tab', (_e, id) => { if (tabs.has(id)) switchTab(id); });
+ipcMain.handle('forge:set-menu-open', (_e, open) => {
+    if (!chromeWin || !activeTabId) return false;
+    const tab = tabs.get(activeTabId);
+    if (!tab) return false;
+    const { width, height } = chromeWin.getContentBounds();
+    if (open) {
+      // The gear dropdown is HTML inside the chrome window; the page's
+      // WebContentsView is a NATIVE layer that would cover it regardless of
+      // z-index. Shrink the page view so the menu renders over empty space.
+      const menuH = Math.min(480, Math.max(0, height - TOOLBAR_H));
+      tab.view.setBounds({ x: 0, y: TOOLBAR_H + menuH, width, height: Math.max(0, height - TOOLBAR_H - menuH) });
+    } else {
+      layoutActiveView();
+    }
+    return true;
+  });
   ipcMain.handle('forge:set-mode', (_e, m) => {
     if (!isValidMode(m)) return false;
     modeId = m;
@@ -581,6 +597,13 @@ function createChromeWindow() {
     },
   });
   chromeWin.setMenuBarVisibility(false);
+  // Debug: forward renderer console to the event log when FORGE_DEBUG_CONSOLE=1.
+  if (process.env.FORGE_DEBUG_CONSOLE) {
+    chromeWin.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+      if (String(message).includes('Security Warning')) return;
+      log.log(level >= 3 ? 'ERROR' : 'INFO', 'renderer console', { line, source: String(sourceId).split('/').pop(), msg: String(message).slice(0, 200) });
+    });
+  }
   chromeWin.on('resize', layoutActiveView);
   chromeWin.on('closed', () => { chromeWin = null; });
   // Attach the loader handler BEFORE loadFile: file:// may finish loading

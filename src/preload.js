@@ -31,6 +31,7 @@ const api = {
   openDownloads: () => ipcRenderer.invoke('forge:open-downloads'),
   settingsGet: () => ipcRenderer.invoke('forge:settings-get'),
   settingsSet: (patch) => ipcRenderer.invoke('forge:settings-set', patch),
+  setMenuOpen: (open) => ipcRenderer.invoke('forge:set-menu-open', open),
   ytdlpStatus: () => ipcRenderer.invoke('forge:ytdlp-status'),
   bmList: () => ipcRenderer.invoke('forge:bm-list'),
   bmAdd: (item) => ipcRenderer.invoke('forge:bm-add', item),
