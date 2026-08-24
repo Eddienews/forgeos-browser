@@ -689,9 +689,9 @@ function createChromeWindow() {
 
 app.whenReady().then(() => {
   // Initialize runtime paths now that app is ready (app.getPath is available)
-  const EventLog = require('./engine/event-log');
+  const EventLogModule = require('./engine/event-log');
   const { FilterEngine } = require('./engine/filter-engine');
-  log = new EventLog(getLogFile(), 2500);
+  log = new EventLogModule.EventLog(getLogFile(), 2500);
   engine = new FilterEngine({});
   // Load filter lists now
   try {
