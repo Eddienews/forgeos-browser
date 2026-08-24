@@ -144,6 +144,8 @@ body {
 .menu {
   position: absolute; right: 0; top: 36px; z-index: 50;
   width: 300px;
+  max-height: calc(100vh - var(--bar-h) - 12px);
+  overflow-y: auto;
   background: var(--bg2); border: 1px solid var(--line); border-radius: 8px;
   box-shadow: 0 8px 28px rgba(0,0,0,.55);
   padding: 6px;

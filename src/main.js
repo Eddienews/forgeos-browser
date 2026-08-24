@@ -408,10 +408,10 @@ ipcMain.handle('forge:set-menu-open', (_e, open) => {
     if (!tab) return false;
     const { width, height } = chromeWin.getContentBounds();
     if (open) {
-      // The gear dropdown is HTML inside the chrome window; the page's
-      // WebContentsView is a NATIVE layer that would cover it regardless of
-      // z-index. Shrink the page view so the menu renders over empty space.
-      const menuH = Math.min(480, Math.max(0, height - TOOLBAR_H));
+      // Reserve the smaller of: the menu's real height (capped by CSS to the
+      // available space) and the space below the bar. The menu itself scrolls.
+      const avail = Math.max(0, height - TOOLBAR_H - 8);
+      const menuH = Math.min(480, avail);
       tab.view.setBounds({ x: 0, y: TOOLBAR_H + menuH, width, height: Math.max(0, height - TOOLBAR_H - menuH) });
     } else {
       layoutActiveView();
