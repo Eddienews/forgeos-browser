@@ -28,10 +28,19 @@
       <button id="btn-transcribe" title="Plugin: fetch transcript / subtitles" class="plug">✎</button>
       <button id="btn-downloads" title="Downloads folder" class="plug" style="font-size:14px;">📁</button>
       <button id="btn-star" title="Bookmark this page" class="plug">★</button>
+      <div id="site-menu" class="menu hidden">
+        <div class="menu-sec">
+          <div class="menu-title" id="site-menu-host">site</div>
+          <label class="menu-row check"><input type="checkbox" id="site-allow-check" />
+            <span>Disable blocking on this site</span></label>
+          <div class="menu-hint">Requests from an allowlisted site pass unfiltered. The badge turns amber so you never forget.</div>
+        </div>
+      </div>
       <button id="btn-gear" title="Settings &amp; tools">⚙</button>
       <div id="gear-menu" class="menu hidden">
         <div class="menu-sec">
           <div class="menu-title">Privacy &amp; Security</div>
+          <div class="menu-hint" id="live-counters">This session: —</div>
           <label class="menu-row" for="mode-select">
             <span>Privacy mode</span>
             <select id="mode-select" title="Privacy mode">
@@ -71,6 +80,20 @@
               <option value="en.*">English</option>
               <option value="pt.*">Português</option>
               <option value="en.*,pt.*">EN + PT</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="menu-sep"></div>
+        <div class="menu-sec">
+          <div class="menu-title">Appearance</div>
+          <label class="menu-row" for="set-zoom">
+            <span>Page zoom</span>
+            <select id="set-zoom">
+              <option value="90">90%</option>
+              <option value="100" selected>100%</option>
+              <option value="110">110%</option>
+              <option value="125">125%</option>
             </select>
           </label>
         </div>

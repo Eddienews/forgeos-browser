@@ -29,6 +29,7 @@ const { applyAppLevelHardening, PAGE_HARDENING_SCRIPT } = require('./engine/fing
 const { requestAction } = require('./engine/permissions');
 const settings = require('./engine/settings');
 const bh = require('./engine/bookmarks-history');
+const allowlist = require('./engine/site-allowlist');
 const { cleanUrlString } = require('./engine/url-cleaner');
 const { classifyField } = require('./engine/sensitive-fields');
 
@@ -127,6 +128,8 @@ function createTab(url = 'about:blank', opts = {}) {
     },
   });
   const wc = view.webContents;
+  // Apply the persisted default zoom to every new page view.
+  try { wc.setZoomFactor((settings.all().pageZoom || 100) / 100); } catch {}
 
   const tab = {
     id, view, wc, adapter, partition: plan.partition,
@@ -347,10 +350,16 @@ function buildState() {
     const c = t.pageCounts;
     for (const k of Object.keys(totals)) totals[k] += c[k] || 0;
   }
+  // Live session-wide counters from the shared adapter (for the ⚙ menu).
+  let session = null;
+  if (activeTabId && tabs.get(activeTabId)) {
+    session = tabs.get(activeTabId).adapter.sessionTotals();
+  }
   return {
     mode: modeId,
     modeSummary: MODES[modeId].summary,
     activeTabId,
+    session,
     tabs: perTab,
     totals,
     downloads: downloads.slice(0, 20),
@@ -522,6 +531,27 @@ ipcMain.handle('forge:set-menu-open', (_e, open) => {
     let version = '';
     try { version = require('child_process').execFileSync(p, ['--version'], { timeout: 8000 }).toString().trim(); } catch {}
     return { found: true, path: p, version };
+  });
+
+  /* ---- per-site allowlist + zoom (v0.3) ---- */
+  ipcMain.handle('forge:allow-is', (_e, host) => ({ allowed: allowlist.isAllowed(host) }));
+  ipcMain.handle('forge:allow-add', (_e, host) => {
+    const r = allowlist.add(host);
+    if (r.ok) log.log('INFO', 'site allowlisted (blocking disabled)', { host: r.host });
+    return r;
+  });
+  ipcMain.handle('forge:allow-remove', (_e, host) => {
+    const r = allowlist.remove(host);
+    if (r.ok) log.log('INFO', 'site allowlist removed', { host });
+    return r;
+  });
+  ipcMain.handle('forge:set-zoom', (_e, pct) => {
+    const z = Math.max(50, Math.min(200, Number(pct) || 100));
+    settings.save({ pageZoom: z });
+    const t = activeTab();
+    if (t) t.wc.setZoomFactor(z / 100);
+    log.log('INFO', 'zoom set', { pct: z });
+    return true;
   });
 
   /* ---- bookmarks & history (local-first, v0.2) ---- */

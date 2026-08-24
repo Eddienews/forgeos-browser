@@ -25,6 +25,7 @@ const { cleanUrl } = require('../engine/url-cleaner');
 const { permissionFor } = require('../engine/fingerprint');
 const { MODES } = require('../engine/privacy-modes');
 const settings = require('../engine/settings');
+const allowlist = require('../engine/site-allowlist');
 
 const DOWNLOADS_DIR = path.join(path.dirname(path.dirname(__dirname)), 'downloads');
 
@@ -89,12 +90,17 @@ class SessionAdapter {
 
       // User toggle: ad/tracker blocking off → only classify for counters.
       const blockingEnabled = S.blockAds !== false;
+      // Per-site allowlist: first-party tab host exempt from all filtering.
+      let siteAllowed = false;
+      try {
+        const tabHost = new URL(tabUrl).hostname;
+        siteAllowed = !blockingEnabled || (tabHost && allowlist.isAllowed(tabHost));
+      } catch {}
 
       const decision = decideRequest({ url, tabUrl, resourceType, engine, modeId: self.modeId });
       const wouldBlock = decision.decision === 'BLOCK';
-      // If user disabled blocking, still block hard categories? No — respect
-      // the toggle fully; log as ALLOW-with-note so the dashboard stays honest.
-      if (wouldBlock && !blockingEnabled) {
+      // If user disabled blocking (or allowlisted the site), log honestly and pass.
+      if (wouldBlock && (!blockingEnabled || siteAllowed)) {
         self.counters.allowed++;
         callback({});
         return;
@@ -203,6 +209,9 @@ class SessionAdapter {
   setMode(modeId) { this.modeId = modeId; }
 
   resetCounters() { this.counters = { ads: 0, trackers: 0, analytics: 0, thirdParty: 0, params: 0, cookies: 0, allowed: 0 }; }
+
+  /** Session totals (never reset until clear session). */
+  sessionTotals() { return { ...this.counters }; }
 
   /** Per-page delta since last taken snapshot. */
   takeDelta() {

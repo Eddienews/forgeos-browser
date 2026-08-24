@@ -90,6 +90,7 @@ body {
 }
 .badge.ok { color: var(--green); border-color: var(--green); }
 .badge.bad { color: var(--red); border-color: var(--red); }
+.badge.friendly { color: var(--amber); border-color: var(--amber-dim); background: rgba(255,170,60,.1); cursor: pointer; }
 
 /* gear + plugin icons */
 .gear-wrap { position: relative; display: flex; gap: 2px; }

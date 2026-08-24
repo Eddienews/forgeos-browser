@@ -28,6 +28,11 @@
   gearBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(); });
   document.addEventListener('click', (e) => {
     if (!gearMenu.contains(e.target)) closeMenu();
+    const sm = document.getElementById('site-menu');
+    if (sm && !sm.classList.contains('hidden') && !sm.contains(e.target) && e.target.id !== 'sec-badge') {
+      sm.classList.add('hidden');
+      F.setMenuOpen(false);
+    }
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
 
@@ -112,6 +117,52 @@
   $('set-stripparams').addEventListener('change', (e) => set('stripTrackingParams', e.target.checked));
   $('set-fingerprint').addEventListener('change', (e) => set('fingerprint', e.target.value));
   $('set-subs').addEventListener('change', (e) => set('subtitleLangs', e.target.value));
+  $('set-zoom').addEventListener('change', (e) => F.setZoom(Number(e.target.value)));
+
+  // Live session counters, refreshed whenever state arrives.
+  function renderCounters(s) {
+    const el = $('live-counters');
+    if (!el || !s || !s.session) return;
+    const c = s.session;
+    el.textContent = `This session: ${c.ads} ads · ${c.trackers} trackers · ${c.params} params · ${c.allowed} passed`;
+  }
+
+  /* ---------------- site menu (badge click) ---------------- */
+  const siteMenu = $('site-menu');
+  const badgeEl = document.querySelector('.badge') || document.getElementById('security-badge');
+  let siteMenuHost = '';
+  function closeSiteMenu() { siteMenu.classList.add('hidden'); }
+  async function openSiteMenu() {
+    const t = state && state.tabs.find((x) => x.id === state.activeTabId);
+    if (!t || !/^https?:/i.test(t.url || '')) return;
+    try { siteMenuHost = new URL(t.url).hostname.replace(/^www\./, ''); } catch { return; }
+    $('site-menu-host').textContent = siteMenuHost;
+    const { allowed } = await F.allowIs(siteMenuHost);
+    $('site-allow-check').checked = allowed;
+    siteMenu.classList.remove('hidden');
+    F.setMenuOpen(true);
+    // keep page shrunk until both menus closed
+    setTimeout(() => { if (siteMenu.classList.contains('hidden')) F.setMenuOpen(false); }, 0);
+  }
+  if (badgeEl) {
+    badgeEl.style.cursor = 'pointer';
+    badgeEl.addEventListener('click', () => { toggleMenu(); openSiteMenu(); });
+  }
+  $('site-allow-check').addEventListener('change', async (e) => {
+    if (e.target.checked) await F.allowAdd(siteMenuHost);
+    else await F.allowRemove(siteMenuHost);
+    refreshBadge();
+  });
+  async function refreshBadge() {
+    if (!badgeEl) return;
+    const t = state && state.tabs.find((x) => x.id === state.activeTabId);
+    if (!t) return;
+    let host = '';
+    try { host = new URL(t.url).hostname.replace(/^www\./, ''); } catch {}
+    const { allowed } = host ? await F.allowIs(host) : { allowed: false };
+    badgeEl.classList.toggle('friendly', allowed);
+    badgeEl.textContent = allowed ? 'FRIENDLY' : (badgeEl.dataset.secure || 'HTTPS');
+  }
 
   // Hydrate controls from persisted settings + yt-dlp status line.
   Promise.all([F.settingsGet(), F.ytdlpStatus()]).then(([s, yt]) => {
@@ -221,12 +272,17 @@
       $('btn-back').disabled = !t.canGoBack;
       $('btn-fwd').disabled = !t.canGoForward;
       const badge = $('sec-badge');
-      badge.textContent = t.security.label;
-      badge.className = 'badge ' + (t.security.ok ? 'ok' : 'bad');
+      if (!badge.classList.contains('friendly')) {
+        badge.textContent = t.security.label;
+      }
+      badge.dataset.secure = t.security.label;
+      badge.className = 'badge ' + (t.security.ok ? 'ok' : 'bad') + (badge.classList.contains('friendly') ? ' friendly' : '');
       $('forget-check').checked = t.forget;
     }
     $('mode-select').value = s.mode;
     $('mode-hint').textContent = MODE_HINTS[s.mode] || '';
+    renderCounters(s);
+    refreshBadge();
   }
 
   F.onState(applyState);

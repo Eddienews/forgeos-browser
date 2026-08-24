@@ -31,33 +31,20 @@ Status legend: [x] done · [~] partial · [ ] planned · (v0.x) target version.
 - [x] Local event log (logs/forge-events.log), zero telemetry (tested)
 - [x] Packaging: electron-packager per-OS; portable zip; runtime dirs next to exe
 
-## v0.2 — Settings maturity (current)
+## v0.2 — Settings maturity (mostly shipped)
 
-- [ ] Rename to ForgeOS Browser everywhere (window title, product name, exe,
-      zip, UA string stays generic-Chrome)
-- [ ] ⚙ Settings sections (replacing flat list):
-  - [ ] Privacidade & Segurança:
-    - [ ] Ad/tracker blocking toggle + live counters inline
-    - [ ] Third-party cookies: Block (default) / Allow
-    - [ ] Strip tracking parameters: On/Off
-    - [ ] Fingerprint hardening: Standard / Reduced / Off
-    - [ ] Site permissions summary (camera/mic/location → Ask/Deny global)
-  - [ ] Downloads & Plugins:
-    - [x] Show downloads folder path + open button (📁 already in bar)
-    - [ ] yt-dlp status: found/not-found, path, "check for update" button
-    - [ ] Preferred subtitle languages (en, pt, both) — feeds --sub-langs
-  - [ ] Aparência:
-    - [ ] Page zoom default (90/100/110%) persisted per app
-  - [ ] Sessão & Dados:
-    - [ ] Session history list (local only) + clear individual entries
-    - [ ] Per-domain site data usage + "forget this domain" button
-  - [ ] Sobre:
-    - [ ] Version/engine info, links to THREAT_MODEL/PRIVACY_MODEL docs
-    - [ ] Explicit "Telemetry: ZERO" badge
-- [ ] Persist user settings (JSON next to exe / userData dir): mode, toggles,
-      zoom, subtitle langs — survives restarts
-- [ ] Settings apply live without restart where possible (blocking toggle =
-      policy flag; cookies/params = flags consulted by the adapter)
+- [x] Rename to ForgeOS Browser (window title done; exe/zip name kept for
+      compat — rename at next major packaging if desired)
+- [x] ⚙ Settings sections: Privacy & Security (mode, blocking toggle,
+      3p-cookies, strip-params, fingerprint level), Downloads & Plugins
+      (yt-dlp status, subtitle langs), Session (panels/devtools/clear)
+- [x] Persist user settings (forge-settings.json next to exe)
+- [x] Settings apply live without restart
+- [x] Bookmarks (★ in bar, persistent local json) + panels manager
+- [x] Session History (500-cap ring, panel list, clear individual/all)
+- [ ] Page zoom default (90/100/110%) persisted per app
+- [ ] Per-domain site data usage + "forget this domain" button
+- [ ] Live ad-block counters inline in the settings menu
 
 ## v0.3 — Blocking depth
 
