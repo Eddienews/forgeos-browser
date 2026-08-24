@@ -216,6 +216,13 @@ tr.exec td { color: var(--red); }
 .note { color: var(--muted); font-size: 11px; margin-top: 8px; }
 code { color: var(--amber); font-family: var(--mono); }
 
+.list-actions { display: flex; gap: 6px; margin: 6px 0; }
+.list-actions button {
+  background: var(--bg3); border: 1px solid var(--line); color: var(--fg);
+  border-radius: 5px; padding: 4px 10px; cursor: pointer; font-size: 12px;
+}
+.list-actions button:hover { border-color: var(--amber-dim); }
+
 .demo-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .demo-actions button {
   background: var(--bg3); border: 1px solid var(--line); color: var(--fg);

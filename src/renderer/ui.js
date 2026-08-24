@@ -76,6 +76,36 @@
   });
   $('forget-check').addEventListener('change', (e) => F.setForgetOnClose(e.target.checked));
 
+  /* ---------------- bookmark star ---------------- */
+  const star = $('btn-star');
+  async function refreshStar() {
+    const t = state && state.tabs.find((x) => x.id === state.activeTabId);
+    if (!t || !/^https?:/i.test(t.url || '')) { star.style.color = ''; star.title = 'Bookmark this page'; return; }
+    try {
+      const { bookmarked } = await F.bmIs(t.url);
+      star.style.color = bookmarked ? 'var(--amber)' : '';
+      star.title = bookmarked ? 'Bookmarked — click to remove' : 'Bookmark this page';
+    } catch {}
+  }
+  star.addEventListener('click', async () => {
+    const t = state && state.tabs.find((x) => x.id === state.activeTabId);
+    if (!t || !/^https?:/i.test(t.url || '')) return;
+    const { bookmarked } = await F.bmIs(t.url);
+    if (bookmarked) {
+      const items = await F.bmList();
+      const hit = items.find((b) => b.url === t.url);
+      if (hit) await F.bmRemove(hit.id);
+      showToast('★ Removed from bookmarks');
+    } else {
+      await F.bmAdd({ title: t.title, url: t.url });
+      showToast('★ Bookmarked', 2500);
+    }
+    refreshStar();
+  });
+  // refresh star whenever active tab changes
+  const _applyStateOrig = applyState;
+  applyState = function (s) { _applyStateOrig(s); refreshStar(); };
+
   /* ---------------- settings v0.2 ---------------- */
   const set = (key, value) => F.settingsSet({ [key]: value });
   $('set-blockads').addEventListener('change', (e) => set('blockAds', e.target.checked));
@@ -181,7 +211,7 @@
     ephemeral: 'Everything temporary · no history kept · session wiped on close. Not anonymous.',
   };
 
-  function applyState(s) {
+  let applyState = function (s) {
     state = s;
     renderTabs();
     const t = s.tabs.find((x) => x.id === s.activeTabId);

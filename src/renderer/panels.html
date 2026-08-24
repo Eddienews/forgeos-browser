@@ -15,6 +15,8 @@
   <nav id="panel-nav">
     <button data-sec="privacy" class="active">Privacy</button>
     <button data-sec="agent">Agent view</button>
+    <button data-sec="bookmarks">Bookmarks</button>
+    <button data-sec="history">History</button>
     <button data-sec="events">Event log</button>
     <button data-sec="downloads">Downloads</button>
     <button data-sec="demo">Demo agent</button>
@@ -54,6 +56,26 @@
   <!-- Event log (Phase 23) -->
   <section id="sec-events" class="sec hidden">
     <pre id="e-log" class="log">(no events)</pre>
+  </section>
+
+  <!-- Bookmarks -->
+  <section id="sec-bookmarks" class="sec hidden">
+    <div class="list-actions"><button id="bm-refresh">Refresh</button></div>
+    <table id="bm-table">
+      <thead><tr><th>title</th><th>url</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="note">Bookmarks are local-only (forge-bookmarks.json). No sync.</p>
+  </section>
+
+  <!-- History (session-scoped) -->
+  <section id="sec-history" class="sec hidden">
+    <div class="list-actions"><button id="hist-clear">Clear history</button></div>
+    <table id="h-table">
+      <thead><tr><th>when</th><th>title</th><th>url</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="note">History is session-scoped and capped at 500 entries. Cleared by "Clear session".</p>
   </section>
 
   <!-- Downloads (Phase 13) -->

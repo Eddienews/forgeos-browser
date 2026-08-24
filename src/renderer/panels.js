@@ -91,6 +91,56 @@
     }
   }
 
+  /* ---------------- bookmarks & history ---------------- */
+  function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+
+  function fmtWhen(iso) {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' +
+             d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    } catch { return ''; }
+  }
+
+  async function renderBookmarks() {
+    const body = document.querySelector('#bm-table tbody');
+    const items = await F.bmList();
+    body.innerHTML = '';
+    if (!items.length) { body.innerHTML = '<tr><td colspan="3" class="note">No bookmarks yet — press ★ in the toolbar.</td></tr>'; return; }
+    for (const b of items) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${esc(b.title)}</td><td class="mono">${esc(b.url.slice(0, 60))}</td>` +
+        `<td><button data-del="${b.id}" title="Remove">✕</button> <button data-go="${esc(b.url)}" title="Open">↗</button></td>`;
+      tr.querySelector('[data-del]').addEventListener('click', async () => { await F.bmRemove(b.id); renderBookmarks(); });
+      tr.querySelector('[data-go]').addEventListener('click', () => F.navigate(b.url));
+      body.appendChild(tr);
+    }
+  }
+  $('bm-refresh') && $('bm-refresh').addEventListener('click', renderBookmarks);
+
+  async function renderHistory() {
+    const body = document.querySelector('#h-table tbody');
+    const items = await F.histList();
+    body.innerHTML = '';
+    if (!items.length) { body.innerHTML = '<tr><td colspan="4" class="note">History is empty.</td></tr>'; return; }
+    for (const h of items) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td class="mono">${esc(fmtWhen(h.visitedAt))}</td><td>${esc(h.title)}</td>` +
+        `<td class="mono">${esc(h.url.slice(0, 55))}</td><td><button data-go="${esc(h.url)}" title="Open">↗</button></td>`;
+      tr.querySelector('[data-go]').addEventListener('click', () => F.navigate(h.url));
+      body.appendChild(tr);
+    }
+  }
+  $('hist-clear') && $('hist-clear').addEventListener('click', async () => { await F.histClear(); renderHistory(); });
+
+  // Re-render when the user opens those sections.
+  document.querySelectorAll('#panel-nav button').forEach((b) => {
+    b.addEventListener('click', () => {
+      if (b.dataset.sec === 'bookmarks') renderBookmarks();
+      if (b.dataset.sec === 'history') renderHistory();
+    });
+  });
+
   /* ---------------- mock agent demo (Phase 25) ---------------- */
   function fmt(v) {
     return JSON.stringify(v, null, 2);

@@ -28,6 +28,7 @@ const { analyzeAgentView, IN_PAGE_SCRIPT, readPageView } = require('./engine/age
 const { applyAppLevelHardening, PAGE_HARDENING_SCRIPT } = require('./engine/fingerprint-hardening');
 const { requestAction } = require('./engine/permissions');
 const settings = require('./engine/settings');
+const bh = require('./engine/bookmarks-history');
 const { cleanUrlString } = require('./engine/url-cleaner');
 const { classifyField } = require('./engine/sensitive-fields');
 
@@ -154,6 +155,7 @@ function createTab(url = 'about:blank', opts = {}) {
     tab.index = tab.history.length - 1;
     tab.pageCounts = adapter.takeDelta();
     log.log('INFO', 'navigated', { url: url.slice(0, 300), httpCode });
+    bh.addHistory({ url, title: wc.getTitle() });
     sendState();
   });
 
@@ -411,6 +413,7 @@ function registerIpc() {
       t.adapter.takeDelta();
     }
     downloads.length = 0;
+    bh.clearHistory();
     log.log('INFO', 'clear session complete', { cookiesRemoved: removed });
     sendState();
     return true;
@@ -504,6 +507,19 @@ function registerIpc() {
     try { version = require('child_process').execFileSync(p, ['--version'], { timeout: 8000 }).toString().trim(); } catch {}
     return { found: true, path: p, version };
   });
+
+  /* ---- bookmarks & history (local-first, v0.2) ---- */
+  ipcMain.handle('forge:bm-list', () => bh.listBookmarks());
+  ipcMain.handle('forge:bm-add', (_e, item) => {
+    const r = bh.addBookmark(item || {});
+    log.log(r.ok && !r.duplicate ? 'INFO' : 'ALLOW', 'bookmark added', { url: String(item?.url || '').slice(0, 200) });
+    return r;
+  });
+  ipcMain.handle('forge:bm-remove', (_e, id) => bh.removeBookmark(id));
+  ipcMain.handle('forge:bm-is', (_e, url) => ({ bookmarked: bh.isBookmarked(url) }));
+  ipcMain.handle('forge:hist-list', () => bh.listHistory());
+  ipcMain.handle('forge:hist-remove', (_e, id) => bh.removeFromHistory(id));
+  ipcMain.handle('forge:hist-clear', () => bh.clearHistory());
   // 📁 open the laboratory downloads folder in the OS file manager
   ipcMain.handle('forge:open-downloads', async () => {
     fs.mkdirSync(DL_DIR, { recursive: true });
