@@ -34,8 +34,10 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  background: var(--bg2);
-  border-bottom: 1px solid var(--line);
+  background: rgba(28, 24, 19, 0.88);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  backdrop-filter: blur(14px) saturate(1.15);
+  border-bottom: 1px solid rgba(236, 227, 212, 0.08);
   /* right padding clears the Windows titleBarOverlay (min/max/close) */
   padding-right: 148px;
   padding-left: max(8px, env(titlebar-area-x, 8px));
@@ -146,19 +148,24 @@ body {
   width: 300px;
   max-height: calc(100vh - var(--bar-h) - 12px);
   overflow-y: auto;
-  background: var(--bg2); border: 1px solid var(--line); border-radius: 8px;
-  box-shadow: 0 8px 28px rgba(0,0,0,.55);
+  /* frosted walnut glass */
+  background: rgba(28, 24, 19, 0.82);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  backdrop-filter: blur(18px) saturate(1.2);
+  border: 1px solid rgba(236, 227, 212, 0.10);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.04);
   padding: 6px;
 }
 .menu-sec { display: flex; flex-direction: column; gap: 2px; }
-.menu-sep { height: 1px; background: var(--line); margin: 6px 2px; }
+.menu-sep { height: 1px; background: rgba(236, 227, 212, 0.07); margin: 6px 2px; }
 .menu-row {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 7px 9px; border-radius: 6px; cursor: pointer;
+  padding: 7px 9px; border-radius: 7px; cursor: pointer;
   color: var(--fg); font-size: 12.5px; border: 0; background: none; width: 100%;
   text-align: left;
 }
-.menu-row:hover { background: var(--bg3); }
+.menu-row:hover { background: rgba(236, 227, 212, 0.05); }
 .menu-row.check { cursor: pointer; }
 .menu-row.check input { accent-color: var(--amber); }
 .menu-row.action { justify-content: flex-start; }
