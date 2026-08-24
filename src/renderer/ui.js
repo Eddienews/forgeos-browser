@@ -102,9 +102,6 @@
     }
     refreshStar();
   });
-  // refresh star whenever active tab changes
-  const _applyStateOrig = applyState;
-  applyState = function (s) { _applyStateOrig(s); refreshStar(); };
 
   /* ---------------- settings v0.2 ---------------- */
   const set = (key, value) => F.settingsSet({ [key]: value });
@@ -234,4 +231,9 @@
   bindButtons();
   function bindButtons() { /* reserved for future global shortcuts */ }
   F.getState().then((s) => { if (s) applyState(s); });
+
+  // Refresh the bookmark star whenever the active tab changes. Declared here,
+  // AFTER applyState exists (the star block above runs earlier in the file).
+  const _applyStateOrig = applyState;
+  applyState = function (s) { _applyStateOrig(s); refreshStar(); };
 })();
