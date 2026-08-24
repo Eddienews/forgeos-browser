@@ -3,3 +3,10 @@ logs/
 downloads/
 results/
 *.log
+
+# forge runtime artifacts
+forge-agent-token
+forge-settings.json
+forge-history.json
+forge-allowlist.json
+forge-fp-level
