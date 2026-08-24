@@ -30,6 +30,8 @@ const { requestAction } = require('./engine/permissions');
 const settings = require('./engine/settings');
 const bh = require('./engine/bookmarks-history');
 const allowlist = require('./engine/site-allowlist');
+const { compileCosmetic, selectorsForHost } = require('./engine/cosmetic-engine');
+const { startAgentApi } = require('./ext/agent-api');
 const { cleanUrlString } = require('./engine/url-cleaner');
 const { classifyField } = require('./engine/sensitive-fields');
 
@@ -148,6 +150,11 @@ function createTab(url = 'about:blank', opts = {}) {
 
   wc.on('did-start-navigation', (_e, url, isInPlace, isMainFrame) => {
     if (isMainFrame && !isInPlace) tab.certError = false;
+    // Set the fingerprint level for page-preload.js (same isolated world).
+    if (isMainFrame) {
+      const lvl = settings.all().fingerprint || 'standard';
+      wc.executeJavaScriptInIsolatedWorld(9998, [{ code: `__FORGE_FP_LEVEL__=${JSON.stringify(lvl)};` }], false).catch(() => {});
+    }
   });
 
   wc.on('did-navigate', (_e, url, httpCode) => {
@@ -159,6 +166,7 @@ function createTab(url = 'about:blank', opts = {}) {
     tab.pageCounts = adapter.takeDelta();
     log.log('INFO', 'navigated', { url: url.slice(0, 300), httpCode });
     bh.addHistory({ url, title: wc.getTitle() });
+    injectCosmetic(tab, url);
     sendState();
   });
 
@@ -654,13 +662,81 @@ app.whenReady().then(() => {
   log.log('INFO', 'fingerprint hardening applied', { ua: 'generic-chrome', screen: '1920x1080x24', hw: '8c/8gb' });
   registerIpc();
   createChromeWindow();
+  initCosmetic();
+
+  // Agent API (v0.4): localhost-only, token-gated read surface for external
+  // agents (e.g. Hermes). Reads the ACTIVE tab through the same Agent View
+  // pipeline the panels use; navigation goes through the app's own path.
+  startAgentApi({
+    port: 8647,
+    baseDir: RUNTIME_BASE,
+    log,
+    getSnapshot: () => buildState(),
+    readPage: async () => {
+      const t = activeTab();
+      if (!t) return { error: 'no active tab', untrusted: true };
+      return refreshAgentView(t); // same pipeline as the panels; marks untrusted
+    },
+    navigate: (url) => new Promise((resolve, reject) => {
+      const t = activeTab();
+      if (!t) return reject(new Error('no active tab'));
+      navigateIn(t, url);
+      resolve();
+    }),
+  }).then((api) => log.log('INFO', 'agent api listening', { url: `http://127.0.0.1:${api.port}`, tokenFile: api.tokenFile }))
+    .catch((e) => log.log('ERROR', 'agent api failed to start', { error: String(e).slice(0, 150) }));
 
   // --smoke: automated self-check on the REAL app (used by scripts/verify-gates).
   const smoke = process.argv.includes('--smoke');
   if (smoke) setTimeout(runSmoke, 3500);
 });
 
-/** Smoke: open example.com in a fresh tab, extract agent view, report, quit. */
+/* Cosmetic filtering (v0.4): compile "##" rules once at startup; inject a
+ * stylesheet into every page before its scripts run. Toggled by settings. */
+let cosmetic = null;
+function initCosmetic() {
+  try {
+    const fs = require('fs');
+    const lines = [];
+    for (const f of ['easylist.txt', 'easyprivacy.txt']) {
+      const p = path.join(RUNTIME_BASE, 'lists', f);
+      if (!fs.existsSync(p)) continue;
+      for (const l of fs.readFileSync(p, 'utf8').split('\n')) {
+        if (l.includes('##') || l.includes('#@#')) lines.push(l);
+      }
+    }
+    cosmetic = compileCosmetic(lines);
+    log.log('INFO', 'cosmetic rules compiled', cosmetic.stats);
+  } catch (e) {
+    log.log('ERROR', 'cosmetic compile failed', { error: String(e).slice(0, 150) });
+    cosmetic = { genericCss: '', byDomain: new Map(), stats: {} };
+  }
+}
+
+/** Inject cosmetic CSS into a page view's isolated world (before scripts). */
+function injectCosmetic(tab, url) {
+  if (!cosmetic || !tab || !url.startsWith('http')) return;
+  try {
+    if (settings.all().blockAds === false) return; // user toggle respected
+    let host = '';
+    try { host = new URL(url).hostname; } catch {}
+    // Per-site allowlist also disables cosmetic hiding.
+    if (host && allowlist.isAllowed(host)) return;
+    const hostSelectors = selectorsForHost(cosmetic, host);
+    const expr = `
+      (function(){
+        __FORGE_GENERIC_CSS__ = ${JSON.stringify(cosmetic.genericCss)};
+        __FORGE_HOST_SELECTORS__ = ${JSON.stringify(hostSelectors)};
+      })()`;
+    tab.wc.executeJavaScriptInIsolatedWorld(9999, [{ code: expr }], false)
+      .then(() => tab.wc.executeJavaScriptInIsolatedWorld(9999, [{
+        code: require('fs').readFileSync(path.join(APP_ROOT, 'page-cosmetic.js'), 'utf8'),
+      }], false))
+      .catch(() => {});
+  } catch {}
+}
+
+
 let smokeDone = false;
 async function runSmoke() {
   if (smokeDone) return;
