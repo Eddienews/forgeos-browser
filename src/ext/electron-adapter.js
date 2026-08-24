@@ -24,6 +24,7 @@ const { filterSetCookieHeaders } = require('../engine/cookie-policy');
 const { cleanUrl } = require('../engine/url-cleaner');
 const { permissionFor } = require('../engine/fingerprint');
 const { MODES } = require('../engine/privacy-modes');
+const settings = require('../engine/settings');
 
 const DOWNLOADS_DIR = path.join(path.dirname(path.dirname(__dirname)), 'downloads');
 
@@ -71,20 +72,34 @@ class SessionAdapter {
       const url = details.url;
       const tabUrl = details.referrer || (details.resourceType === 'mainFrame' ? url : url);
       const resourceType = details.resourceType || 'other';
+      const S = settings.all();
 
       // Phase 6: strip tracking parameters on main-frame navigations.
       if (resourceType === 'mainFrame') {
-        const cleaned = cleanUrl(url);
-        if (cleaned.changed) {
-          self.counters.params += cleaned.removed.length;
-          log.log('CLEAN', 'tracking parameter removed', { url, removed: cleaned.removed.join(','), to: cleaned.url });
-          callback({ redirectURL: cleaned.url });
-          return;
+        if (S.stripTrackingParams !== false) {
+          const cleaned = cleanUrl(url);
+          if (cleaned.changed) {
+            self.counters.params += cleaned.removed.length;
+            log.log('CLEAN', 'tracking parameter removed', { url, removed: cleaned.removed.join(','), to: cleaned.url });
+            callback({ redirectURL: cleaned.url });
+            return;
+          }
         }
       }
 
+      // User toggle: ad/tracker blocking off → only classify for counters.
+      const blockingEnabled = S.blockAds !== false;
+
       const decision = decideRequest({ url, tabUrl, resourceType, engine, modeId: self.modeId });
-      if (decision.decision === 'BLOCK') {
+      const wouldBlock = decision.decision === 'BLOCK';
+      // If user disabled blocking, still block hard categories? No — respect
+      // the toggle fully; log as ALLOW-with-note so the dashboard stays honest.
+      if (wouldBlock && !blockingEnabled) {
+        self.counters.allowed++;
+        callback({});
+        return;
+      }
+      if (wouldBlock) {
         const cat = decision.category;
         if (cat === 'ADVERTISING') self.counters.ads++;
         else if (cat === 'TRACKING') self.counters.trackers++;
@@ -102,6 +117,12 @@ class SessionAdapter {
 
     session.webRequest.onHeadersReceived({ urls: ['*://*/*'] }, (details, callback) => {
       const responseHeaders = details.responseHeaders || {};
+      const S = settings.all();
+      if (S.blockThirdPartyCookies === false) {
+        // User allowed third-party cookies: pass headers through untouched.
+        callback({ responseHeaders });
+        return;
+      }
       const res = filterSetCookieHeaders(responseHeaders, {
         requestUrl: details.url,
         tabUrl: details.referrer || details.url,

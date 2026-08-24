@@ -30,6 +30,7 @@
       <button id="btn-gear" title="Settings &amp; tools">⚙</button>
       <div id="gear-menu" class="menu hidden">
         <div class="menu-sec">
+          <div class="menu-title">Privacy &amp; Security</div>
           <label class="menu-row" for="mode-select">
             <span>Privacy mode</span>
             <select id="mode-select" title="Privacy mode">
@@ -39,19 +40,53 @@
             </select>
           </label>
           <div id="mode-hint" class="menu-hint"></div>
+          <label class="menu-row check"><input type="checkbox" id="set-blockads" checked />
+            <span>Block ads &amp; trackers</span></label>
+          <label class="menu-row check"><input type="checkbox" id="set-3pcookies" checked />
+            <span>Block third-party cookies</span></label>
+          <label class="menu-row check"><input type="checkbox" id="set-stripparams" checked />
+            <span>Strip tracking parameters</span></label>
+          <label class="menu-row" for="set-fingerprint">
+            <span>Fingerprint hardening</span>
+            <select id="set-fingerprint">
+              <option value="standard">Standard</option>
+              <option value="reduced">Reduced</option>
+              <option value="off">Off</option>
+            </select>
+          </label>
           <label class="menu-row check">
             <input type="checkbox" id="forget-check" />
             <span>Forget this site when closed</span>
           </label>
         </div>
+
         <div class="menu-sep"></div>
         <div class="menu-sec">
+          <div class="menu-title">Downloads &amp; Plugins</div>
+          <div class="menu-hint" id="ytdlp-status">yt-dlp: checking…</div>
+          <label class="menu-row" for="set-subs">
+            <span>Subtitle languages</span>
+            <select id="set-subs">
+              <option value="en.*">English</option>
+              <option value="pt.*">Português</option>
+              <option value="en.*,pt.*">EN + PT</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="menu-sep"></div>
+        <div class="menu-sec">
+          <div class="menu-title">Session</div>
           <button class="menu-row action" id="mi-panels">☰&nbsp; Privacy &amp; Agent panels</button>
           <button class="menu-row action" id="mi-devtools">🛠&nbsp; Developer tools</button>
           <button class="menu-row action danger" id="mi-clear">✕&nbsp; Clear session</button>
         </div>
+
+        <div class="menu-sep"></div>
+        <div class="menu-sec">
+          <div class="menu-hint center">ForgeOS Browser v0.2 · Electron/Chromium<br/>Telemetry: ZERO ✓</div>
+        </div>
       </div>
-    </div>
   </div>
 
   <div id="plug-toast"></div>

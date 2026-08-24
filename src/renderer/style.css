@@ -168,6 +168,12 @@ body {
   font: 10.5px var(--mono); color: var(--muted);
   padding: 0 9px 6px; line-height: 1.5;
 }
+.menu-hint.center { text-align: center; padding: 4px 9px; }
+.menu-title {
+  font: 600 10px var(--mono); letter-spacing: .12em;
+  color: var(--amber); text-transform: uppercase;
+  padding: 6px 9px 3px;
+}
 
 /* ---------- panels (control center window) ---------- */
 .panel { height: 100vh; display: flex; flex-direction: column; padding: 10px 14px; overflow: hidden; }

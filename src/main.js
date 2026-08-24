@@ -27,6 +27,7 @@ const { MODES, isValidMode } = require('./engine/privacy-modes');
 const { analyzeAgentView, IN_PAGE_SCRIPT, readPageView } = require('./engine/agent-view');
 const { applyAppLevelHardening, PAGE_HARDENING_SCRIPT } = require('./engine/fingerprint-hardening');
 const { requestAction } = require('./engine/permissions');
+const settings = require('./engine/settings');
 const { cleanUrlString } = require('./engine/url-cleaner');
 const { classifyField } = require('./engine/sensitive-fields');
 
@@ -489,6 +490,20 @@ function registerIpc() {
     );
   });
   ipcMain.handle('forge:plugin-cancel', (_e, jobId) => plugins.cancel(jobId));
+  // Settings: load all / patch subset; the adapter reads them live per request.
+  ipcMain.handle('forge:settings-get', () => settings.all());
+  ipcMain.handle('forge:settings-set', (_e, patch) => {
+    const res = settings.save(patch || {});
+    if (res.ok) log.log('INFO', 'settings updated', { keys: Object.keys(patch || {}).join(',') });
+    return res;
+  });
+  ipcMain.handle('forge:ytdlp-status', () => {
+    const p = require('./ext/plugins').resolveYtDlp();
+    if (!p) return { found: false, hint: 'Set FORGE_YTDLP env var or install yt-dlp.' };
+    let version = '';
+    try { version = require('child_process').execFileSync(p, ['--version'], { timeout: 8000 }).toString().trim(); } catch {}
+    return { found: true, path: p, version };
+  });
   // 📁 open the laboratory downloads folder in the OS file manager
   ipcMain.handle('forge:open-downloads', async () => {
     fs.mkdirSync(DL_DIR, { recursive: true });
@@ -532,7 +547,7 @@ function createChromeWindow() {
     height: 820,
     minWidth: 760,
     minHeight: 520,
-    title: 'Forge Browser Lab',
+    title: 'ForgeOS Browser',
     backgroundColor: '#14110d',
     // Compact top: native title bar hidden; the single in-page bar drags the
     // window (see #bar { -webkit-app-region: drag }).

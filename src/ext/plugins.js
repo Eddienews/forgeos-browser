@@ -20,6 +20,7 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const settings = require('../engine/settings');
 
 // Downloads dir: outside the asar when packaged (next to the .exe),
 // project root in dev. Mirrors main.js RUNTIME_BASE logic.
@@ -143,7 +144,7 @@ class PluginRunner {
       ? ['-f', 'bv*[height<=1080]+ba/b[height<=1080]', '--merge-output-format', 'mp4',
          '-o', relTpl, '--no-playlist', pageUrl]
       : ['--skip-download', '--write-auto-subs', '--write-subs',
-         '--sub-langs', 'en.*,pt.*', '--convert-subs', 'srt',
+         '--sub-langs', settings.all().subtitleLangs || 'en.*,pt.*',
          '-o', relTpl, '--no-playlist', pageUrl];
 
     const child = spawn(ytdlp, args, { windowsHide: true, cwd: DOWNLOADS_DIR });

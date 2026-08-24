@@ -76,6 +76,30 @@
   });
   $('forget-check').addEventListener('change', (e) => F.setForgetOnClose(e.target.checked));
 
+  /* ---------------- settings v0.2 ---------------- */
+  const set = (key, value) => F.settingsSet({ [key]: value });
+  $('set-blockads').addEventListener('change', (e) => set('blockAds', e.target.checked));
+  $('set-3pcookies').addEventListener('change', (e) => set('blockThirdPartyCookies', e.target.checked));
+  $('set-stripparams').addEventListener('change', (e) => set('stripTrackingParams', e.target.checked));
+  $('set-fingerprint').addEventListener('change', (e) => set('fingerprint', e.target.value));
+  $('set-subs').addEventListener('change', (e) => set('subtitleLangs', e.target.value));
+
+  // Hydrate controls from persisted settings + yt-dlp status line.
+  Promise.all([F.settingsGet(), F.ytdlpStatus()]).then(([s, yt]) => {
+    if (s) {
+      $('set-blockads').checked = s.blockAds !== false;
+      $('set-3pcookies').checked = s.blockThirdPartyCookies !== false;
+      $('set-stripparams').checked = s.stripTrackingParams !== false;
+      $('set-fingerprint').value = s.fingerprint || 'standard';
+      if (s.subtitleLangs) $('set-subs').value = s.subtitleLangs;
+    }
+    const el = $('ytdlp-status');
+    if (!yt) { el.textContent = 'yt-dlp: not found'; return; }
+    el.textContent = yt.found
+      ? `yt-dlp ✓ ${yt.version || ''}`
+      : 'yt-dlp: not found — ' + (yt.hint || '');
+  }).catch(() => {});
+
   /* ---------------- plugins: ⬇ video / ✎ transcript ---------------- */
   // Persistent progress pill (bottom-right): shows while a job runs.
   let progressEl = null;
