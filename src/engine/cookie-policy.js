@@ -97,7 +97,14 @@ function decideSetCookie({ setCookieHeader, requestOrigin, tabUrl, modeId }) {
     (tabHost && originHost && (tabHost.endsWith('.' + originHost) || originHost.endsWith('.' + tabHost)));
 
   const isTracking = nameMatchesBlocklist(cookie.name);
-  if (isTracking) return { decision: 'BLOCK', reason: 'known tracking cookie', cookie };
+  // Auth domains: cookies like NID/SAPISID are ESSENTIAL to Google/YouTube
+  // sign-in flows. Blocking them on their own first-party auth host breaks
+  // login ("Couldn't sign you in"). Only treat as tracking when third-party.
+  const AUTH_HOSTS = ['accounts.google.com', 'play.google.com', 'accounts.youtube.com'];
+  const isAuthOrigin = AUTH_HOSTS.some((h) => originHost === h || originHost.endsWith('.' + h));
+  if (isTracking && !(isAuthOrigin && firstParty)) {
+    return { decision: 'BLOCK', reason: 'known tracking cookie', cookie };
+  }
 
   if (!firstParty) {
     return { decision: 'BLOCK', reason: 'third-party cookie', cookie };

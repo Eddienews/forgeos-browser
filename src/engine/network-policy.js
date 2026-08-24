@@ -43,6 +43,20 @@ function applyPolicy(classification, modeId) {
         classification.matchedKind && classification.matchedKind !== 'hostname') {
       return { decision: 'ALLOW', reason: 'filter match is too broad for mainFrame navigation' };
     }
+    // AUTH ENDPOINTS: EasyList blocks play.google.com/log (used DURING Google
+    // sign-in). Blocking it breaks YouTube login ("Couldn't sign you in").
+    // Requests to auth hosts from a Google/YouTube tab always pass.
+    try {
+      const tabHost = new URL(classification.tabUrl).hostname.toLowerCase();
+      const originHost = new URL(classification.url).hostname.toLowerCase();
+      const AUTH_HOSTS = ['accounts.google.com', 'play.google.com', 'accounts.youtube.com'];
+      const isAuthOrigin = AUTH_HOSTS.some((h) => originHost === h || originHost.endsWith('.' + h));
+      const isGoogleEcoTab = ['youtube.com', 'google.com', 'youtubekids.com', 'googlevideo.com']
+        .some((h) => tabHost === h || tabHost.endsWith('.' + h));
+      if (isAuthOrigin && (isGoogleEcoTab || !tabHost)) {
+        return { decision: 'ALLOW', reason: 'auth endpoint first-party exemption' };
+      }
+    } catch {}
     return { decision: 'BLOCK', reason: `filter list: ${classification.matchedRule || 'blocked'}` };
   }
   if (classification.filterDecision === 'exception') {
@@ -79,7 +93,7 @@ function applyPolicy(classification, modeId) {
  */
 function decideRequest({ url, tabUrl, resourceType, engine, modeId }) {
   const cls = engine.classifyRequest({ url, tabUrl, resourceType });
-  const policy = applyPolicy({ ...cls, resourceType }, modeId);
+  const policy = applyPolicy({ ...cls, resourceType, url, tabUrl }, modeId);
   return { ...cls, resourceType, ...policy };
 }
 
