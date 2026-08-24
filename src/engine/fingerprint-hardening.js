@@ -15,8 +15,13 @@
  */
 'use strict';
 
+// UA matches the REAL Chromium engine (process.versions.chrome) so Google
+// login and other bot-detection see a consistent, existing browser version.
+// Hardcoding a future version like Chrome/150 triggers "browser may not be
+// secure" because the version does not exist in the wild.
+const CHROME_VER = process.versions.chrome || '130.0.0.0';
 const GENERIC_UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36';
+  `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_VER} Safari/537.36`;
 
 /** Script injected into every page before load (via webContents preload). */
 const PAGE_HARDENING_SCRIPT = `
