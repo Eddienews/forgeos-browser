@@ -55,7 +55,25 @@ Status legend: [x] done · [~] partial · [ ] planned · (v0.x) target version.
 - [ ] Allowlist per site ("disable blocking on this site") with one-click badge
 - [ ] Turtlecute host-list merge option (covers remaining host checks)
 
-## v0.4 — Fingerprint depth
+## v0.4.2 — next iteration (planned)
+
+- [ ] **redirect-rule study**: uBlock-style fake responses instead of request
+      cancellation. When a blocker cancels a request outright, some testers
+      (adblock-tester.com) read "file size matches original" and score it as
+      NOT blocked; serving an empty/1px response like `*$redirect-rule` does
+      scores as blocked. Expected: adblock-tester 65 → ~95, turtlecute more
+      stable across runs.
+- [x] WebGL mask switched to the most common desktop GPU pair
+      (Google Inc. (NVIDIA) + ANGLE NVIDIA GeForce GTX 1650) — previous
+      Intel-UHD value measured 12.93 bits on coveryourtracks.
+
+## v0.4.1 — fingerprint v2 + cosmetic (shipped)
+
+- [x] Cosmetic filtering: 13,643 generic + 17,192 domain-specific rules,
+      injected via native insertCSS (no JS-injection lag)
+- [x] Fingerprint v2 visible to pages (preload moved to MAIN world):
+      canvas + audio randomized per first-party domain, WebGL vendor/renderer
+      masked, hardware/screen standardized
 
 - [ ] Canvas noise per-site (deterministic light noise in toDataURL/toBlob via
       page preload) — reduces hash stability across sites without breaking pages
