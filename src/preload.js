@@ -36,6 +36,7 @@ const api = {
   allowAdd: (host) => ipcRenderer.invoke('forge:allow-add', host),
   allowRemove: (host) => ipcRenderer.invoke('forge:allow-remove', host),
   setZoom: (pct) => ipcRenderer.invoke('forge:set-zoom', pct),
+  getVersion: () => ipcRenderer.invoke('forge:version'),
   ytdlpStatus: () => ipcRenderer.invoke('forge:ytdlp-status'),
   bmList: () => ipcRenderer.invoke('forge:bm-list'),
   bmAdd: (item) => ipcRenderer.invoke('forge:bm-add', item),

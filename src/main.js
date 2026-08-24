@@ -525,6 +525,7 @@ ipcMain.handle('forge:set-menu-open', (_e, open) => {
     if (res.ok) log.log('INFO', 'settings updated', { keys: Object.keys(patch || {}).join(',') });
     return res;
   });
+  ipcMain.handle('forge:version', () => app.getVersion());
   ipcMain.handle('forge:ytdlp-status', () => {
     const p = require('./ext/plugins').resolveYtDlp();
     if (!p) return { found: false, hint: 'Set FORGE_YTDLP env var or install yt-dlp.' };

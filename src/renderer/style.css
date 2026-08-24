@@ -1,6 +1,7 @@
 /* style.css — minimal, dark walnut / warm amber. ONE compact top bar. */
 
 :root {
+  color-scheme: dark;
   --bg: #14110d;
   --bg2: #1c1813;
   --bg3: #241f17;
@@ -52,6 +53,14 @@ body {
   scrollbar-width: none;
 }
 #tabs::-webkit-scrollbar { display: none; }
+/* dark slim scrollbar everywhere (menu, panels) */
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(236, 227, 212, 0.16);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(236, 227, 212, 0.28); }
 .tab {
   display: flex; align-items: center; gap: 6px;
   background: var(--bg3); border: 1px solid var(--line);
@@ -168,6 +177,15 @@ body {
 .menu-row:hover { background: rgba(236, 227, 212, 0.05); }
 .menu-row.check { cursor: pointer; }
 .menu-row.check input { accent-color: var(--amber); }
+/* dark native dropdown lists (Chromium uses OS colors for open <select>) */
+.menu-row select, select {
+  background: var(--bg3); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 4px 8px; font-size: 12px;
+}
+.menu-row select option, select option {
+  background: #241f17; color: var(--fg);
+}
 .menu-row.action { justify-content: flex-start; }
 .menu-row.action.danger { color: var(--red); }
 .menu-row select {

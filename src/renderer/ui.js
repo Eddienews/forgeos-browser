@@ -165,6 +165,7 @@
   }
 
   // Hydrate controls from persisted settings + yt-dlp status line.
+  F.getVersion().then((v) => { const el = $('ver'); if (el) el.textContent = 'v' + v; }).catch(() => {});
   Promise.all([F.settingsGet(), F.ytdlpStatus()]).then(([s, yt]) => {
     if (s) {
       $('set-blockads').checked = s.blockAds !== false;
