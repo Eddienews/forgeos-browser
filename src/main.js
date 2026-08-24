@@ -698,10 +698,10 @@ function initCosmetic() {
   try {
     const fs = require('fs');
     const lines = [];
-    // Lists live inside the asar when packaged; resolve via module path.
+    // Lists live inside the asar when packaged: <asar>/src → <asar>/lists.
     const listsDir = __dirname.includes('app.asar')
-      ? path.join(__dirname, '..', '..', 'lists')   // <asar>/src → <asar>/lists
-      : path.join(__dirname, '..', 'lists');        // src → root/lists
+      ? path.join(__dirname, '..', 'lists')
+      : path.join(__dirname, '..', 'lists');
     for (const f of ['easylist.txt', 'easyprivacy.txt']) {
       const p = path.join(listsDir, f);
       if (!fs.existsSync(p)) continue;
