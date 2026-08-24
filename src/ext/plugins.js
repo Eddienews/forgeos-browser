@@ -25,20 +25,58 @@ const settings = require('../engine/settings');
 // Downloads dir: outside the asar when packaged (next to the .exe),
 // project root in dev. Mirrors main.js RUNTIME_BASE logic.
 const IS_PACKAGED = __dirname.includes('app.asar');
-const DOWNLOADS_DIR = IS_PACKAGED
-  ? path.join(path.dirname(process.execPath), 'downloads')
-  : path.join(__dirname, '..', '..', 'downloads');
-const YT_DLP_CANDIDATES = [
-  process.env.FORGE_YTDLP, // optional override
-  'C:/Users/eddie/AppData/Local/hermes/hermes-agent/venv/Scripts/yt-dlp.exe',
-  'C:/Users/eddie/AppData/Local/hermes/hermes-agent/venv/Scripts/yt-dlp',
-];
 
-function resolveYtDlp() {
-  for (const c of YT_DLP_CANDIDATES) {
-    if (c && fs.existsSync(c)) return c;
+function resolveDownloadsDir() {
+  if (!IS_PACKAGED) return path.join(__dirname, '..', '..', 'downloads');
+  const exeDir = path.dirname(process.execPath);
+  // Portable mode: .portable marker next to the executable
+  if (fs.existsSync(path.join(exeDir, '.portable'))) return path.join(exeDir, 'downloads');
+  // OS-sanctioned user-data directory
+  try {
+    const { app } = require('electron');
+    return path.join(app.getPath('userData'), 'downloads');
+  } catch {
+    return path.join(exeDir, 'downloads');
   }
-  return null;
+}
+
+const DOWNLOADS_DIR = resolveDownloadsDir();
+/**
+ * Resolve yt-dlp across platforms via:
+ *   1. FORGE_YTDLP env var (override)
+ *   2. PATH lookup (which/where)
+ *   3. ~/.local/bin/yt-dlp (common pipx install target)
+ *   4. /usr/bin/yt-dlp (system package)
+ *   5. bare name (relies on PATH at spawn time)
+ *
+ * No hardcoded user home paths. No C:/Users/<name> candidates.
+ */
+function resolveYtDlp() {
+  const envOverride = process.env.FORGE_YTDLP;
+  if (envOverride && fs.existsSync(envOverride)) return envOverride;
+
+  // Try PATH resolution (which/where)
+  const { execSync } = require('child_process');
+  const whichCmd = process.platform === 'win32' ? 'where' : 'which';
+  try {
+    const found = execSync(`${whichCmd} yt-dlp`, { encoding: 'utf8', timeout: 5000 })
+      .split(/[\r\n]+/).filter(Boolean)[0];
+    if (found && fs.existsSync(found)) return found.trim();
+  } catch { /* not on PATH */ }
+
+  // Common pipx / system install locations (cross-platform)
+  const homedir = require('os').homedir();
+  const unixCandidates = [
+    path.join(homedir, '.local', 'bin', 'yt-dlp'),
+    '/usr/bin/yt-dlp',
+    '/usr/local/bin/yt-dlp',
+  ];
+  for (const c of unixCandidates) {
+    if (fs.existsSync(c)) return c;
+  }
+
+  // Last resort: let spawn() resolve it via the inherited PATH
+  return 'yt-dlp';
 }
 
 /** Extract a youtube-ish video id from a URL, or null. */

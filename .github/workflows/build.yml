@@ -1,0 +1,59 @@
+name: Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        arch: [x64, arm64]
+        exclude:
+          # electron-packager does not support win32 arm64
+          - os: windows-latest
+            arch: arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Map platform
+        id: platform
+        shell: bash
+        run: |
+          case "${{ matrix.os }}" in
+            windows-latest) echo "plat=win32" >> $GITHUB_OUTPUT ;;
+            macos-latest)   echo "plat=darwin" >> $GITHUB_OUTPUT ;;
+            ubuntu-latest)  echo "plat=linux" >> $GITHUB_OUTPUT ;;
+          esac
+
+      - name: Package application
+        run: node scripts/package.js --platform=${{ steps.platform.outputs.plat }} --arch=${{ matrix.arch }}
+
+      - name: Create portable archive
+        run: node scripts/make-portable.js --platform=${{ steps.platform.outputs.plat }} --arch=${{ matrix.arch }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ForgeBrowserLab-${{ steps.platform.outputs.plat }}-${{ matrix.arch }}
+          path: dist/ForgeBrowserLab-portable-${{ steps.platform.outputs.plat }}-${{ matrix.arch }}.zip
+          if-no-files-found: warn

@@ -39,36 +39,51 @@ const TOOLBAR_H = 42; // must match renderer CSS --bar-h
 const APP_ROOT = __dirname;
 const RENDERER = path.join(APP_ROOT, 'renderer', 'index.html');
 
-// Runtime-writable dirs must live OUTSIDE the asar when packaged.
-// Dev:  <root>/logs, <root>/downloads   (APP_ROOT = <root>/src)
-// Pkg:  next to ForgeBrowserLab.exe     (__dirname ends with .../app.asar/src)
+// Runtime-writable dirs: use app.getPath('userData') when packaged (OS-sanctioned
+// config location). A .portable marker file next to the executable overrides to
+// keep dirs local to the executable (USB-drive / portable mode).
+// Dev (no asar): project root is fine.
 const IS_PACKAGED = __dirname.includes('app.asar');
-const RUNTIME_BASE = IS_PACKAGED
-  ? path.dirname(process.execPath)                       // dir of the .exe
-  : path.dirname(APP_ROOT);                              // project root
-const LOG_FILE = path.join(RUNTIME_BASE, 'logs', 'forge-events.log');
-const DL_DIR = path.join(RUNTIME_BASE, 'downloads');
+
+function getRuntimeBase() {
+  if (!IS_PACKAGED) return path.dirname(APP_ROOT);
+  const exeDir = path.dirname(process.execPath);
+  // Portable mode: .portable marker next to the executable
+  if (fs.existsSync(path.join(exeDir, '.portable'))) return exeDir;
+  // OS-sanctioned user-data directory (cross-platform safe)
+  try { return app.getPath('userData'); } catch { return exeDir; }
+}
+
+function getLogFile() {
+  return path.join(getRuntimeBase(), 'logs', 'forge-events.log');
+}
+
+function getDownloadDir() {
+  return path.join(getRuntimeBase(), 'downloads');
+}
+
+// Lazy: log is initialized inside app.whenReady() so getRuntimeBase() can use
+// app.getPath.  Top-level code before ready uses a no-op fallback.
+let log = { log: () => {} }; // no-op until real init
+let engine = null;
+const LOG_FILE = getLogFile;
+const DL_DIR = getDownloadDir;
+const RUNTIME_BASE_REF = getRuntimeBase;
 
 /* ------------------------------------------------------------------ */
 /* Global state                                                        */
 /* ------------------------------------------------------------------ */
 
-const log = new EventLog(LOG_FILE, 2500);
-const engine = new FilterEngine({});
 try {
   // Optional drop-in filter lists (easy list format) — see update-lists.js
-  const fs = require('fs');
   for (const f of ['easylist.txt', 'easyprivacy.txt']) {
     const p = path.join(path.dirname(APP_ROOT), 'lists', f);
     if (fs.existsSync(p)) {
       const lines = fs.readFileSync(p, 'utf8').split('\n');
-      const c = engine.loadAbpLines(lines, { source: f });
-      log.log('INFO', `loaded filter list ${f}`, { blockRules: c.blocks.length, exceptions: c.exceptions.length, cosmeticSkipped: c.cosmeticSkipped });
+      // engine created inside whenReady; filter lists loaded there too
     }
   }
-} catch (e) {
-  log.log('ERROR', 'filter list load failed', { error: String(e).slice(0, 200) });
-}
+} catch {}
 
 let modeId = 'standard';
 let chromeWin = null;
@@ -157,7 +172,7 @@ function createTab(url = 'about:blank', opts = {}) {
     if (isMainFrame) {
       try {
         const lvl = settings.all().fingerprint || 'standard';
-        fs.writeFileSync(path.join(RUNTIME_BASE, 'forge-fp-level'), lvl + '\n', 'utf8');
+        fs.writeFileSync(path.join(getRuntimeBase(), 'forge-fp-level'), lvl + '\n', 'utf8');
       } catch {}
     }
   });
@@ -582,9 +597,10 @@ ipcMain.handle('forge:set-menu-open', (_e, open) => {
   ipcMain.handle('forge:hist-clear', () => bh.clearHistory());
   // 📁 open the laboratory downloads folder in the OS file manager
   ipcMain.handle('forge:open-downloads', async () => {
-    fs.mkdirSync(DL_DIR, { recursive: true });
+    const dlDir = DL_DIR();
+    fs.mkdirSync(dlDir, { recursive: true });
     log.log('INFO', 'open downloads folder');
-    const err = await shell.openPath(DL_DIR);
+    const err = await shell.openPath(dlDir);
     if (err) log.log('ERROR', 'open downloads failed', { error: String(err).slice(0, 120) });
     return !err;
   });
@@ -618,28 +634,38 @@ async function approveAction(action, details) {
 /* ------------------------------------------------------------------ */
 
 function createChromeWindow() {
-  chromeWin = new BrowserWindow({
+  const winOpts = {
     width: 1280,
     height: 820,
     minWidth: 760,
     minHeight: 520,
     title: 'ForgeOS Browser',
     backgroundColor: '#14110d',
-    // Compact top: native title bar hidden; the single in-page bar drags the
-    // window (see #bar { -webkit-app-region: drag }).
-    titleBarStyle: 'hidden',
-    titleBarOverlay: {
-      color: '#1c1813',
-      symbolColor: '#9a8f7d',
-      height: 42,
-    },
     webPreferences: {
       preload: path.join(APP_ROOT, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
     },
-  });
+  };
+
+  if (process.platform === 'win32') {
+    // Compact top with native overlay for min/max/close buttons.
+    winOpts.titleBarStyle = 'hidden';
+    winOpts.titleBarOverlay = {
+      color: '#1c1813',
+      symbolColor: '#9a8f7d',
+      height: 42,
+    };
+  } else if (process.platform === 'darwin') {
+    // macOS: default traffic lights (no overlay needed).
+    winOpts.titleBarStyle = 'hiddenInset';
+  } else {
+    // Linux: hidden title bar, no overlay (window buttons handled by WM).
+    winOpts.titleBarStyle = 'hidden';
+  }
+
+  chromeWin = new BrowserWindow(winOpts);
   chromeWin.setMenuBarVisibility(false);
   // Debug: forward renderer console to the event log when FORGE_DEBUG_CONSOLE=1.
   if (process.env.FORGE_DEBUG_CONSOLE) {
@@ -662,6 +688,25 @@ function createChromeWindow() {
 }
 
 app.whenReady().then(() => {
+  // Initialize runtime paths now that app is ready (app.getPath is available)
+  const EventLog = require('./engine/event-log');
+  const { FilterEngine } = require('./engine/filter-engine');
+  log = new EventLog(getLogFile(), 2500);
+  engine = new FilterEngine({});
+  // Load filter lists now
+  try {
+    for (const f of ['easylist.txt', 'easyprivacy.txt']) {
+      const p = path.join(path.dirname(APP_ROOT), 'lists', f);
+      if (fs.existsSync(p)) {
+        const lines = fs.readFileSync(p, 'utf8').split('\n');
+        const c = engine.loadAbpLines(lines, { source: f });
+        log.log('INFO', `loaded filter list ${f}`, { blockRules: c.blocks.length, exceptions: c.exceptions.length, cosmeticSkipped: c.cosmeticSkipped });
+      }
+    }
+  } catch (e) {
+    log.log('ERROR', 'filter list load failed', { error: String(e).slice(0, 200) });
+  }
+
   log.log('INFO', 'Forge Browser Lab started', { version: app.getVersion(), electron: process.versions.electron, chromium: process.versions.chrome });
   applyAppLevelHardening(app);
   log.log('INFO', 'fingerprint hardening applied', { ua: 'generic-chrome', screen: '1920x1080x24', hw: '8c/8gb' });
@@ -674,7 +719,7 @@ app.whenReady().then(() => {
   // pipeline the panels use; navigation goes through the app's own path.
   startAgentApi({
     port: 8647,
-    baseDir: RUNTIME_BASE,
+    baseDir: getRuntimeBase(),
     log,
     getSnapshot: () => buildState(),
     readPage: async () => {

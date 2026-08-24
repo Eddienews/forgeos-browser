@@ -43,6 +43,6 @@ setTimeout(async () => {
   // Read back through IPC from the page context
   const r3 = await w.webContents.executeJavaScript(`window.forge.settingsGet()`, true);
   console.log('SETTINGS READBACK: blockAds =', r3.blockAds);
-  console.log('FILE EXISTS:', require('fs').existsSync(process.env.LOCALAPPDATA ? 'C:/Users/eddie/ForgeBrowserLab/forge-settings.json' : ''));
+  console.log('FILE EXISTS:', require('fs').existsSync(require('path').join(__dirname, '..', 'forge-settings.json')));
   app.exit(0);
 }, 4000);

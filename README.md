@@ -1,6 +1,6 @@
 # Forge Browser Lab
 
-**v0.1.0** · Windows · Electron/Chromium · educational, non-commercial, **laboratory prototype**.
+**v0.4.0** · Windows · macOS · Linux · Raspberry Pi · Electron/Chromium · educational, non-commercial, **laboratory prototype**.
 
 A minimal browser built to study **two simultaneous security goals**:
 
@@ -130,3 +130,32 @@ network/session events. Full detail in [ARCHITECTURE.md](ARCHITECTURE.md).
 _See also: [ARCHITECTURE](ARCHITECTURE.md) · [THREAT_MODEL](THREAT_MODEL.md) ·
 [PRIVACY_MODEL](PRIVACY_MODEL.md) · [SECURITY_MODEL](SECURITY_MODEL.md) ·
 [TEST_PLAN](TEST_PLAN.md)._
+
+---
+
+## OPEN SOURCE
+
+![License](https://img.shields.io/badge/License-MIT-blue.svg)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Raspberry%20Pi-lightgrey)
+![Node](https://img.shields.io/badge/Node-%E2%89%A518-brightgreen)
+
+Forge Browser Lab is released under the **MIT License** (see [LICENSE](LICENSE)).
+
+### Contributing
+
+This is an **educational laboratory prototype** — not a production browser. Contributions are welcome but **experimental in nature**. Before submitting a pull request:
+
+- Run `npm test` to confirm all 87+ engine unit tests pass.
+- Verify your changes respect the existing security models (`THREAT_MODEL.md`, `SECURITY_MODEL.md`).
+- Avoid introducing new runtime dependencies or telemetry.
+- Keep the `src/engine/` layer pure (no Electron dependency) so it remains unit-testable.
+
+### Educational / Research Disclaimer
+
+This project is a **study of browser architecture, privacy policy engines, and agent-safe content boundaries**. It is not intended for:
+
+- Bypassing CAPTCHA, anti-bot systems, or authentication controls.
+- Surveillance, data collection, or credential harvesting.
+- Replacing a general-purpose browser.
+
+The authors provide this software **as-is** for educational and research purposes. Use at your own risk.
