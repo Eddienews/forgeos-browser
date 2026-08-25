@@ -17,7 +17,9 @@
   function closeMenu() {
     gearMenu.classList.add('hidden');
     gearBtn.classList.remove('open');
-    F.setMenuOpen(false);
+    // Only restore the page when NO menu needs the reserved space.
+    const siteOpen = siteMenu && !siteMenu.classList.contains('hidden');
+    if (!siteOpen) F.setMenuOpen(false);
   }
   function toggleMenu() {
     const opening = gearMenu.classList.contains('hidden');
@@ -146,7 +148,11 @@
   }
   if (badgeEl) {
     badgeEl.style.cursor = 'pointer';
-    badgeEl.addEventListener('click', () => { toggleMenu(); openSiteMenu(); });
+    badgeEl.addEventListener('click', (e) => {
+      e.stopPropagation(); // don't let the document click-outside handler fire
+      closeMenu();         // close gear if open (without collapsing page)
+      openSiteMenu();
+    });
   }
   $('site-allow-check').addEventListener('change', async (e) => {
     if (e.target.checked) await F.allowAdd(siteMenuHost);
@@ -162,30 +168,32 @@
     social: 'Redes sociais (FB, X, Insta...)',
   };
   async function renderPresets() {
-    const listEl = $('preset-list');
-    if (!listEl) return;
-    try {
-      const { available, active } = await F.presetsList();
-      listEl.innerHTML = '';
-      for (const p of available) {
-        const isActive = !!active[p.name];
-        const row = document.createElement('label');
-        row.className = 'menu-row check';
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.checked = isActive;
-        cb.addEventListener('change', async () => {
-          if (cb.checked) await F.presetApply(p.name);
-          else await F.presetRevoke(p.name);
-          refreshBadge();
-          renderPresets();
-        });
-        const span = document.createElement('span');
-        span.textContent = `${PRESET_LABELS[p.name] || p.name} (${p.hosts} sites)`;
-        row.append(cb, span);
-        listEl.append(row);
-      }
-    } catch {}
+    // Render into BOTH containers (site menu + gear menu).
+    for (const listEl of [document.getElementById('preset-list'), document.getElementById('preset-list-gear')]) {
+      if (!listEl) continue;
+      try {
+        const { available, active } = await F.presetsList();
+        listEl.innerHTML = '';
+        for (const p of available) {
+          const isActive = !!active[p.name];
+          const row = document.createElement('label');
+          row.className = 'menu-row check';
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.checked = isActive;
+          cb.addEventListener('change', async () => {
+            if (cb.checked) await F.presetApply(p.name);
+            else await F.presetRevoke(p.name);
+            refreshBadge();
+            renderPresets();
+          });
+          const span = document.createElement('span');
+          span.textContent = `${PRESET_LABELS[p.name] || p.name} (${p.hosts})`;
+          row.append(cb, span);
+          listEl.append(row);
+        }
+      } catch {}
+    }
   }
   renderPresets();
   async function refreshBadge() {

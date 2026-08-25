@@ -258,3 +258,8 @@ code { color: var(--amber); font-family: var(--mono); }
 }
 .demo-actions button:hover { border-color: var(--amber-dim); color: var(--amber); }
 #d-out { margin-top: 10px; }
+/* Site menu opens near the badge (left side), not at the right edge. */
+#site-menu {
+  left: 8px;
+  right: auto;
+}
