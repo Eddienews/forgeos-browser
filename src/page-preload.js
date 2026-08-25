@@ -173,11 +173,11 @@
         try {
           // UNMASKED_VENDOR_WEBGL / UNMASKED_RENDERER_WEBGL
           if (p === 0x9245 || p === 0x9246) {
-            // NVIDIA + generic ANGLE: the most common desktop GPU reporting in
-            // the wild — near-minimal entropy (see results/BENCHMARK.md).
+            // Intel UHD 630 bare: the single most common desktop GPU string in
+            // the wild (millions of office laptops). Minimal entropy.
             return p === 0x9245
-              ? 'Google Inc. (NVIDIA)'
-              : 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 Direct3D11 vs_5_0 ps_5_0, D3D11)';
+              ? 'Google Inc. (Intel)'
+              : 'ANGLE (Intel, Intel(R) UHD Graphics 630 (0x00003E98) Direct3D11 vs_5_0 ps_5_0, D3D11)';
           }
         } catch {}
         return orig.call(this, p);
