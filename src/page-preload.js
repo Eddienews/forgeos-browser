@@ -163,6 +163,30 @@
     };
     if (window.WebGLRenderingContext) patchGL(WebGLRenderingContext.prototype);
     if (window.WebGL2RenderingContext) patchGL(WebGL2RenderingContext.prototype);
+
+    // WebGL farbling: CYT's "WebGL fingerprint" hashes the RENDERED IMAGE,
+    // not the vendor strings. Masking strings doesn't change GPU pixels —
+    // so the image hash stays unique (18.23 bits). Apply deterministic
+    // per-origin noise to readPixels, just like canvas 2d.
+    const farble = (gl, pixels, w, h) => {
+      try {
+        const rand = prng();
+        for (let i = 0; i < pixels.length; i += 4 * 41) {
+          pixels[i] = Math.max(0, Math.min(255, pixels[i] + (rand() > 0.5 ? 1 : -1)));
+        }
+      } catch {}
+    };
+    const patchReadPixels = (proto) => {
+      if (!proto) return;
+      const orig = proto.readPixels;
+      proto.readPixels = function (x, y, w, h, fmt, type, pixels, ...rest) {
+        const r = orig.call(this, x, y, w, h, fmt, type, pixels, ...rest);
+        try { if (pixels && pixels.length && LEVEL === 'standard') farble(this, pixels, w, h); } catch {}
+        return r;
+      };
+    };
+    patchReadPixels(WebGLRenderingContext.prototype);
+    patchReadPixels(WebGL2RenderingContext.prototype);
   } catch {}
 
   /* ---- AudioContext noise (standard): tiny deterministic sample tweak ---- */
