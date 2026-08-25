@@ -173,12 +173,12 @@
         try {
           // UNMASKED_VENDOR_WEBGL / UNMASKED_RENDERER_WEBGL
           if (p === 0x9245 || p === 0x9246) {
-            // Intel UHD 630 bare, NO device ID: the device-id suffix splits the
-            // population (each hex code is its own bucket). The bare string is
-            // the single most-reported GPU renderer in the wild.
+            // Empirical CYT results across masks: NVIDIA GTX 1650 pair scored
+            // 11.63 bits (3197 users), Intel UHD 630 variants scored 11.93–12.91.
+            // GTX 1650 is the measured minimum — keep it.
             return p === 0x9245
-              ? 'Google Inc. (Intel)'
-              : 'ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)';
+              ? 'Google Inc. (NVIDIA)'
+              : 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 Direct3D11 vs_5_0 ps_5_0, D3D11)';
           }
         } catch {}
         return orig.call(this, p);
