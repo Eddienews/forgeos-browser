@@ -32,6 +32,7 @@ const bh = require('./engine/bookmarks-history');
 const allowlist = require('./engine/site-allowlist');
 const { compileCosmetic, selectorsForHost } = require('./engine/cosmetic-engine');
 const { startAgentApi } = require('./ext/agent-api');
+const credentialPolicy = require('./engine/credential-policy');
 const { cleanUrlString } = require('./engine/url-cleaner');
 const { classifyField } = require('./engine/sensitive-fields');
 
@@ -178,6 +179,21 @@ function createTab(url = 'about:blank', opts = {}) {
   });
 
   wc.on('did-navigate', (_e, url, httpCode) => {
+    // NO-CREDENTIALS policy: intercept identity-provider sign-in pages and
+    // show a clear notice instead of Google's misleading "may not be secure".
+    if (credentialPolicy.matchesCredentialHost(url) && !settings.all().allowCredentials) {
+      // Per-site opt-in? (user accepted the risk in the badge menu)
+      let optedIn = false;
+      try { optedIn = settings.all().credentialOptIn?.[new URL(url).hostname.toLowerCase().replace(/^www\./, '')] === true; } catch {}
+      if (!optedIn) {
+        const notice = credentialPolicy.NOTICE_HTML(new URL(url).hostname);
+        wc.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(notice));
+        tab.url = url; // keep the intended URL in history/state
+        log.log('INFO', 'sign-in blocked by no-credentials policy', { host: new URL(url).hostname });
+        sendState();
+        return;
+      }
+    }
     tab.url = url;
     // Commit into history (truncate forward entries).
     tab.history = tab.history.slice(0, tab.index + 1);
@@ -582,6 +598,19 @@ ipcMain.handle('forge:set-menu-open', (_e, open) => {
     const r = allowlist.add(host);
     if (r.ok) log.log('INFO', 'site allowlisted (blocking disabled)', { host: r.host });
     return r;
+  });
+  ipcMain.handle('forge:cred-allow', (_e, host) => {
+    // Per-site opt-in to the no-credentials policy ("Allow sign-in here").
+    const s = settings.all();
+    const map = s.credentialOptIn || {};
+    map[String(host || '').toLowerCase().replace(/^www\./, '')] = true;
+    settings.set({ credentialOptIn: map });
+    log.log('INFO', 'sign-in allowed per-site opt-in', { host });
+    return { ok: true };
+  });
+  ipcMain.handle('forge:cred-allowed', (_e, host) => {
+    const map = settings.all().credentialOptIn || {};
+    return { allowed: !!map[String(host || '').toLowerCase().replace(/^www\./, '')] };
   });
   ipcMain.handle('forge:allow-remove', (_e, host) => {
     const r = allowlist.remove(host);

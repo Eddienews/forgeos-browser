@@ -141,6 +141,10 @@
     $('site-menu-host').textContent = siteMenuHost;
     const { allowed } = await F.allowIs(siteMenuHost);
     $('site-allow-check').checked = allowed;
+    try {
+      const { allowed: credOk } = await F.credAllowed(siteMenuHost);
+      $('site-cred-check').checked = credOk;
+    } catch { $('site-cred-check').checked = false; }
     siteMenu.classList.remove('hidden');
     F.setMenuOpen(true);
     // keep page shrunk until both menus closed
@@ -158,6 +162,15 @@
     if (e.target.checked) await F.allowAdd(siteMenuHost);
     else await F.allowRemove(siteMenuHost);
     refreshBadge();
+  });
+  $('site-cred-check').addEventListener('change', async (e) => {
+    if (e.target.checked) {
+      await F.credAllow(siteMenuHost);
+      // reload so the intercepted sign-in page loads for real
+      const t = state && state.tabs.find((x) => x.id === state.activeTabId);
+      const intended = t && t.url;
+      if (intended && /^https?:/i.test(intended)) window.forge.navigate(intended);
+    }
   });
 
   /* Trust presets: one decision releases a whole provider ecosystem. */

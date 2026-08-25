@@ -1,7 +1,7 @@
 {
   "name": "forge-browser-lab",
   "productName": "ForgeOS Browser",
-  "version": "0.6.4",
+  "version": "0.7.0",
   "description": "Educational laboratory prototype: a private, agent-safe browser architecture study. Not a production browser. No telemetry.",
   "main": "src/main.js",
   "private": true,
