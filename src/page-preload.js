@@ -39,6 +39,14 @@
 
   /* ---- hardware & screen standardization (all levels) ---- */
   try {
+    // UA: strip Electron marker in navigator (Google sign-in reads this).
+    // Match app.userAgentFallback from fingerprint-hardening.js.
+    const realChrome = /Chrome\/([\d.]+)/.exec(navigator.userAgent);
+    if (realChrome && /Electron\//.test(navigator.userAgent)) {
+      const cleanUA = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${realChrome[1].split('.').slice(0, 3).join('.')} Safari/537.36`;
+      Object.defineProperty(navigator, 'userAgent', { get: () => cleanUA, configurable: true });
+      Object.defineProperty(navigator, 'appVersion', { get: () => cleanUA.replace(/^Mozilla\//, ''), configurable: true });
+    }
     Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8, configurable: true });
     Object.defineProperty(navigator, 'deviceMemory', { get: () => 8, configurable: true });
   } catch {}
