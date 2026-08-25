@@ -49,40 +49,9 @@
     }
     Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8, configurable: true });
     Object.defineProperty(navigator, 'deviceMemory', { get: () => 8, configurable: true });
-    // window.chrome.runtime: real Chrome always exposes it; embedded Chromium
-    // (Electron) doesn't. Its absence is THE canonical Google sign-in bot
-    // signal ("This browser may not be secure").
-    try {
-      if (!window.chrome) window.chrome = {};
-      if (!window.chrome.runtime) {
-        window.chrome.runtime = {
-          PlatformOs: { MAC: 'mac', WIN: 'win', ANDROID: 'android', CROS: 'cros', LINUX: 'linux', OPENBSD: 'openbsd' },
-          RequestUpdateCheckStatus: { NO_UPDATE: 'no_update', UPDATE_AVAILABLE: 'update_available', THROTTLED: 'throttled' },
-          connect: () => { throw new Error('Invalid call to runtime.connect()'); },
-          sendMessage: () => { throw new Error('Invalid call to runtime.sendMessage()'); },
-          id: undefined,
-        };
-      }
-      // chrome.csi / chrome.loadTimes: legacy markers present in EVERY real
-      // Chrome build; their absence flags embedded Chromium.
-      if (!window.chrome.csi) {
-        window.chrome.csi = function () {
-          return { startE: Date.now(), onloadT: Date.now(), pageT: 100, tran: 15 };
-        };
-      }
-      if (!window.chrome.loadTimes) {
-        window.chrome.loadTimes = function () {
-          return {
-            requestTime: Date.now() / 1000, startLoadTime: Date.now() / 1000,
-            commitLoadTime: Date.now() / 1000, finishDocumentLoadTime: Date.now() / 1000,
-            finishLoadTime: Date.now() / 1000, firstPaintTime: Date.now() / 1000,
-            firstPaintAfterLoadTime: 0, navigationType: 'Other', wasFetchedViaSpdy: true,
-            wasNpnNegotiated: true, npnNegotiatedProtocol: 'h2', wasAlternateProtocolAvailable: false,
-            connectionInfo: 'h2',
-          };
-        };
-      }
-    } catch {}
+    // v0.8: chrome.runtime/csi/loadTimes spoofing REMOVED — Google's anti-bot
+    // war is unwinnable and degraded our honest positioning. Sign-in belongs
+    // to the user's main browser; ForgeOS = private browsing + agent work.
   } catch {}
 
   // Screen: report a common desktop geometry instead of the real window size.
