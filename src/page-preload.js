@@ -173,11 +173,12 @@
         try {
           // UNMASKED_VENDOR_WEBGL / UNMASKED_RENDERER_WEBGL
           if (p === 0x9245 || p === 0x9246) {
-            // Intel UHD 630 bare: the single most common desktop GPU string in
-            // the wild (millions of office laptops). Minimal entropy.
+            // Intel UHD 630 bare, NO device ID: the device-id suffix splits the
+            // population (each hex code is its own bucket). The bare string is
+            // the single most-reported GPU renderer in the wild.
             return p === 0x9245
               ? 'Google Inc. (Intel)'
-              : 'ANGLE (Intel, Intel(R) UHD Graphics 630 (0x00003E98) Direct3D11 vs_5_0 ps_5_0, D3D11)';
+              : 'ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)';
           }
         } catch {}
         return orig.call(this, p);
