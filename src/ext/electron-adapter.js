@@ -26,6 +26,7 @@ const { permissionFor } = require('../engine/fingerprint');
 const { MODES } = require('../engine/privacy-modes');
 const settings = require('../engine/settings');
 const allowlist = require('../engine/site-allowlist');
+const { GENERIC_UA } = require('../engine/fingerprint-hardening');
 
 const DOWNLOADS_DIR = path.join(path.dirname(path.dirname(__dirname)), 'downloads');
 
@@ -68,6 +69,26 @@ class SessionAdapter {
     if (this.installed) return;
     const { session, engine, log } = this;
     const self = this;
+
+    // Google sign-in anti-bot: rewrite Sec-CH-UA client hints to match our
+    // generic Chrome UA (Electron injects 'Electron/<ver>' into these headers,
+    // which triggers "This browser or app may not be secure").
+    session.webRequest.onBeforeSendHeaders({ urls: ['*://*/*'] }, (details, callback) => {
+      const h = details.requestHeaders;
+      const chromeVer = process.versions.chrome || '';
+      for (const key of Object.keys(h)) {
+        if (/^sec-ch-ua$/i.test(key)) {
+          h[key] = `"Chromium";v="${chromeVer}", "Google Chrome";v="${chromeVer}", "Not?A_Brand";v="99"`;
+        } else if (/^sec-ch-ua-platform$/i.test(key)) {
+          h[key] = '"Windows"';
+        } else if (/^sec-ch-ua-mobile$/i.test(key)) {
+          h[key] = '?0';
+        } else if (/^user-agent$/i.test(key)) {
+          h[key] = GENERIC_UA; // enforce on every request, not just fallback
+        }
+      }
+      callback({ requestHeaders: h });
+    });
 
     session.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, callback) => {
       const url = details.url;
