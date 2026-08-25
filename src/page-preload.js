@@ -51,7 +51,7 @@
     Object.defineProperty(navigator, 'deviceMemory', { get: () => 8, configurable: true });
     // window.chrome.runtime: real Chrome always exposes it; embedded Chromium
     // (Electron) doesn't. Its absence is THE canonical Google sign-in bot
-    // signal ("This browser or app may not be secure").
+    // signal ("This browser may not be secure").
     try {
       if (!window.chrome) window.chrome = {};
       if (!window.chrome.runtime) {
@@ -61,6 +61,25 @@
           connect: () => { throw new Error('Invalid call to runtime.connect()'); },
           sendMessage: () => { throw new Error('Invalid call to runtime.sendMessage()'); },
           id: undefined,
+        };
+      }
+      // chrome.csi / chrome.loadTimes: legacy markers present in EVERY real
+      // Chrome build; their absence flags embedded Chromium.
+      if (!window.chrome.csi) {
+        window.chrome.csi = function () {
+          return { startE: Date.now(), onloadT: Date.now(), pageT: 100, tran: 15 };
+        };
+      }
+      if (!window.chrome.loadTimes) {
+        window.chrome.loadTimes = function () {
+          return {
+            requestTime: Date.now() / 1000, startLoadTime: Date.now() / 1000,
+            commitLoadTime: Date.now() / 1000, finishDocumentLoadTime: Date.now() / 1000,
+            finishLoadTime: Date.now() / 1000, firstPaintTime: Date.now() / 1000,
+            firstPaintAfterLoadTime: 0, navigationType: 'Other', wasFetchedViaSpdy: true,
+            wasNpnNegotiated: true, npnNegotiatedProtocol: 'h2', wasAlternateProtocolAvailable: false,
+            connectionInfo: 'h2',
+          };
         };
       }
     } catch {}
