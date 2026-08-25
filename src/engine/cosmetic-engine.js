@@ -81,6 +81,7 @@ function compileCosmetic(lines) {
 
   return {
     genericCss,
+    genericSelectors: generic,
     byDomain,
     stats: { generic: generic.length, domainSpecific: [...byDomain.values()].reduce((n, s) => n + s.size, 0), domains: byDomain.size, unhide },
   };

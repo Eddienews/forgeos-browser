@@ -203,7 +203,18 @@ function createTab(url = 'about:blank', opts = {}) {
     log.log('INFO', 'navigated', { url: url.slice(0, 300), httpCode });
     bh.addHistory({ url, title: wc.getTitle() });
     injectCosmetic(tab, url);
+    injectDomRemoval(tab, url);
     sendState();
+  });
+
+  // DOM removal pass: cosmetic CSS hides ad boxes, but testers (turtlecute)
+  // score "blocked" only when the element is REMOVED. After the page settles,
+  // executeJavaScript removes matched elements entirely. Runs once per
+  // navigation; respects blockAds toggle + allowlist via same gate as CSS.
+  let domRemovalTimer = null;
+  wc.on('did-finish-load', () => {
+    if (domRemovalTimer) clearTimeout(domRemovalTimer);
+    domRemovalTimer = setTimeout(() => injectDomRemoval(tab, wc.getURL()), 1200);
   });
 
   wc.on('did-navigate-in-page', (_e, url) => {
@@ -826,6 +837,35 @@ function injectCosmetic(tab, url) {
     ].filter(Boolean).join('\n');
     if (!css) return;
     tab.wc.insertCSS(css, { cssOrigin: 'user' }).catch(() => {});
+  } catch {}
+}
+
+/** DOM removal pass: DELETE matched elements (testers score "removed" > hidden). */
+function injectDomRemoval(tab, url) {
+  if (!cosmetic || !tab || !url.startsWith('http')) return;
+  try {
+    if (settings.all().blockAds === false) return;
+    let host = '';
+    try { host = new URL(url).hostname; } catch {}
+    if (host && allowlist.isAllowed(host)) return;
+    const hostSelectors = selectorsForHost(cosmetic, host);
+    const generic = cosmetic.genericSelectors || [];
+    const selectors = [...new Set([...generic, ...hostSelectors])]
+      .filter((s) => s && s.length < 200 && !/[:{}]/.test(s)) // safe subset only
+      .slice(0, 4000);
+    if (!selectors.length) return;
+    const js = `(function(){
+      let removed = 0;
+      for (const sel of ${JSON.stringify(selectors)}) {
+        try {
+          document.querySelectorAll(sel).forEach(el => {
+            if (el && el.parentNode) { el.parentNode.removeChild(el); removed++; }
+          });
+        } catch {}
+      }
+      return removed;
+    })()`;
+    tab.wc.executeJavaScript(js, true).catch(() => {});
   } catch {}
 }
 

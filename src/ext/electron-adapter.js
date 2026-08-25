@@ -147,6 +147,27 @@ class SessionAdapter {
         log.log('BLOCK', `${decision.reason} request blocked`, {
           url, category: cat, tab: tabUrl.slice(0, 200), type: resourceType,
         });
+        // REDIRECT-RULE style (uBlock/Brave technique): instead of cancelling
+        // the request outright — which some testers interpret as "file loaded
+        // fine" because they can't measure a canceled response — serve a tiny
+        // valid fake response. Scripts get an empty JS body; images get a 1px
+        // transparent GIF; stylesheets an empty CSS. The page keeps working,
+        // the tester sees a real (harmless) response that is NOT the original.
+        const type = resourceType || 'other';
+        if (/^(script|xhr|fetch)$/i.test(type)) {
+          callback({ redirectURL: 'data:application/javascript,' });
+          return;
+        }
+        if (/^image$/i.test(type)) {
+          callback({ redirectURL: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' });
+          return;
+        }
+        if (/^stylesheet$/i.test(type)) {
+          callback({ redirectURL: 'data:text/css,' });
+          return;
+        }
+        // subFrame/mainFrame and unknown types still cancel (a fake HTML doc
+        // would render visible content).
         callback({ cancel: true });
         return;
       }
