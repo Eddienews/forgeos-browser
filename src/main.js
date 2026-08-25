@@ -564,6 +564,20 @@ ipcMain.handle('forge:set-menu-open', (_e, open) => {
 
   /* ---- per-site allowlist + zoom (v0.3) ---- */
   ipcMain.handle('forge:allow-is', (_e, host) => ({ allowed: allowlist.isAllowed(host) }));
+  ipcMain.handle('forge:presets-list', () => ({
+    available: Object.entries(allowlist.TRUST_PRESETS).map(([name, hosts]) => ({ name, hosts: hosts.length })),
+    active: allowlist.activePresets(),
+  }));
+  ipcMain.handle('forge:preset-apply', (_e, name) => {
+    const r = allowlist.applyPreset(String(name || ''));
+    if (r.ok) { sendState(); log.log('INFO', 'trust preset applied', { preset: name, added: r.addedCount }); }
+    return r;
+  });
+  ipcMain.handle('forge:preset-revoke', (_e, name) => {
+    const r = allowlist.revokePreset(String(name || ''));
+    if (r.ok) { sendState(); log.log('INFO', 'trust preset revoked', { preset: name, revoked: r.revokedCount }); }
+    return r;
+  });
   ipcMain.handle('forge:allow-add', (_e, host) => {
     const r = allowlist.add(host);
     if (r.ok) log.log('INFO', 'site allowlisted (blocking disabled)', { host: r.host });

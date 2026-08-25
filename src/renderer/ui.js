@@ -153,6 +153,41 @@
     else await F.allowRemove(siteMenuHost);
     refreshBadge();
   });
+
+  /* Trust presets: one decision releases a whole provider ecosystem. */
+  const PRESET_LABELS = {
+    google: 'Google / YouTube / Drive',
+    microsoft: 'Microsoft / Outlook',
+    apple: 'Apple / iCloud',
+    social: 'Redes sociais (FB, X, Insta...)',
+  };
+  async function renderPresets() {
+    const listEl = $('preset-list');
+    if (!listEl) return;
+    try {
+      const { available, active } = await F.presetsList();
+      listEl.innerHTML = '';
+      for (const p of available) {
+        const isActive = !!active[p.name];
+        const row = document.createElement('label');
+        row.className = 'menu-row check';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = isActive;
+        cb.addEventListener('change', async () => {
+          if (cb.checked) await F.presetApply(p.name);
+          else await F.presetRevoke(p.name);
+          refreshBadge();
+          renderPresets();
+        });
+        const span = document.createElement('span');
+        span.textContent = `${PRESET_LABELS[p.name] || p.name} (${p.hosts} sites)`;
+        row.append(cb, span);
+        listEl.append(row);
+      }
+    } catch {}
+  }
+  renderPresets();
   async function refreshBadge() {
     if (!badgeEl) return;
     const t = state && state.tabs.find((x) => x.id === state.activeTabId);
