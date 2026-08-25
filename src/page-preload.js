@@ -49,6 +49,21 @@
     }
     Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8, configurable: true });
     Object.defineProperty(navigator, 'deviceMemory', { get: () => 8, configurable: true });
+    // window.chrome.runtime: real Chrome always exposes it; embedded Chromium
+    // (Electron) doesn't. Its absence is THE canonical Google sign-in bot
+    // signal ("This browser or app may not be secure").
+    try {
+      if (!window.chrome) window.chrome = {};
+      if (!window.chrome.runtime) {
+        window.chrome.runtime = {
+          PlatformOs: { MAC: 'mac', WIN: 'win', ANDROID: 'android', CROS: 'cros', LINUX: 'linux', OPENBSD: 'openbsd' },
+          RequestUpdateCheckStatus: { NO_UPDATE: 'no_update', UPDATE_AVAILABLE: 'update_available', THROTTLED: 'throttled' },
+          connect: () => { throw new Error('Invalid call to runtime.connect()'); },
+          sendMessage: () => { throw new Error('Invalid call to runtime.sendMessage()'); },
+          id: undefined,
+        };
+      }
+    } catch {}
   } catch {}
 
   // Screen: report a common desktop geometry instead of the real window size.
