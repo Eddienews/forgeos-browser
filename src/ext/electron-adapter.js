@@ -73,21 +73,33 @@ class SessionAdapter {
     // Google sign-in anti-bot: rewrite Sec-CH-UA client hints to match our
     // generic Chrome UA (Electron injects 'Electron/<ver>' into these headers,
     // which triggers "This browser or app may not be secure").
-    session.webRequest.onBeforeSendHeaders({ urls: ['*://*/*'] }, (details, callback) => {
+    session.webRequest.onBeforeSendHeaders({ urls: ['*://*/*'] }, (details, cb2) => {
       const h = details.requestHeaders;
       const chromeVer = process.versions.chrome || '';
+      // Real Chrome ALWAYS sends Sec-CH-UA hints on navigations; Electron 43
+      // omits them entirely (verified by header capture). Their ABSENCE is as
+      // suspicious to Google as a wrong value — inject them explicitly.
+      const uaFull = `"Chromium";v="${chromeVer}", "Google Chrome";v="${chromeVer}", "Not?A_Brand";v="99"`;
+      const uaBrand = `"Not?A_Brand";v="99", "Chromium";v="${chromeVer}"`;
+      let foundUA = false, foundMobile = false, foundPlatform = false;
       for (const key of Object.keys(h)) {
         if (/^sec-ch-ua$/i.test(key)) {
-          h[key] = `"Chromium";v="${chromeVer}", "Google Chrome";v="${chromeVer}", "Not?A_Brand";v="99"`;
+          h[key] = uaFull; foundUA = true;
         } else if (/^sec-ch-ua-platform$/i.test(key)) {
-          h[key] = '"Windows"';
+          h[key] = '"Windows"'; foundPlatform = true;
         } else if (/^sec-ch-ua-mobile$/i.test(key)) {
-          h[key] = '?0';
+          h[key] = '?0'; foundMobile = true;
         } else if (/^user-agent$/i.test(key)) {
           h[key] = GENERIC_UA; // enforce on every request, not just fallback
         }
       }
-      callback({ requestHeaders: h });
+      if (!foundUA) h['Sec-CH-UA'] = uaFull;
+      if (!foundMobile) h['Sec-CH-UA-Mobile'] = '?0';
+      if (!foundPlatform) h['Sec-CH-UA-Platform'] = '"Windows"';
+      // Sec-CH-UA-Full-Version-List is checked for consistency too.
+      const major = chromeVer.split('.')[0];
+      h['Sec-CH-UA-Full-Version-List'] = `"Chromium";v="${chromeVer}", "Google Chrome";v="${chromeVer}", "Not?A_Brand";v="99.0.${major}.5"`;
+      cb2({ requestHeaders: h });
     });
 
     session.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, callback) => {
