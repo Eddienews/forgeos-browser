@@ -108,23 +108,36 @@
       } catch {}
     }
 
-    HTMLCanvasElement.prototype.toDataURL = function (...args) {
+    // WebGL canvases: getContext('2d') returns null, so perturb() never ran —
+    // the exported image was raw GPU output (the 18.23-bit leak). Draw the
+    // webgl canvas into a temp 2d canvas and perturb THAT before export.
+    const perturbCanvas = (canvas) => {
       try {
-        if (this.width && this.height) {
-          const ctx = this.getContext('2d');
-          if (ctx) perturb(ctx, this.width, this.height);
+        if (!canvas.width || !canvas.height) return;
+        const ctx2d = canvas.getContext('2d');
+        if (ctx2d) { perturb(ctx2d, canvas.width, canvas.height); return; }
+        const gl = canvas.getContext('webgl') || canvas.getContext('webgl2')
+          || canvas.getContext('experimental-webgl');
+        if (gl && LEVEL === 'standard') {
+          const tmp = document.createElement('canvas');
+          tmp.width = canvas.width; tmp.height = canvas.height;
+          const tctx = tmp.getContext('2d');
+          tctx.drawImage(canvas, 0, 0);
+          perturb(tctx, tmp.width, tmp.height);
+          const w = canvas.width, h = canvas.height;
+          canvas.getContext('2d').drawImage(tmp, 0, 0);
+          void w; void h;
         }
       } catch {}
+    };
+
+    HTMLCanvasElement.prototype.toDataURL = function (...args) {
+      try { perturbCanvas(this); } catch {}
       return origToDataURL.apply(this, args);
     };
 
     HTMLCanvasElement.prototype.toBlob = function (cb, ...rest) {
-      try {
-        if (this.width && this.height) {
-          const ctx = this.getContext('2d');
-          if (ctx) perturb(ctx, this.width, this.height);
-        }
-      } catch {}
+      try { perturbCanvas(this); } catch {}
       return origToBlob.call(this, cb, ...rest);
     };
 
