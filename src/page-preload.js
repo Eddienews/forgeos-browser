@@ -108,36 +108,45 @@
       } catch {}
     }
 
-    // WebGL canvases: getContext('2d') returns null, so perturb() never ran —
-    // the exported image was raw GPU output (the 18.23-bit leak). Draw the
-    // webgl canvas into a temp 2d canvas and perturb THAT before export.
-    const perturbCanvas = (canvas) => {
+    // WebGL canvases: cannot get a 2d context on them (a canvas has one
+    // context type). For toDataURL/toBlob on a webgl canvas, render it into
+    // a TEMP 2d canvas, perturb there, and export the temp — only what gets
+    // EXPORTED changes; the original canvas is untouched.
+    HTMLCanvasElement.prototype.toDataURL = function (...args) {
       try {
-        if (!canvas.width || !canvas.height) return;
-        const ctx2d = canvas.getContext('2d');
-        if (ctx2d) { perturb(ctx2d, canvas.width, canvas.height); return; }
-        const gl = canvas.getContext('webgl') || canvas.getContext('webgl2')
-          || canvas.getContext('experimental-webgl');
-        if (gl && LEVEL === 'standard') {
+        if (!this.width || !this.height) return origToDataURL.apply(this, args);
+        const ctx2d = this.getContext('2d');
+        if (ctx2d) { perturb(ctx2d, this.width, this.height); return origToDataURL.apply(this, args); }
+        const gl = this.getContext('webgl') || this.getContext('webgl2')
+          || this.getContext('experimental-webgl');
+        if (gl) {
           const tmp = document.createElement('canvas');
-          tmp.width = canvas.width; tmp.height = canvas.height;
+          tmp.width = this.width; tmp.height = this.height;
           const tctx = tmp.getContext('2d');
-          tctx.drawImage(canvas, 0, 0);
-          perturb(tctx, tmp.width, tmp.height);
-          const w = canvas.width, h = canvas.height;
-          canvas.getContext('2d').drawImage(tmp, 0, 0);
-          void w; void h;
+          tctx.drawImage(this, 0, 0);
+          if (LEVEL === 'standard') perturb(tctx, tmp.width, tmp.height);
+          return origToDataURL.call(tmp, ...args);
         }
       } catch {}
-    };
-
-    HTMLCanvasElement.prototype.toDataURL = function (...args) {
-      try { perturbCanvas(this); } catch {}
       return origToDataURL.apply(this, args);
     };
 
     HTMLCanvasElement.prototype.toBlob = function (cb, ...rest) {
-      try { perturbCanvas(this); } catch {}
+      try {
+        if (!this.width || !this.height) return origToBlob.call(this, cb, ...rest);
+        const ctx2d = this.getContext('2d');
+        if (ctx2d) { perturb(ctx2d, this.width, this.height); return origToBlob.call(this, cb, ...rest); }
+        const gl = this.getContext('webgl') || this.getContext('webgl2')
+          || this.getContext('experimental-webgl');
+        if (gl) {
+          const tmp = document.createElement('canvas');
+          tmp.width = this.width; tmp.height = this.height;
+          const tctx = tmp.getContext('2d');
+          tctx.drawImage(this, 0, 0);
+          if (LEVEL === 'standard') perturb(tctx, tmp.width, tmp.height);
+          return origToBlob.call(tmp, cb, ...rest);
+        }
+      } catch {}
       return origToBlob.call(this, cb, ...rest);
     };
 
@@ -183,9 +192,15 @@
     // per-origin noise to readPixels, just like canvas 2d.
     const farble = (gl, pixels, w, h) => {
       try {
+        // Aggressive deterministic noise: EVERY pixel, all 3 RGB channels,
+        // ±(0..3). Invisible on solid/gradient renders (CYT draws a triangle
+        // on solid bg), but the resulting image is dominated by our noise,
+        // not Eddie's GPU — the hash becomes origin-keyed, not GPU-keyed.
         const rand = prng();
-        for (let i = 0; i < pixels.length; i += 4 * 41) {
-          pixels[i] = Math.max(0, Math.min(255, pixels[i] + (rand() > 0.5 ? 1 : -1)));
+        for (let i = 0; i + 3 < pixels.length; i += 4) {
+          pixels[i]     = Math.max(0, Math.min(255, pixels[i]     + ((rand() * 7) | 0) - 3));
+          pixels[i + 1] = Math.max(0, Math.min(255, pixels[i + 1] + ((rand() * 7) | 0) - 3));
+          pixels[i + 2] = Math.max(0, Math.min(255, pixels[i + 2] + ((rand() * 7) | 0) - 3));
         }
       } catch {}
     };
