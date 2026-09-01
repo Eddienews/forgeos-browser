@@ -2,6 +2,12 @@
 
 **A private, local-first browser built for humans — and prepared for trusted AI agents.**
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Build](https://github.com/Eddienews/forgeos-browser/actions/workflows/build.yml/badge.svg)](https://github.com/Eddienews/forgeos-browser/actions)
+[![Tests](https://img.shields.io/badge/tests-94%20passing-brightgreen)](https://github.com/Eddienews/forgeos-browser/blob/main/tests/run-tests.js)
+[![Platforms](https://img.shields.io/badge/platforms-Windows%20·%20macOS%20·%20Linux%20·%20Pi-blue)](https://github.com/Eddienews/forgeos-browser/releases)
+[![Telemetry](https://img.shields.io/badge/telemetry-zero-orange)](https://github.com/Eddienews/forgeos-browser/blob/main/PRIVACY_MODEL.md)
+
 ForgeOS Browser is an educational, open-source study of what a browser should look like in the age of AI agents: a trust boundary between humans, websites, and autonomous agents. It is **not a production browser** and sends **zero telemetry**.
 
 ## Why it exists
