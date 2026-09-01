@@ -33,12 +33,14 @@ const allowlist = require('./engine/site-allowlist');
 const { compileCosmetic, selectorsForHost } = require('./engine/cosmetic-engine');
 const { startAgentApi } = require('./ext/agent-api');
 const credentialPolicy = require('./engine/credential-policy');
+const { browserViewBounds } = require('./engine/view-layout');
 const sessionStore = require('./engine/session-store');
 const { cleanUrlString } = require('./engine/url-cleaner');
 const { classifyField } = require('./engine/sensitive-fields');
 const { createPageWebPreferences } = require('./page-web-preferences');
 
 const TOOLBAR_H = 42; // must match renderer CSS --bar-h
+let menuRightInset = 0;
 const APP_ROOT = __dirname;
 const RENDERER = path.join(APP_ROOT, 'renderer', 'index.html');
 
@@ -271,7 +273,9 @@ function layoutActiveView() {
   const tab = tabs.get(activeTabId);
   if (!tab) return;
   const { width, height } = chromeWin.getContentBounds();
-  tab.view.setBounds({ x: 0, y: TOOLBAR_H, width, height: Math.max(0, height - TOOLBAR_H) });
+  tab.view.setBounds(browserViewBounds({
+    width, height, toolbarHeight: TOOLBAR_H, rightInset: menuRightInset,
+  }));
   tab.view.setVisible(true);
 }
 
@@ -442,20 +446,11 @@ function registerIpc() {
   });
   ipcMain.handle('forge:close-tab', (_e, id) => closeTab(id));
   ipcMain.handle('forge:switch-tab', (_e, id) => { if (tabs.has(id)) switchTab(id); });
-ipcMain.handle('forge:set-menu-open', (_e, open) => {
+ipcMain.handle('forge:set-menu-open', (_e, state) => {
     if (!chromeWin || !activeTabId) return false;
-    const tab = tabs.get(activeTabId);
-    if (!tab) return false;
-    const { width, height } = chromeWin.getContentBounds();
-    if (open) {
-      // Reserve the smaller of: the menu's real height (capped by CSS to the
-      // available space) and the space below the bar. The menu itself scrolls.
-      const avail = Math.max(0, height - TOOLBAR_H - 8);
-      const menuH = Math.min(480, avail);
-      tab.view.setBounds({ x: 0, y: TOOLBAR_H + menuH, width, height: Math.max(0, height - TOOLBAR_H - menuH) });
-    } else {
-      layoutActiveView();
-    }
+    const open = typeof state === 'object' ? !!state.open : !!state;
+    menuRightInset = open ? Math.max(0, Number(state && state.rightInset) || 0) : 0;
+    layoutActiveView();
     return true;
   });
   ipcMain.handle('forge:set-mode', (_e, m) => {
