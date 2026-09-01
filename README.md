@@ -77,7 +77,10 @@ for Windows and Linux. Restart ForgeOS after installing dependencies. Every job
 still requires explicit approval, supports cancellation, writes only to the
 downloads directory, and returns actionable errors. Transcript jobs keep clean
 `.txt` output for reading alongside timestamped `.vtt` captions for playback
-and editing. Download only content you are authorized to save.
+and editing. Video jobs require H.264 video and AAC audio so the resulting MP4
+plays in QuickTime and broadly compatible players; an unavailable compatible
+format is reported instead of producing a misleading audio-only MP4. Download
+only content you are authorized to save.
 
 ### Run on each platform
 
