@@ -196,7 +196,7 @@ class PluginRunner {
       if (kind === 'transcript') {
         try {
           const matchingFiles = transcriptFiles(this.downloadsDir, videoId, this.fs);
-          const sourceFiles = code === 0 ? matchingFiles : matchingFiles.filter((file) => {
+          const sourceFiles = matchingFiles.filter((file) => {
             if (!transcriptBefore.has(file)) return true;
             try { return this.fs.statSync(file).mtimeMs > transcriptBefore.get(file); } catch { return false; }
           });
@@ -206,6 +206,9 @@ class PluginRunner {
               this.fs.writeFileSync(txtPath, vttToPlainText(vttPath, this.fs), 'utf8');
               return txtPath;
             });
+            // VTT is an implementation detail. Remove only caption files
+            // produced or updated by this job, after every TXT write succeeds.
+            for (const vttPath of sourceFiles) this.fs.unlinkSync(vttPath);
             const warning = code === 0 ? undefined : classifyYtDlpError(
               boundedOutput(stderrLines), code, { kind, subtitleLangs }
             );
