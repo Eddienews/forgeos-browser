@@ -33,6 +33,7 @@ const allowlist = require('./engine/site-allowlist');
 const { compileCosmetic, selectorsForHost } = require('./engine/cosmetic-engine');
 const { startAgentApi } = require('./ext/agent-api');
 const credentialPolicy = require('./engine/credential-policy');
+const sessionStore = require('./engine/session-store');
 const { cleanUrlString } = require('./engine/url-cleaner');
 const { classifyField } = require('./engine/sensitive-fields');
 
@@ -204,6 +205,9 @@ function createTab(url = 'about:blank', opts = {}) {
     bh.addHistory({ url, title: wc.getTitle() });
     injectCosmetic(tab, url);
     injectDomRemoval(tab, url);
+    // Crash recovery: persist open tabs on every navigation so a force-kill
+    // or crash at any moment can restore the last good state.
+    try { sessionStore.captureOpenTabs(tabs, getRuntimeBase()); } catch {}
     sendState();
   });
 
@@ -733,15 +737,62 @@ function createChromeWindow() {
   // Attach the loader handler BEFORE loadFile: file:// may finish loading
   // near-instantly, so the listener must exist before the request starts.
   chromeWin.webContents.once('did-finish-load', () => {
-    const t = createTab('about:blank');
-    switchTab(t.id, { focus: false });
+    // Session restore (crash recovery): reopen tabs from the last session.
+    const saved = sessionStore.restoreTabs(getRuntimeBase());
+    if (saved.length) {
+      saved.forEach((u, i) => {
+        const t = createTab(u);
+        if (i === 0) switchTab(t.id, { focus: false });
+      });
+      log.log('INFO', 'session restored', { tabs: saved.length });
+    } else {
+      const t = createTab('about:blank');
+      switchTab(t.id, { focus: false });
+    }
     sendState();
+  });
+  chromeWin.webContents.on('will-navigate', (e, url) => {
+    // Chrome UI must never navigate to remote content (only file:// + in-app).
+    if (!url.startsWith('file://')) { e.preventDefault(); }
+  });
+  // CSP for the chrome UI: no remote scripts/styles, no inline eval, no
+  // connect to anything but localhost agent API. Hygiene for a file:// shell.
+  chromeWin.webContents.session.webRequest.onHeadersReceived({ urls: ['file://*/*'] }, (details, cb2) => {
+    const h = details.responseHeaders || {};
+    h['Content-Security-Policy'] = [
+      "default-src 'self' file: data:",
+      "script-src 'self' 'unsafe-inline'",   // chrome UI uses inline handlers
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: file:",
+      "connect-src 'self' http://127.0.0.1:8647 ws://127.0.0.1:*",
+      "font-src 'self' data:",
+      "object-src 'none'",
+      "base-uri 'none'",
+      "frame-ancestors 'none'",
+    ].join('; ');
+    cb2({ responseHeaders: h });
   });
   chromeWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   chromeWin.loadFile(RENDERER);
 }
 
 app.whenReady().then(() => {
+  // Crash recovery: never die silently. Log the error, show it, and keep the
+  // app alive where possible (a renderer/tab crash must not kill the shell).
+  process.on('uncaughtException', (err) => {
+    try { if (log) log.log('ERROR', 'uncaught exception', { msg: String(err && err.message || err).slice(0, 300) }); } catch {}
+    console.error('[forge] uncaughtException:', err);
+  });
+  process.on('unhandledRejection', (reason) => {
+    try { if (log) log.log('ERROR', 'unhandled rejection', { msg: String(reason && reason.message || reason).slice(0, 300) }); } catch {}
+  });
+  app.on('child-process-gone', (_e, details) => {
+    try { if (log) log.log('WARN', 'child process gone', { type: details.type, reason: details.reason }); } catch {}
+  });
+  app.on('render-process-gone', (_e, _wc, details) => {
+    try { if (log) log.log('WARN', 'renderer process gone', { reason: details.reason, exitCode: details.exitCode }); } catch {}
+  });
+
   // Initialize runtime paths now that app is ready (app.getPath is available)
   const EventLogModule = require('./engine/event-log');
   const { FilterEngine } = require('./engine/filter-engine');
@@ -934,7 +985,12 @@ async function runSmoke() {
   }
 }
 
-app.on('window-all-closed', () => app.quit());
+app.on('window-all-closed', () => {
+  // Persist open tabs for next launch (crash recovery) unless quitting
+  // is explicitly "clean" (forget-mode handled per-tab already).
+  if (tabs.size) sessionStore.captureOpenTabs(tabs, getRuntimeBase());
+  app.quit();
+});
 
 // Explicitly disable anything that could phone home from this project.
 app.setAppUserModelId('forge.browser.lab');
