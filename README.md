@@ -1,161 +1,81 @@
-# Forge Browser Lab
+# ForgeOS Browser
 
-**v0.4.0** · Windows · macOS · Linux · Raspberry Pi · Electron/Chromium · educational, non-commercial, **laboratory prototype**.
+**A private, local-first browser built for humans — and prepared for trusted AI agents.**
 
-A minimal browser built to study **two simultaneous security goals**:
+ForgeOS Browser is an educational, open-source study of what a browser should look like in the age of AI agents: a trust boundary between humans, websites, and autonomous agents. It is **not a production browser** and sends **zero telemetry**.
 
-1. **Protect the human** from tracking, advertising, unnecessary cookies, and cross-site data leakage.
-2. **Protect AI agents** from malicious or manipulative content encountered while browsing.
+## Why it exists
 
-> ⚠️ **This is not a production browser.** It is not designed to replace Chrome,
-> Firefox, Brave, Safari, or Tor. Passing its own laboratory tests says nothing
-> about real-world security. It is *not* secure, *not* anonymous, and *not*
-> privacy-certified. See [THREAT_MODEL.md](THREAT_MODEL.md) "Out of Scope".
+Mainstream browsers treat AI as a surface feature. ForgeOS Browser treats the agent as a potentially untrusted entity that needs a structural containment wall:
 
----
+- **Content is untrusted data** — every page is a sandboxed, unprivileged surface
+- **Reading is automatic** — the agent can read
+- **Acting requires human approval** — the agent proposes, the user disposes
 
-## What it is
+## Features
 
-A small browser shell (tabs, address bar, back/forward/reload, security badge)
-over Chrome via Electron's `WebContentsView`, with three layers:
+- 🛡 **Ad/tracker blocking** — EasyList + EasyPrivacy (110k network rules, trie-optimized, ~µs/request) + cosmetic filtering (13k+17k rules, DOM removal)
+- 🧬 **Fingerprint hardening** — canvas/audio/WebGL farbling per-origin (Brave-class), hardware/screen standardization, GPU vendor masking
+- 🍪 **Cookie policy** — third-party cookies blocked, per-mode storage isolation (Standard/Strict/Ephemeral)
+- 🚫 **Prompt-injection scanner** — advisory-only heuristic, never modifies page content
+- 🔌 **Agent API** — localhost-only, capability-token-gated HTTP surface (read/navigate/full scopes, TTL, rate-limited) for external agents
+- ⚙️ **Trust presets** — one decision releases a whole provider ecosystem (Google, Microsoft, Apple, Social), reversible
+- 🔐 **No-credentials policy** — identity-provider sign-in is intercepted with an honest notice; credentials stay in your main browser
+- 🕵️ **Zero telemetry** — nothing leaves the machine, ever
 
-1. **Privacy policy engine** — network-level request classification, ad/tracker
-   blocking, a cookie policy, tracking-parameter stripping, per-tab storage
-   isolation, and three privacy modes (Standard / Strict / Ephemeral).
-2. **Agent security layer** — page content is *always* untrusted data; a
-   structured Agent View with an explicit untrusted boundary; a prompt-injection
-   scanner; an action-approval gate; redaction of sensitive fields.
-3. **Local audit posture** — a local event log and **zero telemetry** created by
-   this project.
+## Security model
 
-## What it is NOT
+See [SECURITY_MODEL.md](SECURITY_MODEL.md), [THREAT_MODEL.md](THREAT_MODEL.md), [PRIVACY_MODEL.md](PRIVACY_MODEL.md), [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- ❌ Not a Chromium fork or a new rendering engine.
-- ❌ Not a tool to defeat CAPTCHA, bypass anti-bot protections, or bypass
-  authentication controls.
-- ❌ Not a surveillance tool: no telemetry, no history upload, no credential theft.
-- ❌ Not for automatic uploads/form-submission of sensitive data.
-- ❌ **Not verified** to be anonymous, secure against a determined adversary, or
-  privacy-certified.
+**Central rule:** the agent's reads are automatic; any state-changing action requires human approval.
 
-## Install
+## Benchmarks
 
-Requires **Node.js ≥ 18** and npm.
+Measured vs Brave/Chrome/Edge on the same machine (see [results/BENCHMARK.md](results/BENCHMARK.md)):
 
-```sh
-cd ForgeBrowserLab
-npm install --save-dev electron   # one-time Electron runtime download (~150 MB)
-```
+| Test | ForgeOS | Brave | Chrome | Edge |
+|---|---|---|---|---|
+| adblock-tester (0-100) | **95** | 96 | 77 | 48 |
+| turtlecute (/132) | **94** | ~83 | 30 | 9 |
+| CYT canvas/audio/WebGL | **randomized** | randomized | exposed | exposed |
+| Telemetry | **zero** | minimal | massive | massive |
 
-## Launch
+## Build & run
 
 ```bash
-npm start          # or: npx electron .
+npm install
+npm start                 # dev
+npm test                  # 87 unit tests
+npm run package           # electron-packager for host platform
+node scripts/make-portable.js   # portable zip
+# cross-platform: node scripts/package.js --platform=linux,darwin --arch=x64,arm64
 ```
 
-Navigate with the address bar (e.g. `example.com`), press **☰ Panels** for the
-control center: privacy dashboard, structured agent view, live event log,
-downloads, and a mock-agent demo (Phase 25).
+Portable mode: place a `.portable` marker file next to the executable to keep runtime data local.
 
-## Tests
-
-```bash
-npm test               # 87 pure-engine unit tests (Gates B–J), no network
-npm run test:e2e       # real Chromium + local fixtures, Tests A–G
-npm run verify         # compose Gates A–J from unit + e2e + smoke -> results/gates.md
-```
-
-## Layout
+## Architecture
 
 ```
-ForgeBrowserLab/
-  README.md  ARCHITECTURE.md  THREAT_MODEL.md  PRIVACY_MODEL.md
-  SECURITY_MODEL.md  TEST_PLAN.md
-  src/
-    main.js            # browser shell: tabs (WebContentsView), IPC, agent API, smoke
-    preload.js         # chrome-only bridge; page WebContentsViews get NO preload
-    renderer/          # minimal toolbar + control-center panels (rockets)
-    engine/            # pure, browser-agnostic policy engine (unit-tested)
-    ext/electron-adapter.js   # webRequest/cookies/permissions/downloads wiring
-    lists/             # filter data maintained SEPARATELY from code
-    agent/             # (mock agent demo boots from the control center)
-  tests/
-    unit/              # pure-engine suites (Gates B–J)
-    e2e/               # real-Chromium integration harness (Tests A–G)
-    pages/             # local HTML fixtures (no third-party traffic)
-  downloads/           # laboratory download directory (runtime)
-  logs/                # local event log (runtime, never leaves the machine)
-  results/             # test/gate evidence (runtime)
+src/
+├── main.js               Electron shell (window, tabs, WebContentsView)
+├── engine/               pure, testable core
+│   ├── filter-engine.js      network blocking (suffix trie)
+│   ├── cosmetic-engine.js    element-hiding rules
+│   ├── fingerprint*.js       hardening + farbling
+│   ├── agent-view.js         untrusted-context boundary
+│   ├── credential-policy.js  no-credentials gate
+│   └── ...                 17 modules total
+├── ext/
+│   ├── electron-adapter.js  webRequest + cookie policy wiring
+│   ├── agent-api.js         localhost capability API
+│   └── plugins.js           yt-dlp integrations
+└── renderer/              single-bar walnut-glass UI
 ```
 
-## Architecture at a glance
+## Disclaimer
 
-```text
-SYSTEM INSTRUCTIONS ─┐
-USER TASK ───────────┼  authority (never page-derived)
-AGENT POLICY ────────┘
-────────────────────────────── UNTRUSTED WEB CONTENT BOUNDARY
-PAGE CONTENT                (always untrusted: true; instruction authority: NONE)
-```
+**Educational laboratory prototype.** Not a production browser. Not an anonymity tool (see THREAT_MODEL "Out of Scope"). Some identity providers block embedded Chromium; ForgeOS Browser does not pretend to be Chrome — credentials belong in your main browser.
 
-The engine (src/engine/*) is pure logic with no Electron dependency, so every
-policy decision is unit-testable. The Electron layer only wires it to real
-network/session events. Full detail in [ARCHITECTURE.md](ARCHITECTURE.md).
+## License
 
-## Known limitations
-
-- **Referrer-based cookie attribution** — a response with `Referer` stripped can
-  be misclassified for third-party-cookie purposes.
-- **Per-tab storage isolation** (Strict/Ephemeral) is stricter than a normal
-  SameSite cookie jar: a login in one tab does not carry to another tab of the
-  same site. This is a deliberate laboratory trade-off.
-- **Fingerprint protections are advisory** — canvas/WebGL/font/audio/screen
-  entropy is engine-dependent and *not* mitigated here (see SECURITY_MODEL.md).
-- **Set-Cookie header parsing is approximate** (quoting edge cases out of scope).
-- **Bundled filter lists are a compact starter**; run `npm run update-lists` to
-  fetch full EasyList/EasyPrivacy as standalone data files.
-- **No extension ecosystem** — this is a lab harness, not a browser product.
-
-## Verification evidence
-
-| Suite | Result |
-|-------|--------|
-| Unit (engine) | 87 passed / 0 failed |
-| E2E (real Chromium, local fixtures) | Tests A–G all pass |
-| Real-app smoke (example.com) | loads over HTTPS; agent view `untrusted:true` |
-| Gates A–J | **all pass** — see `results/gates.md` |
-| Telemetry created by this project | **zero** (tested + source-audited) |
-
----
-_See also: [ARCHITECTURE](ARCHITECTURE.md) · [THREAT_MODEL](THREAT_MODEL.md) ·
-[PRIVACY_MODEL](PRIVACY_MODEL.md) · [SECURITY_MODEL](SECURITY_MODEL.md) ·
-[TEST_PLAN](TEST_PLAN.md)._
-
----
-
-## OPEN SOURCE
-
-![License](https://img.shields.io/badge/License-MIT-blue.svg)
-![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Raspberry%20Pi-lightgrey)
-![Node](https://img.shields.io/badge/Node-%E2%89%A518-brightgreen)
-
-Forge Browser Lab is released under the **MIT License** (see [LICENSE](LICENSE)).
-
-### Contributing
-
-This is an **educational laboratory prototype** — not a production browser. Contributions are welcome but **experimental in nature**. Before submitting a pull request:
-
-- Run `npm test` to confirm all 87+ engine unit tests pass.
-- Verify your changes respect the existing security models (`THREAT_MODEL.md`, `SECURITY_MODEL.md`).
-- Avoid introducing new runtime dependencies or telemetry.
-- Keep the `src/engine/` layer pure (no Electron dependency) so it remains unit-testable.
-
-### Educational / Research Disclaimer
-
-This project is a **study of browser architecture, privacy policy engines, and agent-safe content boundaries**. It is not intended for:
-
-- Bypassing CAPTCHA, anti-bot systems, or authentication controls.
-- Surveillance, data collection, or credential harvesting.
-- Replacing a general-purpose browser.
-
-The authors provide this software **as-is** for educational and research purposes. Use at your own risk.
+MIT — see [LICENSE](LICENSE). Contributions welcome: issues, PRs, and threat-model reviews.
