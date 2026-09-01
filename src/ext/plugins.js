@@ -1,37 +1,37 @@
 /*
- * plugins.js — Forge Browser Lab plugin runner (Phase 25 extension point).
+ * plugins.js — approval-gated YouTube video and transcript jobs.
  *
- * Two lab plugins backed by LOCAL tooling already on this machine:
- *   ⬇ download video  → yt-dlp <url> -o downloads/
- *   ✎ transcript      → yt-dlp --skip-download --write-auto-subs --sub-lang en,pt
- *
- * Security posture:
- *  - The page URL is passed through the PERMISSION GATE first
- *    (DOWNLOAD_FILE → ASK → human approves via native dialog).
- *  - Only the URL of the ACTIVE tab is used; the renderer never supplies
- *    arbitrary commands or paths.
- *  - Output goes ONLY to the laboratory downloads/ directory.
- *  - Nothing is auto-executed after download (Phase 13).
- *  - Progress streams back to the chrome UI over IPC; nothing leaves the
- *    machine except the request to the video host made by yt-dlp itself.
+ * Security contract:
+ *  - Only the active tab's validated YouTube URL is accepted.
+ *  - The human approval callback completes before tool discovery, directory
+ *    creation, process launch, or any network request.
+ *  - spawn() receives an argument array; no shell is involved.
+ *  - Output is constrained to ForgeOS downloads/ and never auto-executed.
  */
 'use strict';
 
 const { spawn } = require('child_process');
-const path = require('path');
 const fs = require('fs');
+const path = require('path');
 const settings = require('../engine/settings');
+const {
+  buildYtDlpArgs,
+  classifyYtDlpError,
+  extractVideoId,
+  resolveToolchain,
+  resolveYtDlp,
+  toolchainStatus,
+  transcriptFiles,
+  videoFiles,
+  vttToPlainText,
+} = require('./ytdlp-tools');
 
-// Downloads dir: outside the asar when packaged (next to the .exe),
-// project root in dev. Mirrors main.js RUNTIME_BASE logic.
 const IS_PACKAGED = __dirname.includes('app.asar');
 
 function resolveDownloadsDir() {
   if (!IS_PACKAGED) return path.join(__dirname, '..', '..', 'downloads');
   const exeDir = path.dirname(process.execPath);
-  // Portable mode: .portable marker next to the executable
   if (fs.existsSync(path.join(exeDir, '.portable'))) return path.join(exeDir, 'downloads');
-  // OS-sanctioned user-data directory
   try {
     const { app } = require('electron');
     return path.join(app.getPath('userData'), 'downloads');
@@ -41,205 +41,236 @@ function resolveDownloadsDir() {
 }
 
 const DOWNLOADS_DIR = resolveDownloadsDir();
-/**
- * Resolve yt-dlp across platforms via:
- *   1. FORGE_YTDLP env var (override)
- *   2. PATH lookup (which/where)
- *   3. ~/.local/bin/yt-dlp (common pipx install target)
- *   4. /usr/bin/yt-dlp (system package)
- *   5. bare name (relies on PATH at spawn time)
- *
- * No hardcoded user home paths. No C:/Users/<name> candidates.
- */
-function resolveYtDlp() {
-  const envOverride = process.env.FORGE_YTDLP;
-  if (envOverride && fs.existsSync(envOverride)) return envOverride;
 
-  // Try PATH resolution (which/where)
-  const { execSync } = require('child_process');
-  const whichCmd = process.platform === 'win32' ? 'where' : 'which';
-  try {
-    const found = execSync(`${whichCmd} yt-dlp`, { encoding: 'utf8', timeout: 5000 })
-      .split(/[\r\n]+/).filter(Boolean)[0];
-    if (found && fs.existsSync(found)) return found.trim();
-  } catch { /* not on PATH */ }
-
-  // Common pipx / system install locations (cross-platform)
-  const homedir = require('os').homedir();
-  const unixCandidates = [
-    path.join(homedir, '.local', 'bin', 'yt-dlp'),
-    '/usr/bin/yt-dlp',
-    '/usr/local/bin/yt-dlp',
-  ];
-  for (const c of unixCandidates) {
-    if (fs.existsSync(c)) return c;
-  }
-
-  // Last resort: let spawn() resolve it via the inherited PATH
-  return 'yt-dlp';
+function safeLog(log, level, message, data) {
+  try { log.log(level, message, data); } catch {}
 }
 
-/** Extract a youtube-ish video id from a URL, or null. */
-function extractVideoId(url) {
-  try {
-    const u = new URL(url);
-    if (u.hostname.includes('youtube.com')) {
-      const v = u.searchParams.get('v');
-      if (v) return v;
-      const m = u.pathname.match(/\/(shorts|embed)\/([\w-]{6,})/);
-      if (m) return m[2];
-    }
-    if (u.hostname === 'youtu.be') {
-      const m = u.pathname.match(/^\/([\w-]{6,})/);
-      if (m) return m[1];
-    }
-  } catch {}
-  return null;
+function boundedOutput(lines) {
+  return lines.slice(-40).join('\n').slice(-8000);
 }
 
-/**
- * Flatten a WebVTT subtitle file into plain readable text:
- * strips the header, cue numbers, timestamps, inline tags (<c>, <00:00:01.000>),
- * duplicate consecutive lines (auto-captions roll), and metadata blocks.
- */
-function vttToPlainText(vttPath) {
-  const raw = fs.readFileSync(vttPath, 'utf8');
-  const out = [];
-  for (let line of raw.split(/\r?\n/)) {
-    line = line.trim();
-    if (!line) continue;
-    if (/^WEBVTT/i.test(line)) continue;
-    if (/^(Kind|Language|NOTE|STYLE|REGION)\b/i.test(line)) continue;
-    if (/^\d+$/.test(line)) continue;                                   // cue number
-    if (line.includes('-->')) continue;                                 // timestamp line
-    line = line
-      .replace(/<[^>]+>/g, '')          // inline tags <c>, <00:00:01.000>
-      .replace(/\{\\[^}]*\}/g, '')      // ASS-style overrides {\an8}
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/\[\s*[_—-]*\s*\]/g, '') // [ __ ] sound-marker placeholders
-      .replace(/\[[^\]]{0,30}\]/g, (m) => /[a-z]{4}/i.test(m) ? m : ''); // [Music], [Applause]
-    if (!line) continue;
-    // Auto-captions repeat the previous block with one new word; skip dups.
-    if (out.length && out[out.length - 1] === line) continue;
-    // Rolling-caption dedup: drop short lines fully contained in the previous.
-    if (out.length && line.length <= out[out.length - 1].length + 12 &&
-        out[out.length - 1].includes(line)) continue;
-    out.push(line);
-  }
-  const text = out.join(' ').replace(/\s+/g, ' ').trim();
-  return text + '\n';
+function childEnvironment(toolchain) {
+  const toolDirs = [toolchain.ytdlp, toolchain.ffmpeg, toolchain.jsRuntime && toolchain.jsRuntime.path]
+    .filter(Boolean)
+    .map((file) => path.dirname(file));
+  return {
+    ...process.env,
+    PATH: [...new Set([...toolDirs, process.env.PATH || ''])].join(path.delimiter),
+  };
 }
 
 class PluginRunner {
-  constructor({ log }) {
-    this.log = log;
-    this.jobs = new Map(); // jobId -> child process
+  constructor(options = {}) {
+    this.log = options.log || { log: () => {} };
+    this.spawnImpl = options.spawnImpl || spawn;
+    this.fs = options.fsImpl || fs;
+    this.settings = options.settingsImpl || settings;
+    this.downloadsDir = options.downloadsDir || DOWNLOADS_DIR;
+    this.resolveToolchain = options.resolveToolchainImpl || resolveToolchain;
+    this.jobs = new Map();
     this.nextId = 1;
   }
 
-  /**
-   * @param {'video'|'transcript'} kind
-   * @param {string} pageUrl active tab URL
-   * @param {() => Promise<{approved:boolean}>} approve permission-gate callback
-   * @param {(evt: object) => void} emit progress callback (chrome UI)
-   */
-  async run(kind, pageUrl, approve, emit) {
+  async run(kind, pageUrl, approve, emit = () => {}) {
     const jobId = 'job-' + this.nextId++;
-    const ytdlp = resolveYtDlp();
-    if (!ytdlp) {
-      const e = { jobId, kind, state: 'error', error: 'yt-dlp not found. Set FORGE_YTDLP or install it.' };
-      emit(e);
-      return e;
+    if (kind !== 'video' && kind !== 'transcript') {
+      return { jobId, kind, state: 'error', error: 'Unsupported plugin action.' };
     }
-    const vid = extractVideoId(pageUrl);
-    if (!vid && /youtube|youtu\.be/.test(pageUrl)) {
-      const e = { jobId, kind, state: 'error', error: 'No video id found in the current URL.' };
-      emit(e); return e;
-    }
-    if (!vid) {
-      const e = { jobId, kind, state: 'error', error: 'This plugin currently supports YouTube URLs only.' };
-      emit(e); return e;
+    const videoId = extractVideoId(pageUrl);
+    if (!videoId) {
+      return { jobId, kind, state: 'error', error: 'Open a supported YouTube video, Short, or live-video page first.' };
     }
 
-    // Permission gate: downloads are consequential → ASK.
+    // Nothing external happens before this call resolves affirmatively.
     const gate = await approve();
-    if (!gate.approved) {
-      const r = { jobId, kind, state: 'denied', reason: 'Human denied the action' };
-      this.log.log('DENY', 'plugin ' + kind + ' denied', { url: pageUrl.slice(0, 200) });
-      emit(r); return r;
+    if (!gate || !gate.approved) {
+      safeLog(this.log, 'DENY', 'plugin action denied', { kind, videoId });
+      return { jobId, kind, state: 'denied', reason: 'Human denied the action' };
     }
-    this.log.log('ALLOW', 'plugin ' + kind + ' approved', { url: pageUrl.slice(0, 200), job: jobId });
 
-    fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
-    // Output goes into the laboratory downloads dir; the template is relative
-    // and the child runs with cwd=downloads (no path-escape possible).
-    const relTpl = '%(title).80s [%(id)s].%(ext)s';
+    const toolchain = this.resolveToolchain();
+    if (!toolchain.ytdlp) {
+      return {
+        jobId, kind, state: 'error',
+        error: 'yt-dlp is not installed. Install it, then restart ForgeOS Browser.',
+      };
+    }
+    if (!toolchain.jsRuntime) {
+      return {
+        jobId, kind, state: 'error',
+        error: 'YouTube requires Node 22+ or Deno 2.3+. Install one, then restart ForgeOS Browser.',
+      };
+    }
+    if (kind === 'video' && !toolchain.ffmpeg) {
+      return {
+        jobId, kind, state: 'error',
+        error: 'FFmpeg is required to merge video and audio. Install it, then restart ForgeOS Browser.',
+      };
+    }
 
-    const args = kind === 'video'
-      ? ['-f', 'bv*[height<=1080]+ba/b[height<=1080]', '--merge-output-format', 'mp4',
-         '-o', relTpl, '--no-playlist', pageUrl]
-      : ['--skip-download', '--write-auto-subs', '--write-subs',
-         '--sub-langs', settings.all().subtitleLangs || 'en.*,pt.*',
-         '-o', relTpl, '--no-playlist', pageUrl];
-
-    const child = spawn(ytdlp, args, { windowsHide: true, cwd: DOWNLOADS_DIR });
-    this.jobs.set(jobId, child);
-
-    // Transcript jobs: after download, flatten the .vtt into clean .txt.
+    this.fs.mkdirSync(this.downloadsDir, { recursive: true });
+    const transcriptBefore = new Map();
     if (kind === 'transcript') {
-      child.on('close', (code) => {
-        if (code !== 0) return;
-        try {
-          const files = fs.readdirSync(DOWNLOADS_DIR).filter(f => f.endsWith('.vtt') &&
-            f.includes(vid));
-          for (const vtt of files) {
-            const txtPath = path.join(DOWNLOADS_DIR, vtt.replace(/\.vtt$/, '') + '.txt');
-            fs.writeFileSync(txtPath, vttToPlainText(path.join(DOWNLOADS_DIR, vtt)), 'utf8');
-          }
-          this.log.log('INFO', 'transcript converted to txt', { job: jobId });
-        } catch (e) {
-          this.log.log('ERROR', 'vtt->txt failed', { error: String(e).slice(0, 150), job: jobId });
-        }
+      for (const file of transcriptFiles(this.downloadsDir, videoId, this.fs)) {
+        try { transcriptBefore.set(file, this.fs.statSync(file).mtimeMs); } catch {}
+      }
+    }
+    const subtitleLangs = this.settings.all().subtitleLangs || 'en.*,pt.*';
+    const args = buildYtDlpArgs(kind, pageUrl, {
+      subtitleLangs,
+      ffmpeg: toolchain.ffmpeg,
+      jsRuntime: toolchain.jsRuntime,
+    });
+
+    let child;
+    try {
+      child = this.spawnImpl(toolchain.ytdlp, args, {
+        windowsHide: true,
+        cwd: this.downloadsDir,
+        env: childEnvironment(toolchain),
+        shell: false,
       });
+    } catch (error) {
+      return { jobId, kind, state: 'error', error: String(error.message || error).slice(0, 240) };
     }
 
+    const job = { child, emit, kind, cancelled: false, finished: false };
+    this.jobs.set(jobId, job);
+    safeLog(this.log, 'ALLOW', 'plugin action started', { kind, videoId, job: jobId });
     emit({ jobId, kind, state: 'running', url: pageUrl });
-    let lastPct = '';
-    const onLine = (buf) => {
-      for (const line of buf.toString().split(/\r?\n/)) {
-        const m = line.match(/(\d+(?:\.\d+)?)%/);
-        if (m && m[1] !== lastPct) {
-          lastPct = m[1];
-          emit({ jobId, kind, state: 'progress', pct: Number(m[1]) });
-        }
-        if (/has already been downloaded/.test(line)) {
-          emit({ jobId, kind, state: 'done', note: 'already downloaded' });
+
+    const stderrLines = [];
+    const outputPaths = [];
+    let lastPct = null;
+    const onLine = (line, isErrorStream) => {
+      const clean = line.trim();
+      if (!clean) return;
+      if (isErrorStream) stderrLines.push(clean);
+      const marker = clean.match(/^FORGE_OUTPUT:(.+)$/);
+      if (marker) outputPaths.push(marker[1].trim());
+      const progress = clean.match(/FORGE_PROGRESS:\s*(\d+(?:\.\d+)?)%/) || clean.match(/\b(\d+(?:\.\d+)?)%/);
+      if (progress) {
+        const pct = Number(progress[1]);
+        if (Number.isFinite(pct) && pct !== lastPct) {
+          lastPct = pct;
+          emit({ jobId, kind, state: 'progress', pct });
         }
       }
     };
-    child.stdout.on('data', onLine);
-    child.stderr.on('data', onLine);
-    child.on('error', (err) => {
+    const consume = (stream, isErrorStream) => {
+      if (!stream || typeof stream.on !== 'function') return;
+      let pending = '';
+      stream.on('data', (chunk) => {
+        pending += chunk.toString();
+        const lines = pending.split(/\r?\n/);
+        pending = lines.pop() || '';
+        for (const line of lines) onLine(line, isErrorStream);
+      });
+      stream.on('end', () => { if (pending) onLine(pending, isErrorStream); });
+    };
+    consume(child.stdout, false);
+    consume(child.stderr, true);
+
+    const finish = (event) => {
+      if (job.finished) return;
+      job.finished = true;
       this.jobs.delete(jobId);
-      emit({ jobId, kind, state: 'error', error: String(err.message || err).slice(0, 200) });
+      emit({ jobId, kind, ...event });
+    };
+
+    child.once('error', (error) => {
+      finish({ state: 'error', error: `Unable to start yt-dlp: ${String(error.message || error).slice(0, 220)}` });
+      safeLog(this.log, 'ERROR', 'plugin process failed to start', { kind, job: jobId });
     });
-    child.on('close', (code) => {
-      this.jobs.delete(jobId);
-      emit({ jobId, kind, state: code === 0 ? 'done' : 'error', code,
-             error: code === 0 ? undefined : 'yt-dlp exited with code ' + code });
-      this.log.log(code === 0 ? 'INFO' : 'ERROR', 'plugin ' + kind + ' finished', { code, job: jobId });
+    child.once('close', (code, signal) => {
+      if (job.finished) return;
+      if (job.cancelled) {
+        finish({ state: 'cancelled', signal: signal || null });
+        safeLog(this.log, 'INFO', 'plugin action cancelled', { kind, job: jobId });
+        return;
+      }
+      // yt-dlp can return non-zero when one requested translation fails after
+      // it has already saved other valid captions. Preserve those useful
+      // outputs and report the partial failure as a warning.
+      if (kind === 'transcript') {
+        try {
+          const matchingFiles = transcriptFiles(this.downloadsDir, videoId, this.fs);
+          const sourceFiles = matchingFiles.filter((file) => {
+            if (!transcriptBefore.has(file)) return true;
+            try { return this.fs.statSync(file).mtimeMs > transcriptBefore.get(file); } catch { return false; }
+          });
+          if (sourceFiles.length) {
+            const files = sourceFiles.map((vttPath) => {
+              const txtPath = vttPath.replace(/\.vtt$/i, '.txt');
+              this.fs.writeFileSync(txtPath, vttToPlainText(vttPath, this.fs), 'utf8');
+              return txtPath;
+            });
+            const warning = code === 0 ? undefined : classifyYtDlpError(
+              boundedOutput(stderrLines), code, { kind, subtitleLangs }
+            );
+            finish({ state: 'done', code, files: [...files, ...sourceFiles], warning });
+            safeLog(this.log, code === 0 ? 'INFO' : 'WARN', 'transcript converted to text', {
+              count: files.length, partial: code !== 0, job: jobId,
+            });
+            return;
+          }
+        } catch (error) {
+          finish({ state: 'error', code, error: `Output processing failed: ${String(error.message || error).slice(0, 220)}` });
+          safeLog(this.log, 'ERROR', 'plugin output processing failed', { kind, job: jobId });
+          return;
+        }
+      }
+      if (code !== 0) {
+        const error = classifyYtDlpError(boundedOutput(stderrLines), code, { kind, subtitleLangs });
+        finish({ state: 'error', code, error });
+        safeLog(this.log, 'ERROR', 'plugin action failed', { kind, code, job: jobId });
+        return;
+      }
+
+      try {
+        if (kind === 'transcript') {
+          finish({
+            state: 'error', code,
+            error: `No subtitles were produced for the selected languages (${subtitleLangs}). Try another language.`,
+          });
+          return;
+        }
+
+        const base = path.resolve(this.downloadsDir) + path.sep;
+        const marked = outputPaths
+          .map((file) => path.resolve(this.downloadsDir, file))
+          .filter((file) => file.startsWith(base) && this.fs.existsSync(file));
+        const files = [...new Set(marked.length ? marked : videoFiles(this.downloadsDir, videoId, this.fs))];
+        if (!files.length) {
+          finish({ state: 'error', code, error: 'yt-dlp exited successfully but no playable video file was found.' });
+          return;
+        }
+        finish({ state: 'done', code, files });
+        safeLog(this.log, 'INFO', 'video download completed', { count: files.length, job: jobId });
+      } catch (error) {
+        finish({ state: 'error', code, error: `Output processing failed: ${String(error.message || error).slice(0, 220)}` });
+        safeLog(this.log, 'ERROR', 'plugin output processing failed', { kind, job: jobId });
+      }
     });
+
     return { jobId, kind, state: 'started' };
   }
 
   cancel(jobId) {
-    const j = this.jobs.get(jobId);
-    if (j) { try { j.kill(); } catch {} this.jobs.delete(jobId); }
-    return !!j;
+    const job = this.jobs.get(jobId);
+    if (!job) return false;
+    job.cancelled = true;
+    try { job.child.kill(); } catch {}
+    return true;
   }
 }
 
-module.exports = { PluginRunner, extractVideoId, resolveYtDlp, DOWNLOADS_DIR };
+module.exports = {
+  PluginRunner,
+  DOWNLOADS_DIR,
+  extractVideoId,
+  resolveDownloadsDir,
+  resolveYtDlp,
+  toolchainStatus,
+};

@@ -26,9 +26,10 @@ Status legend: [x] done · [~] partial · [ ] planned · (v0.x) target version.
 - [x] Agent security layer: untrusted Agent View, sensitive-field redaction,
       prompt-injection scanner (advisory), action approval gate (read auto /
       act ASK / passwords HUMAN_ONLY)
-- [~] Plugins: 📁 open downloads folder shipped; ⬇ video and ✎ transcript are
-      reported non-functional and tracked with acceptance checks in `TODO.md`
-- [x] Download UX: persistent progress pill with % + completion toast
+- [~] Plugins: 📁 open downloads, ⬇ video, and ✎ transcript repaired and
+      round-trip verified on macOS; Windows/Linux manual gates remain in `TODO.md`
+- [x] Download UX: persistent progress pill, cancellation, completion toast,
+      output discovery, and actionable dependency/network/caption errors
 - [x] Local event log (logs/forge-events.log), zero telemetry (tested)
 - [x] Packaging: electron-packager per-OS; portable zip; runtime dirs next to exe
 

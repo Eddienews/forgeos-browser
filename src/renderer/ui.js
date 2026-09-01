@@ -230,19 +230,31 @@
     }
     const el = $('ytdlp-status');
     if (!yt) { el.textContent = 'yt-dlp: not found'; return; }
-    el.textContent = yt.found
-      ? `yt-dlp ✓ ${yt.version || ''}`
-      : 'yt-dlp: not found — ' + (yt.hint || '');
+    if (!yt.found) {
+      el.textContent = 'yt-dlp: not found — ' + (yt.hint || 'install it and restart');
+    } else if (!yt.ready) {
+      el.textContent = `yt-dlp found · missing: ${(yt.missing || []).join(', ')}`;
+    } else {
+      el.textContent = `yt-dlp ready · ${yt.jsRuntime || 'JS runtime'} + FFmpeg`;
+    }
   }).catch(() => {});
 
   /* ---------------- plugins: ⬇ video / ✎ transcript ---------------- */
   // Persistent progress pill (bottom-right): shows while a job runs.
   let progressEl = null;
+  let currentJobId = null;
+  let pluginBusy = false;
   function showProgress(label) {
     if (!progressEl) {
       progressEl = document.createElement('div');
       progressEl.id = 'plug-progress';
-      progressEl.innerHTML = '<span class="pp-label"></span><div class="pp-bar"><div class="pp-fill"></div></div>';
+      progressEl.innerHTML = '<div class="pp-head"><span class="pp-label"></span><button class="pp-cancel" type="button">Cancel</button></div><div class="pp-bar"><div class="pp-fill"></div></div>';
+      progressEl.querySelector('.pp-cancel').addEventListener('click', async () => {
+        if (!currentJobId) return;
+        progressEl.querySelector('.pp-cancel').disabled = true;
+        progressEl.querySelector('.pp-label').textContent = 'Cancelling…';
+        await F.pluginCancel(currentJobId);
+      });
       document.body.appendChild(progressEl);
     }
     progressEl.querySelector('.pp-label').textContent = label;
@@ -255,7 +267,14 @@
     progressEl.querySelector('.pp-fill').classList.toggle('indeterminate', pct < 0);
   }
   function hideProgress() {
-    if (progressEl) { progressEl.classList.remove('show'); setTimeout(() => { if (progressEl) progressEl.remove(); progressEl = null; }, 400); }
+    currentJobId = null;
+    pluginBusy = false;
+    if (progressEl) {
+      const finishedEl = progressEl;
+      progressEl = null;
+      finishedEl.classList.remove('show');
+      setTimeout(() => finishedEl.remove(), 400);
+    }
   }
 
   const toast = document.createElement('div');
@@ -270,17 +289,20 @@
   }
 
   function runPlugin(kind) {
+    if (pluginBusy) { showToast('A download job is already running.'); return; }
     const t = state && state.tabs.find((x) => x.id === state.activeTabId);
     if (!t || !/^https?:/i.test(t.url || '')) {
       showToast('Open a video page first.');
       return;
     }
+    pluginBusy = true;
     closeMenu();
     showProgress(kind === 'video' ? '⬇ Downloading video…' : '✎ Fetching transcript…');
     setProgress(-1);
     F.plugin(kind).then((r) => {
       if (r && r.state === 'error') { hideProgress(); showToast('⚠ ' + r.error); }
       else if (r && r.state === 'denied') { hideProgress(); showToast('✕ Action denied.'); }
+      else if (r && r.state === 'started' && pluginBusy) { currentJobId = r.jobId; }
     }).catch((e) => { hideProgress(); showToast('⚠ ' + String(e)); });
   }
   $('btn-dlvideo').addEventListener('click', () => runPlugin('video'));
@@ -290,12 +312,19 @@
   F.onPluginEvent?.((evt) => {
     if (!evt) return;
     switch (evt.state) {
+      case 'running':
+        currentJobId = evt.jobId;
+        break;
       case 'progress':
-        setProgress(evt.pct, `⬇ ${Math.round(evt.pct)}%`);
+        setProgress(evt.pct, `${evt.kind === 'transcript' ? '✎' : '⬇'} ${Math.round(evt.pct)}%`);
         break;
       case 'done':
         hideProgress();
-        showToast('✓ Saved to downloads/ — click 📁 to open', 6000);
+        showToast(evt.kind === 'transcript'
+          ? (evt.warning
+              ? '✓ Transcript saved; some requested languages were unavailable'
+              : '✓ Transcript saved as text — click 📁 to open')
+          : '✓ Video saved — click 📁 to open', 6000);
         break;
       case 'error':
         hideProgress();
@@ -304,6 +333,10 @@
       case 'denied':
         hideProgress();
         showToast('✕ Denied.');
+        break;
+      case 'cancelled':
+        hideProgress();
+        showToast('✕ Download cancelled.');
         break;
       default:
         break;

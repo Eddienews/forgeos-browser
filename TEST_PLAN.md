@@ -58,7 +58,7 @@ Gate F — Agent-safe content representation. **PASS**
 Gate G — Prompt-injection warnings. **PASS**
 Gate H — Action approval system. **PASS**
 Gate I — Privacy dashboard. **PASS**
-Gate J — Tests pass (unit + e2e). **PASS**
+Gate J — Tests pass (unit + e2e), including offline YouTube plugin lifecycle. **PASS**
 Gate K — Real page trust boundary (sandbox + isolation + no privileged globals). **PASS**
 
 ### Evidence files

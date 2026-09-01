@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Build](https://github.com/Eddienews/forgeos-browser/actions/workflows/build.yml/badge.svg)](https://github.com/Eddienews/forgeos-browser/actions)
-[![Tests](https://img.shields.io/badge/tests-96%20passing-brightgreen)](https://github.com/Eddienews/forgeos-browser/blob/main/tests/run-tests.js)
+[![Tests](https://img.shields.io/badge/tests-110%20passing-brightgreen)](https://github.com/Eddienews/forgeos-browser/blob/main/tests/run-tests.js)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20·%20macOS%20·%20Linux%20·%20Pi-blue)](https://github.com/Eddienews/forgeos-browser/releases)
 [![Telemetry](https://img.shields.io/badge/telemetry-zero-orange)](https://github.com/Eddienews/forgeos-browser/blob/main/PRIVACY_MODEL.md)
 
@@ -43,7 +43,7 @@ Measured vs Brave/Chrome/Edge on the same machine (see [results/BENCHMARK.md](re
 |---|---|---|---|---|
 | adblock-tester (0-100) | **95** | 96 | 77 | 48 |
 | turtlecute (/132) | **94** | ~83 | 30 | 9 |
-| CYT canvas/audio/WebGL | **randomized** | randomized | exposed | exposed |
+| CYT canvas/audio/WebGL | **engine-exposed (documented)** | randomized | exposed | exposed |
 | Telemetry | **zero** | minimal | massive | massive |
 
 ## Build & run
@@ -51,13 +51,33 @@ Measured vs Brave/Chrome/Edge on the same machine (see [results/BENCHMARK.md](re
 ```bash
 npm install
 npm start                 # dev
-npm test                  # 96 unit tests
+npm test                  # 110 unit tests
 npm run package           # electron-packager for host platform
 node scripts/make-portable.js   # portable zip
 # cross-platform: node scripts/package.js --platform=linux,darwin --arch=x64,arm64
 ```
 
 Portable mode: place a `.portable` marker file next to the executable to keep runtime data local.
+
+### YouTube video and transcript plugins
+
+The toolbar download and transcript actions use a local
+[`yt-dlp`](https://github.com/yt-dlp/yt-dlp) installation. Current YouTube
+support also requires FFmpeg plus either Deno 2.3+ or Node 22+. ForgeOS detects
+these tools without launching them and never installs or updates them silently.
+
+On macOS with Homebrew:
+
+```bash
+brew install yt-dlp ffmpeg
+```
+
+See the official [yt-dlp installation guide](https://github.com/yt-dlp/yt-dlp#installation)
+for Windows and Linux. Restart ForgeOS after installing dependencies. Every job
+still requires explicit approval, supports cancellation, writes only to the
+downloads directory, and returns actionable errors. Transcript jobs keep clean
+`.txt` output for reading alongside timestamped `.vtt` captions for playback
+and editing. Download only content you are authorized to save.
 
 ### Run on each platform
 
@@ -119,7 +139,8 @@ src/
 ├── ext/
 │   ├── electron-adapter.js  webRequest + cookie policy wiring
 │   ├── agent-api.js         localhost capability API
-│   └── plugins.js           yt-dlp integrations
+│   ├── plugins.js           approval-gated yt-dlp jobs
+│   └── ytdlp-tools.js       discovery, commands, output conversion
 └── renderer/              single-bar walnut-glass UI
 ```
 

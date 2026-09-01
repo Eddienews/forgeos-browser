@@ -26,6 +26,17 @@ every supported host platform that the change affects.
   - A manual round-trip is recorded for macOS, Windows, and Linux before the
     item is marked complete.
 
+  Progress (2026-09-01):
+
+  - [x] Honest toolchain discovery for yt-dlp, FFmpeg, and Deno/Node.
+  - [x] Approval-before-process ordering, shell-free arguments, progress,
+    cancellation, output discovery, partial-caption recovery, and actionable
+    failures covered by offline automated tests.
+  - [x] macOS manual round-trip: playable H.264/AAC MP4 and readable English
+    transcript generated from a public 19-second YouTube video.
+  - [ ] Windows x64 packaged-app round-trip.
+  - [ ] Linux x64 and arm64 packaged-app round-trip.
+
 ## Privacy hardening
 
 - [ ] **Reintroduce configurable page fingerprint mitigation without weakening

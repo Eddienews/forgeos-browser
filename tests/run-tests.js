@@ -30,49 +30,50 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-const started = Date.now();
+async function main() {
+  const started = Date.now();
 
-for (const f of files) {
-  const mod = require(path.join(unitDir, f));
-  const suite = Array.isArray(mod) ? mod : mod.tests;
-  if (!Array.isArray(suite)) {
-    console.error(`Suite ${f} must export an array of tests`);
-    process.exit(1);
-  }
-  for (const t of suite) {
-    const id = `${f.replace('.test.js', '')} :: ${t.name}`;
-    try {
-      t.fn(require('assert'));
-      pass += 1;
-      noteGate(t.gate, id, true);
-    } catch (e) {
-      fail += 1;
-      failures.push(`${id}\n    ${e.message}`);
-      noteGate(t.gate, id, false);
+  for (const f of files) {
+    const mod = require(path.join(unitDir, f));
+    const suite = Array.isArray(mod) ? mod : mod.tests;
+    if (!Array.isArray(suite)) throw new Error(`Suite ${f} must export an array of tests`);
+    for (const t of suite) {
+      const id = `${f.replace('.test.js', '')} :: ${t.name}`;
+      try {
+        await t.fn(require('assert'));
+        pass += 1;
+        noteGate(t.gate, id, true);
+      } catch (e) {
+        fail += 1;
+        failures.push(`${id}\n    ${e.message}`);
+        noteGate(t.gate, id, false);
+      }
     }
   }
+
+  const ms = Date.now() - started;
+  console.log('\n=== FORGE BROWSER LAB — UNIT TESTS ===\n');
+  for (const [gate, g] of [...gateStats.entries()].sort()) {
+    const status = g.failed === 0 ? 'PASS' : 'FAIL';
+    console.log(`  Gate ${gate}: ${status}  (${g.total - g.failed}/${g.total})`);
+  }
+  console.log(`\n  Total: ${pass} passed, ${fail} failed  (${ms} ms)\n`);
+  if (failures.length) {
+    console.log('Failures:');
+    for (const failure of failures) console.log('  ✗ ' + failure);
+    console.log('');
+  }
+
+  const gatesOut = {};
+  for (const [gate, g] of gateStats) {
+    gatesOut[gate] = { total: g.total, failed: g.failed, failedNames: g.names };
+  }
+  fs.mkdirSync(path.dirname(resultsFile), { recursive: true });
+  fs.writeFileSync(resultsFile, JSON.stringify({ pass, fail, gates: gatesOut, ms }, null, 2));
+  process.exit(fail === 0 ? 0 : 1);
 }
 
-const ms = Date.now() - started;
-
-console.log('\n=== FORGE BROWSER LAB — UNIT TESTS ===\n');
-for (const [gate, g] of [...gateStats.entries()].sort()) {
-  const status = g.failed === 0 ? 'PASS' : 'FAIL';
-  console.log(`  Gate ${gate}: ${status}  (${g.total - g.failed}/${g.total})`);
-}
-console.log(`\n  Total: ${pass} passed, ${fail} failed  (${ms} ms)\n`);
-if (failures.length) {
-  console.log('Failures:');
-  for (const f of failures) console.log('  ✗ ' + f);
-  console.log('');
-}
-
-// Machine-readable summary for scripts/verify-gates.js
-const gatesOut = {};
-for (const [gate, g] of gateStats) {
-  gatesOut[gate] = { total: g.total, failed: g.failed, failedNames: g.names };
-}
-fs.mkdirSync(path.dirname(resultsFile), { recursive: true });
-fs.writeFileSync(resultsFile, JSON.stringify({ pass, fail, gates: gatesOut, ms }, null, 2));
-
-process.exit(fail === 0 ? 0 : 1);
+main().catch((error) => {
+  console.error('Unit test runner crashed:', error);
+  process.exit(2);
+});

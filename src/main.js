@@ -530,13 +530,16 @@ ipcMain.handle('forge:set-menu-open', (_e, open) => {
   // Plugins (⬇ video / ✎ transcript): URL comes from the ACTIVE tab only;
   // the action passes the permission gate before yt-dlp ever starts.
   ipcMain.handle('forge:plugin', (_e, kind) => {
+    if (kind !== 'video' && kind !== 'transcript') {
+      return { state: 'error', error: 'Unsupported plugin action.' };
+    }
     const t = activeTab();
     if (!t || !t.url || !/^https?:/i.test(t.url)) {
       return { state: 'error', error: 'Open a video page first.' };
     }
     const pageUrl = t.url;
     return plugins.run(
-      kind === 'transcript' ? 'transcript' : 'video',
+      kind,
       pageUrl,
       async () => {
         if (!chromeWin) return { approved: false };
@@ -567,11 +570,9 @@ ipcMain.handle('forge:set-menu-open', (_e, open) => {
   });
   ipcMain.handle('forge:version', () => app.getVersion());
   ipcMain.handle('forge:ytdlp-status', () => {
-    const p = require('./ext/plugins').resolveYtDlp();
-    if (!p) return { found: false, hint: 'Set FORGE_YTDLP env var or install yt-dlp.' };
-    let version = '';
-    try { version = require('child_process').execFileSync(p, ['--version'], { timeout: 8000 }).toString().trim(); } catch {}
-    return { found: true, path: p, version };
+    // Path inspection only: opening the menu must never launch an external
+    // process. Actual tools start only after the plugin approval dialog.
+    return require('./ext/plugins').toolchainStatus();
   });
 
   /* ---- per-site allowlist + zoom (v0.3) ---- */
