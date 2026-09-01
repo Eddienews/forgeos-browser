@@ -57,6 +57,12 @@ Downloads go to `ForgeBrowserLab/downloads/` and are **never executed
 automatically**. The UI shows filename, source domain, size, content type, and
 state; unknown executables are marked.
 
+YouTube plugin jobs accept only the active tab's validated YouTube URL. Human
+approval completes before tool discovery, directory creation, external process
+launch, or network activity. `yt-dlp` receives an argument array with no shell;
+its output is constrained to the downloads directory. ForgeOS never exports
+browser cookies or credentials to bypass YouTube login, age, or bot gates.
+
 ## Sandboxing and boundaries (Phase 17)
 
 - Page WebContentsViews: `sandbox:true`, `contextIsolation:true`,

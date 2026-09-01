@@ -112,7 +112,7 @@ Documented limitation: same-site state does not share across tabs in these modes
 
 ### 7. Agent integration interface (Phase 25)
 
-`src/preload.js` `forge.agent` maps to IPC in `main.ts`:
+`src/preload.js` `forge.agent` maps to IPC in `main.js`:
 
 ```
 navigate(url) · read_page() · get_links() · get_agent_view()
@@ -122,7 +122,16 @@ security_status() · click(selector) · request_action(action, details)
 Mutating actions pass through the permission gate. A mock agent in the control
 center drives these visibly (read, links, submit, upload, password, purchase).
 
-### 8. History / clear session (Phase 16)
+### 8. YouTube plugin runner (`src/ext/plugins.js`, `ytdlp-tools.js`)
+
+The chrome asks the main process to run a video or transcript job for the
+active tab. URL validation and the native approval dialog run first. Only after
+approval does the runner inspect local executables and launch `yt-dlp` with a
+shell-free argument array. Tool discovery, command construction, progress/error
+parsing, final output discovery, and VTT conversion are independently testable.
+The UI allows only one visible job at a time and exposes cancellation.
+
+### 9. History / clear session (Phase 16)
 
 History is kept in-memory per tab (not synced/clouded). **Clear session**
 wipes history, cookies, storage, caches, and agent browsing context, and reloads
