@@ -6,6 +6,8 @@
  *
  * Pure policy data + helpers. The Electron layer maps these to sessions,
  * webRequest filters, and storage partitions.
+ * `fingerprint` values are retained as forward-compatible policy metadata;
+ * page-world shims stay disabled until the TODO.md safety checks are met.
  */
 'use strict';
 

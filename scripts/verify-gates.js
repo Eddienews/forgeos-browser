@@ -1,5 +1,5 @@
 /*
- * scripts/verify-gates.js — assemble the Gate A–J status from three
+ * scripts/verify-gates.js — assemble the Gate A–K status from three
  * evidence sources and write results/gates.md.
  *
  *   1. unit   -> tests/run-tests.js           (pure engine, Fast)
@@ -10,12 +10,14 @@
  */
 'use strict';
 
-const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const ELECTRON = path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe');
+let ELECTRON = null;
+try {
+  ELECTRON = require('electron');
+} catch {}
 const RES = path.join(ROOT, 'results');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -49,6 +51,12 @@ function passes(results, test) {
   return !!results && (results.some ? results.some((r) => r.test === test && r.pass) : false);
 }
 
+function passesAll(results, test) {
+  if (!results || !results.filter) return false;
+  const matching = results.filter((r) => r.test === test);
+  return matching.length > 0 && matching.every((r) => r.pass);
+}
+
 async function main() {
   console.log('=== FORGE BROWSER LAB — GATE VERIFICATION ===\n');
   fs.mkdirSync(RES, { recursive: true });
@@ -59,7 +67,7 @@ async function main() {
   const unit = readJson('unit-results.json');
 
   // 2. e2e
-  if (!fs.existsSync(ELECTRON)) {
+  if (!ELECTRON || !fs.existsSync(ELECTRON)) {
     console.error('electron binary not found; skipping e2e and smoke.');
     process.exit(2);
   }
@@ -85,6 +93,7 @@ async function main() {
     H: { label: 'Action approval system works', checks: ['F'] },
     I: { label: 'Privacy dashboard works', checks: [] },
     J: { label: 'Tests pass', checks: [] },
+    K: { label: 'Page trust boundary holds', checks: ['K'] },
   };
 
   const rows = [];
@@ -100,6 +109,11 @@ async function main() {
     } else if (gate === 'J') {
       pass = unit && unit.fail === 0 && e2e && e2e.results.every((r) => r.pass);
       detail = `unit ${unit && unit.fail === 0 ? 'PASS' : 'FAIL'} + e2e all ${e2e ? (e2e.results.every((r) => r.pass) ? 'PASS' : 'FAIL') : 'n/a'}`;
+    } else if (gate === 'K') {
+      const smokePass = !!(smoke && smoke.pageBoundary && smoke.pageBoundary.safe);
+      const e2ePass = passesAll(e2eList, 'K');
+      pass = unitPass && e2ePass && smokePass;
+      detail = `unit ${unitPass ? 'PASS' : 'FAIL'}(${unitGate ? unitGate.total - unitGate.failed : 0}/${unitGate ? unitGate.total : 0}) + e2e ${e2ePass ? 'PASS' : 'FAIL'} + real-app smoke ${smokePass ? 'PASS' : 'FAIL'}`;
     } else {
       const unitPass = unitGate && unitGate.failed === 0 && unitGate.total > 0;
       const e2ePass = spec.checks.length === 0 ? true : spec.checks.every((t) => passes(e2eList, t));

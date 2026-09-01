@@ -5,10 +5,10 @@
   <h1>Cookie policy fixture</h1>
   <p>Server sets a first-party cookie (forge_1p) on the document response.
      This page also sets a first-party session cookie from JavaScript.
-     A request to 127.0.0.2 (a DIFFERENT host) is third-party; the server
+     A request to 127.0.0.1 from localhost (a DIFFERENT host) is third-party; the server
      tries to set a cookie (partner=123) on that response, which the policy
      must block.</p>
-  <img src="http://127.0.0.2:PORT/3p.gif" onload="window.__3pLoaded=1" onerror="window.__3pErr=1" />
+  <img src="http://127.0.0.1:PORT/3p.gif" onload="window.__3pLoaded=1" onerror="window.__3pErr=1" />
   <script>
     document.cookie = 'session_js=1; Path=/';
     window.__fixture = 'cookies';

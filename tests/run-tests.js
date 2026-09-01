@@ -1,7 +1,7 @@
 /*
  * run-tests.js — zero-dependency test runner for the Forge Browser Lab
  * engine. Runs every tests/unit/*.test.js suite, groups results by gate
- * (A–J), and exits non-zero on any failure. No network access is used.
+ * (A–K), and exits non-zero on any failure. No network access is used.
  */
 'use strict';
 

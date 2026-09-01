@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Build](https://github.com/Eddienews/forgeos-browser/actions/workflows/build.yml/badge.svg)](https://github.com/Eddienews/forgeos-browser/actions)
-[![Tests](https://img.shields.io/badge/tests-94%20passing-brightgreen)](https://github.com/Eddienews/forgeos-browser/blob/main/tests/run-tests.js)
+[![Tests](https://img.shields.io/badge/tests-96%20passing-brightgreen)](https://github.com/Eddienews/forgeos-browser/blob/main/tests/run-tests.js)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20·%20macOS%20·%20Linux%20·%20Pi-blue)](https://github.com/Eddienews/forgeos-browser/releases)
 [![Telemetry](https://img.shields.io/badge/telemetry-zero-orange)](https://github.com/Eddienews/forgeos-browser/blob/main/PRIVACY_MODEL.md)
 
@@ -21,7 +21,7 @@ Mainstream browsers treat AI as a surface feature. ForgeOS Browser treats the ag
 ## Features
 
 - 🛡 **Ad/tracker blocking** — EasyList + EasyPrivacy (110k network rules, trie-optimized, ~µs/request) + cosmetic filtering (13k+17k rules, DOM removal)
-- 🧬 **Fingerprint hardening** — canvas/audio/WebGL farbling per-origin (Brave-class), hardware/screen standardization, GPU vendor masking
+- 🧬 **Fingerprint posture** — generic browser UA and restrictive permission defaults; engine-exposed entropy is measured and documented, with page shims intentionally disabled pending a sandbox-safe design
 - 🍪 **Cookie policy** — third-party cookies blocked, per-mode storage isolation (Standard/Strict/Ephemeral)
 - 🚫 **Prompt-injection scanner** — advisory-only heuristic, never modifies page content
 - 🔌 **Agent API** — localhost-only, capability-token-gated HTTP surface (read/navigate/full scopes, TTL, rate-limited) for external agents
@@ -51,7 +51,7 @@ Measured vs Brave/Chrome/Edge on the same machine (see [results/BENCHMARK.md](re
 ```bash
 npm install
 npm start                 # dev
-npm test                  # 94 unit tests
+npm test                  # 96 unit tests
 npm run package           # electron-packager for host platform
 node scripts/make-portable.js   # portable zip
 # cross-platform: node scripts/package.js --platform=linux,darwin --arch=x64,arm64
@@ -112,7 +112,7 @@ src/
 ├── engine/               pure, testable core
 │   ├── filter-engine.js      network blocking (suffix trie)
 │   ├── cosmetic-engine.js    element-hiding rules
-│   ├── fingerprint*.js       hardening + farbling
+│   ├── fingerprint*.js       exposure map + UA/permission posture
 │   ├── agent-view.js         untrusted-context boundary
 │   ├── credential-policy.js  no-credentials gate
 │   └── ...                 17 modules total

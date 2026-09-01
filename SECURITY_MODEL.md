@@ -60,9 +60,13 @@ state; unknown executables are marked.
 ## Sandboxing and boundaries (Phase 17)
 
 - Page WebContentsViews: `sandbox:true`, `contextIsolation:true`,
-  `nodeIntegration:false`, **no preload**, `setWindowOpenHandler` denies; a
-  compromised renderer cannot reach the chrome bridge, engine, credentials,
-  filesystem, or other tabs.
+  `nodeIntegration:false`, and no preload; `setWindowOpenHandler` denies.
+  Gate K verifies that remote pages cannot reach Node, Electron,
+  `window.forge`, the filesystem, or other tabs.
+- Page-world fingerprint shims are not injected. The previous preload-based
+  implementation required disabling sandbox and context isolation, while
+  post-load injection interfered with later Chromium navigations. ForgeOS keeps
+  the stronger trust boundary and documents engine-dependent entropy honestly.
 - TLS validation is never weakened (certificate errors are blocked and logged).
 - `document.cookie`/local storage are not exported by the extraction layer.
 
@@ -84,7 +88,7 @@ content (the human still sees it; the agent sees it *as data* with a warning).
 | Prompt-injection detection | **partial / advisory** — not to be trusted as decisive |
 | TLS/cert validation | **inherited** (never weakened) |
 | Download quarantine | functional |
-| Fingerprint hardening | **experimental / mostly unproven** |
+| UA + permission fingerprint posture | functional; page entropy remains exposed/documented |
 
 ## What should not be trusted yet
 

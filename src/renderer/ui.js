@@ -117,7 +117,6 @@
   $('set-blockads').addEventListener('change', (e) => set('blockAds', e.target.checked));
   $('set-3pcookies').addEventListener('change', (e) => set('blockThirdPartyCookies', e.target.checked));
   $('set-stripparams').addEventListener('change', (e) => set('stripTrackingParams', e.target.checked));
-  $('set-fingerprint').addEventListener('change', (e) => set('fingerprint', e.target.value));
   $('set-subs').addEventListener('change', (e) => set('subtitleLangs', e.target.value));
   $('set-zoom').addEventListener('change', (e) => F.setZoom(Number(e.target.value)));
 
@@ -227,7 +226,6 @@
       $('set-blockads').checked = s.blockAds !== false;
       $('set-3pcookies').checked = s.blockThirdPartyCookies !== false;
       $('set-stripparams').checked = s.stripTrackingParams !== false;
-      $('set-fingerprint').value = s.fingerprint || 'standard';
       if (s.subtitleLangs) $('set-subs').value = s.subtitleLangs;
     }
     const el = $('ytdlp-status');
