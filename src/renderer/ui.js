@@ -233,7 +233,13 @@
   }
 
   // Hydrate controls from persisted settings + yt-dlp status line.
-  F.getVersion().then((v) => { const el = $('ver'); if (el) el.textContent = 'v' + v; }).catch(() => {});
+  F.getVersion().then((v) => {
+    for (const id of ['ver', 'app-version']) {
+      const el = $(id);
+      if (el) el.textContent = 'v' + v;
+    }
+    document.title = `ForgeOS Browser v${v}`;
+  }).catch(() => {});
   Promise.all([F.settingsGet(), F.ytdlpStatus()]).then(([s, yt]) => {
     if (s) {
       $('set-blockads').checked = s.blockAds !== false;

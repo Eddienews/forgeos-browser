@@ -112,6 +112,14 @@ body.platform-darwin #bar { padding-left: 78px; }
 #btn-gear:hover, #btn-gear.open { color: var(--amber); border-color: var(--line); background: var(--bg3); }
 .plug { color: var(--amber); opacity: .85; font-size: 13px; }
 .plug:hover { opacity: 1; border-color: var(--line); background: var(--bg3); }
+.toolbar-version {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font: 600 9.5px var(--mono);
+  letter-spacing: .02em;
+  white-space: nowrap;
+  user-select: none;
+}
 
 /* plugin progress toast */
 #plug-toast {

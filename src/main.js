@@ -38,6 +38,7 @@ const sessionStore = require('./engine/session-store');
 const { cleanUrlString } = require('./engine/url-cleaner');
 const { classifyField } = require('./engine/sensitive-fields');
 const { createPageWebPreferences } = require('./page-web-preferences');
+const { DARK_SCROLLBAR_CSS, supportsPageAppearance } = require('./engine/page-appearance');
 
 const TOOLBAR_H = 42; // must match renderer CSS --bar-h
 let menuRightInset = 0;
@@ -186,6 +187,7 @@ function createTab(url = 'about:blank', opts = {}) {
     tab.pageCounts = adapter.takeDelta();
     log.log('INFO', 'navigated', { url: url.slice(0, 300), httpCode });
     bh.addHistory({ url, title: wc.getTitle() });
+    injectPageAppearance(tab, url);
     injectCosmetic(tab, url);
     injectDomRemoval(tab, url);
     // Crash recovery: persist open tabs on every navigation so a force-kill
@@ -847,6 +849,12 @@ function initCosmetic() {
     log.log('ERROR', 'cosmetic compile failed', { error: String(e).slice(0, 150) });
     cosmetic = { genericCss: '', byDomain: new Map(), stats: {} };
   }
+}
+
+/** Apply browser-owned visual chrome to web content without a page preload. */
+function injectPageAppearance(tab, url) {
+  if (!tab || !supportsPageAppearance(url)) return;
+  tab.wc.insertCSS(DARK_SCROLLBAR_CSS, { cssOrigin: 'user' }).catch(() => {});
 }
 
 /** Inject cosmetic CSS into a page view (native insertCSS — no JS cost). */

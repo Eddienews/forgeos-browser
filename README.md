@@ -127,6 +127,14 @@ Every version tag (`v0.8.7`, …) triggers GitHub Actions to build all 5 targets
 Windows x64 · macOS x64/arm64 · Linux x64/arm64.
 Download from: **Actions → latest run → Artifacts**.
 
+### Version policy
+
+Every user-visible fix or improvement increments the application version before
+the build is distributed. Fixes use a patch increment, features use a minor
+increment, and incompatible releases use a major increment. The current version
+is always visible in the browser toolbar and in Settings. Unit verification
+fails if `package.json` and `package-lock.json` do not match.
+
 ## Architecture
 
 ```
