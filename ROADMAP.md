@@ -19,14 +19,15 @@ Status legend: [x] done · [~] partial · [ ] planned · (v0.x) target version.
 - [x] Tracking-parameter stripping on navigation (lists/tracking-params.json)
 - [x] Storage isolation: per-tab never-persisted partitions in Strict/Ephemeral;
       Forget-this-site-on-close
-- [x] Fingerprint hardening v1: generic Chrome UA, standardized screen/hardware
-      (canvas/WebGL/fonts/audio remain engine-exposed — documented)
+- [~] Fingerprint posture v1: generic Chrome UA and permission gating shipped;
+      page-world screen/hardware/canvas/WebGL/audio shims were withdrawn because
+      they weakened sandboxing or navigation reliability (tracked in `TODO.md`)
 - [x] Permission handler: sensors ASK (DENY in strict), unknown DENY, nothing silent
 - [x] Agent security layer: untrusted Agent View, sensitive-field redaction,
       prompt-injection scanner (advisory), action approval gate (read auto /
       act ASK / passwords HUMAN_ONLY)
-- [x] Plugins: ⬇ video (yt-dlp ≤1080p mp4), ✎ transcript (auto .txt flatten),
-      📁 open downloads folder
+- [~] Plugins: 📁 open downloads folder shipped; ⬇ video and ✎ transcript are
+      reported non-functional and tracked with acceptance checks in `TODO.md`
 - [x] Download UX: persistent progress pill with % + completion toast
 - [x] Local event log (logs/forge-events.log), zero telemetry (tested)
 - [x] Packaging: electron-packager per-OS; portable zip; runtime dirs next to exe
@@ -35,11 +36,11 @@ Status legend: [x] done · [~] partial · [ ] planned · (v0.x) target version.
 
 - [x] Rename to ForgeOS Browser (window title done; exe/zip name kept for
       compat — rename at next major packaging if desired)
-- [x] ⚙ Settings sections: Privacy & Security (mode, blocking toggle,
-      3p-cookies, strip-params, fingerprint level), Downloads & Plugins
+- [~] ⚙ Settings sections: Privacy & Security (mode, blocking toggle,
+      3p-cookies, strip-params; fingerprint level temporarily withdrawn), Downloads & Plugins
       (yt-dlp status, subtitle langs), Session (panels/devtools/clear)
 - [x] Persist user settings (forge-settings.json next to exe)
-- [x] Settings apply live without restart
+- [~] Settings apply live without restart (except the reserved fingerprint level)
 - [x] Bookmarks (★ in bar, persistent local json) + panels manager
 - [x] Session History (500-cap ring, panel list, clear individual/all)
 - [ ] Page zoom default (90/100/110%) persisted per app

@@ -39,7 +39,7 @@ git clone https://github.com/Eddienews/forgeos-browser.git
 cd forgeos-browser
 npm install
 npm start          # run the browser
-npm test           # 94 unit tests
+npm test           # 96 unit tests
 ```
 
 The engine (`src/engine/`) is pure Node and testable without Electron —

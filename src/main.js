@@ -7,10 +7,10 @@
  * agent view panel, action approval gate, downloads, and local history.
  *
  * Security posture (Phase 17): page WebContentsViews run with
- * sandbox:true, contextIsolation:true, nodeIntegration:false, and NO
- * preload. The chrome window's own preload exposes only the whitelisted
- * `window.forge` bridge. Untrusted content can never reach the engine,
- * the filesystem, credentials, or other tabs.
+ * sandbox:true, contextIsolation:true, nodeIntegration:false, and no preload.
+ * The chrome window's own preload exposes only the whitelisted `window.forge`
+ * bridge. Untrusted content cannot reach the engine, filesystem, credentials,
+ * or other tabs.
  */
 'use strict';
 
@@ -25,7 +25,7 @@ const { PluginRunner } = require('./ext/plugins');
 const { sessionPlanFor, clearSessionData } = require('./engine/storage-manager');
 const { MODES, isValidMode } = require('./engine/privacy-modes');
 const { analyzeAgentView, IN_PAGE_SCRIPT, readPageView } = require('./engine/agent-view');
-const { applyAppLevelHardening, PAGE_HARDENING_SCRIPT } = require('./engine/fingerprint-hardening');
+const { applyAppLevelHardening } = require('./engine/fingerprint-hardening');
 const { requestAction } = require('./engine/permissions');
 const settings = require('./engine/settings');
 const bh = require('./engine/bookmarks-history');
@@ -36,6 +36,7 @@ const credentialPolicy = require('./engine/credential-policy');
 const sessionStore = require('./engine/session-store');
 const { cleanUrlString } = require('./engine/url-cleaner');
 const { classifyField } = require('./engine/sensitive-fields');
+const { createPageWebPreferences } = require('./page-web-preferences');
 
 const TOOLBAR_H = 42; // must match renderer CSS --bar-h
 const APP_ROOT = __dirname;
@@ -134,20 +135,7 @@ function createTab(url = 'about:blank', opts = {}) {
   adapter.install();
 
   const view = new WebContentsView({
-    webPreferences: {
-      partition: plan.partition || undefined,
-      // Page views run their preload in the MAIN world so fingerprint
-      // standardization is visible to the site. page-preload.js contains no
-      // require()/Node usage — it only defines JS shims. Lab trade-off,
-      // documented in SECURITY_MODEL.md.
-      preload: path.join(APP_ROOT, 'page-preload.js'),
-      sandbox: false,
-      contextIsolation: false,
-      nodeIntegration: false,
-      webSecurity: true,
-      allowRunningInsecureContent: false,
-      spellcheck: false,
-    },
+    webPreferences: createPageWebPreferences({ partition: plan.partition }),
   });
   const wc = view.webContents;
   // Apply the persisted default zoom to every new page view.
@@ -170,13 +158,6 @@ function createTab(url = 'about:blank', opts = {}) {
 
   wc.on('did-start-navigation', (_e, url, isInPlace, isMainFrame) => {
     if (isMainFrame && !isInPlace) tab.certError = false;
-    // Fingerprint level: written to a file the page preload reads (main world).
-    if (isMainFrame) {
-      try {
-        const lvl = settings.all().fingerprint || 'standard';
-        fs.writeFileSync(path.join(getRuntimeBase(), 'forge-fp-level'), lvl + '\n', 'utf8');
-      } catch {}
-    }
   });
 
   wc.on('did-navigate', (_e, url, httpCode) => {
@@ -814,7 +795,7 @@ app.whenReady().then(() => {
 
   log.log('INFO', 'Forge Browser Lab started', { version: app.getVersion(), electron: process.versions.electron, chromium: process.versions.chrome });
   applyAppLevelHardening(app);
-  log.log('INFO', 'fingerprint hardening applied', { ua: 'generic-chrome', screen: '1920x1080x24', hw: '8c/8gb' });
+  log.log('INFO', 'app-level fingerprint posture applied', { ua: 'generic-chrome', pageShims: false });
   registerIpc();
   createChromeWindow();
   initCosmetic();
@@ -971,9 +952,19 @@ async function runSmoke() {
       } : null,
       navigation: navOk === true ? 'OK' : JSON.stringify(navOk),
     };
+    report.pageBoundary = await t.wc.executeJavaScript(`({
+      processType: typeof window.process,
+      requireType: typeof window.require,
+      forgeType: typeof window.forge,
+      electronType: typeof window.electron
+    })`);
+    report.pageBoundary.safe = report.pageBoundary.processType === 'undefined' &&
+      report.pageBoundary.requireType === 'undefined' &&
+      report.pageBoundary.forgeType === 'undefined' &&
+      report.pageBoundary.electronType === 'undefined';
     console.log('SMOKE_REPORT ' + JSON.stringify(report));
     fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
-    const pass = report.security && report.security.label === 'HTTPS' && navOk === true;
+    const pass = report.security && report.security.label === 'HTTPS' && navOk === true && report.pageBoundary.safe;
     log.log(pass ? 'INFO' : 'ERROR', 'smoke ' + (pass ? 'PASS' : 'FAIL'), { url: report.url, security: report.security && report.security.label, title: report.title });
     finish(pass ? 0 : 1);
   } catch (e) {

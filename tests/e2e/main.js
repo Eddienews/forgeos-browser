@@ -1,9 +1,9 @@
 /*
- * tests/e2e/main.js — browser-level integration checks (Gates A–G, and the
+ * tests/e2e/main.js — browser-level integration checks (Gates A–G/K, and the
  * Final Validation items that require a real renderer).
  *
- * Runs inside real Electron/Chromium. All traffic is LOCAL (127.0.0.1 /
- * 127.0.0.2 loopback) plus blocked ad/tracker hosts, which the adapter never
+ * Runs inside real Electron/Chromium. All traffic is LOCAL (localhost /
+ * 127.0.0.1 loopback) plus blocked ad/tracker hosts, which the adapter never
  * lets reach the network. No third-party websites are contacted.
  *
  * Usage: electron tests/e2e/main.js
@@ -20,6 +20,7 @@ const { FilterEngine } = require('../../src/engine/filter-engine');
 const { EventLog } = require('../../src/engine/event-log');
 const { SessionAdapter } = require('../../src/ext/electron-adapter');
 const { analyzeAgentView, IN_PAGE_SCRIPT } = require('../../src/engine/agent-view');
+const { createPageWebPreferences } = require('../../src/page-web-preferences');
 
 const PAGES = path.join(__dirname, '..', 'pages');
 const PNG1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
@@ -54,7 +55,7 @@ function serve() {
     if (clean === 'cookies.html') {
       // First-party cookie set on the document response (Test B).
       res.writeHead(200, { 'content-type': 'text/html', 'set-cookie': 'forge_1p=hello; Path=/' });
-      body = body.split('127.0.0.2:PORT').join('127.0.0.2:' + port);
+      body = body.split('127.0.0.1:PORT').join('127.0.0.1:' + port);
       res.end(body);
       return;
     }
@@ -72,14 +73,39 @@ function serve() {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function loadAndWait(wc, url) {
-  await wc.loadURL(url).catch((e) => { /* handled by did-fail-load */ });
+  await new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      wc.removeListener('did-finish-load', onFinish);
+      wc.removeListener('did-fail-load', onFail);
+    };
+    const onFinish = () => { cleanup(); resolve(); };
+    const onFail = (_event, code, description, validatedURL, isMainFrame) => {
+      if (!isMainFrame) return;
+      cleanup();
+      reject(new Error(`navigation failed (${code} ${description}): ${validatedURL}`));
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`navigation timeout: ${url}; current=${wc.getURL()}; loading=${wc.isLoading()}`));
+    }, 20000);
+    wc.once('did-finish-load', onFinish);
+    wc.on('did-fail-load', onFail);
+    // Electron's loadURL promise can remain pending after an otherwise complete
+    // renderer navigation. The browser shell itself is event-driven, so the
+    // E2E harness intentionally observes the same completion events.
+    wc.loadURL(url).catch((error) => {
+      cleanup();
+      reject(error);
+    });
+  });
   await sleep(500); // settle subresources
 }
 
 async function main() {
   await app.whenReady();
   const p = await serve();
-  console.log(`e2e server on 127.0.0.1:${p} (and 127.0.0.2:${p})`);
+  console.log(`e2e server on localhost:${p} and 127.0.0.1:${p}`);
 
   const PART = 'forge-e2e-' + Date.now();
   const ses = session.fromPartition(PART);
@@ -88,7 +114,10 @@ async function main() {
   const adapter = new SessionAdapter({ session: ses, engine, log: eventLog, modeId: 'standard', getChromeWindow: () => null, onDownloadRecord: () => {} });
   adapter.install();
 
-  const win = new BrowserWindow({ show: false, webPreferences: { partition: PART, sandbox: true, contextIsolation: true, nodeIntegration: false } });
+  const win = new BrowserWindow({
+    show: false,
+    webPreferences: createPageWebPreferences({ partition: PART }),
+  });
   const wc = win.webContents;
 
   /* ---------- Gate A: browser + engine launch ---------- */
@@ -102,7 +131,7 @@ async function main() {
     ad.okLoaded === true && ad.adLoaded === false && ad.gaLoaded === false, JSON.stringify(ad));
 
   /* ---------- Tests B & C (Gate D): cookies ---------- */
-  await loadAndWait(wc, `http://127.0.0.1:${p}/cookies.html`);
+  await loadAndWait(wc, `http://localhost:${p}/cookies.html`);
   const names = (await ses.cookies.get({})).map((c) => c.name);
   record('B', 'first-party cookies (server + JS) allowed',
     names.includes('forge_1p') && names.includes('session_js'), 'jar=' + names.join(','));
@@ -151,6 +180,26 @@ async function main() {
   record('7', 'fingerprint exposure channels recorded for study',
     !!(fp && typeof fp.canvas === 'boolean' && Array.isArray(fp.languages) && typeof fp.tzOffset === 'number'),
     'channels=' + Object.keys(fp || {}).join(','));
+
+  // Run privileged-global inspection in a disposable renderer after the
+  // navigation journey. Electron's inspector-side property probe can retain
+  // wrapper state, so this renderer is deliberately never navigated again.
+  const boundaryWin = new BrowserWindow({
+    show: false,
+    webPreferences: createPageWebPreferences({ partition: PART + '-boundary' }),
+  });
+  await loadAndWait(boundaryWin.webContents, `http://127.0.0.1:${p}/clean.html`);
+  const boundary = await boundaryWin.webContents.executeJavaScript(`({
+    processType: typeof window.process,
+    requireType: typeof window.require,
+    forgeType: typeof window.forge,
+    electronType: typeof window.electron
+  })`);
+  const boundarySafe = boundary.processType === 'undefined' && boundary.requireType === 'undefined' &&
+    boundary.forgeType === 'undefined' && boundary.electronType === 'undefined';
+  record('K', 'real page has no Node, Electron, or chrome bridge access', boundarySafe,
+    JSON.stringify(boundary));
+  boundaryWin.destroy();
 
   const payload = {
     results,

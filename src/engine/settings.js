@@ -11,7 +11,7 @@
  *   blockAds: true,
  *   blockThirdPartyCookies: true,
  *   stripTrackingParams: true,
- *   fingerprint: 'standard'|'reduced'|'off',
+ *   fingerprint: 'standard'|'reduced'|'off', // reserved for a sandbox-safe implementation
  *   subtitleLangs: 'en.*,pt.*',
  *   pageZoom: 100,
  * }
@@ -33,6 +33,8 @@ const DEFAULTS = {
   blockAds: true,
   blockThirdPartyCookies: true,
   stripTrackingParams: true,
+  // Retained for settings-file compatibility; no page-world shims are
+  // installed until a sandbox-safe, navigation-safe implementation exists.
   fingerprint: 'standard',
   subtitleLangs: 'en.*,pt.*',
   pageZoom: 100,

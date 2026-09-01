@@ -46,8 +46,9 @@ reload, security badge, mode selector, forget-on-close, panel toggles). Each tab
 is an Electron **`WebContentsView`** child composited below the toolbar.
 
 - Page tabs run with `sandbox:true, contextIsolation:true, nodeIntegration:false`
-  and **no preload** — page content cannot reach the engine, filesystem, other
-  tabs, credentials, or the OS.
+  and no preload. Page content cannot reach the engine, filesystem, other tabs,
+  credentials, or the OS. The production app and E2E harness share the same
+  canonical web-preferences factory, enforced by Gate K.
 - The chrome window's own preload exposes only the whitelisted `window.forge`
   bridge (`src/preload.js`). Untrusted content can never call it.
 

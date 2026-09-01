@@ -66,14 +66,10 @@
             <span>Block third-party cookies</span></label>
           <label class="menu-row check"><input type="checkbox" id="set-stripparams" checked />
             <span>Strip tracking parameters</span></label>
-          <label class="menu-row" for="set-fingerprint">
-            <span>Fingerprint hardening</span>
-            <select id="set-fingerprint">
-              <option value="standard">Standard</option>
-              <option value="reduced">Reduced</option>
-              <option value="off">Off</option>
-            </select>
-          </label>
+          <div class="menu-row" title="User-Agent and permission protections are engine-managed; page shims are disabled to preserve sandboxing.">
+            <span>Fingerprint posture</span>
+            <span>Engine-managed</span>
+          </div>
           <label class="menu-row check">
             <input type="checkbox" id="forget-check" />
             <span>Forget this site when closed</span>

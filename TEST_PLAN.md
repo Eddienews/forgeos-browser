@@ -59,12 +59,13 @@ Gate G — Prompt-injection warnings. **PASS**
 Gate H — Action approval system. **PASS**
 Gate I — Privacy dashboard. **PASS**
 Gate J — Tests pass (unit + e2e). **PASS**
+Gate K — Real page trust boundary (sandbox + isolation + no privileged globals). **PASS**
 
 ### Evidence files
 
 | File | Contents |
 |------|----------|
-| `results/unit-results.json` | 87 unit results, per-gate |
+| `results/unit-results.json` | unit results, per-gate |
 | `results/e2e-results.json` | real-Chromium Tests A–G + counters |
 | `results/smoke-report.json` | real app example.com smoke |
 | `results/gates.md` | composed gate table |
