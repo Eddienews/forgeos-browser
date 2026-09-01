@@ -53,6 +53,51 @@ node scripts/make-portable.js   # portable zip
 
 Portable mode: place a `.portable` marker file next to the executable to keep runtime data local.
 
+### Run on each platform
+
+**Windows**
+```bash
+# Option A — dev
+npm install && npm start
+# Option B — packaged exe
+npm run package
+dist\ForgeBrowserLab-win32-x64\ForgeBrowserLab.exe
+# Option C — portable zip (no install, runs from USB)
+node scripts/make-portable.js
+# unzip dist\ForgeBrowserLab-portable-win32-x64.zip → run ForgeBrowserLab.exe
+```
+
+**macOS**
+```bash
+npm install && npm start
+# packaged app:
+npm run package
+open dist/ForgeBrowserLab-darwin-x64/ForgeBrowserLab.app   # Intel
+open dist/ForgeBrowserLab-darwin-arm64/ForgeBrowserLab.app # Apple Silicon
+```
+Unsigned CI builds: first launch via right-click → Open → Open.
+
+**Linux (x64)**
+```bash
+npm install && npm start
+npm run package
+./dist/ForgeBrowserLab-linux-x64/forge-browser-lab
+```
+
+**Raspberry Pi (arm64, Pi 4/5)**
+```bash
+npm install && npm start
+npm run package -- --platform=linux --arch=arm64
+./dist/ForgeBrowserLab-linux-arm64/forge-browser-lab
+```
+> armv7l (32-bit Pi) is NOT supported — Electron dropped 32-bit ARM. Use a 64-bit OS (Raspberry Pi OS arm64).
+
+### CI builds (no local compile)
+
+Every version tag (`v0.8.7`, …) triggers GitHub Actions to build all 5 targets:
+Windows x64 · macOS x64/arm64 · Linux x64/arm64.
+Download from: **Actions → latest run → Artifacts**.
+
 ## Architecture
 
 ```
