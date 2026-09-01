@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Contributing guide
+    url: https://github.com/Eddienews/forgeos-browser/blob/main/CONTRIBUTING.md
+    about: Read this before opening an issue or PR — core rules, workflow, style.
+  - name: Security / threat-model review
+    url: https://github.com/Eddienews/forgeos-browser/blob/main/THREAT_MODEL.md
+    about: Found a vulnerability or want to review the threat model? Read the model first, then open an issue with the details.

@@ -1,0 +1,13 @@
+# CODEOWNERS — default reviewer for the whole repo is the maintainer.
+# ForgeOS Browser is a single-maintainer project; the owner reviews all PRs.
+* @Eddienews
+
+# Security-sensitive areas get extra attention (owner required review).
+src/engine/agent-view.js        @Eddienews
+src/engine/fingerprint*.js      @Eddienews
+src/engine/credential-policy.js @Eddienews
+src/ext/agent-api.js            @Eddienews
+src/ext/electron-adapter.js     @Eddienews
+THREAT_MODEL.md                 @Eddienews
+SECURITY_MODEL.md               @Eddienews
+PRIVACY_MODEL.md                @Eddienews
