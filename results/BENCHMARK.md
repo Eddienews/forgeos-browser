@@ -1,6 +1,6 @@
 # Benchmark Comparativo — ForgeOS Browser vs Browsers Comerciais
 
-Datas: 2026-08-23 (v0.1), 2026-08-24 (v0.4.1) e 2026-08-25 (v0.8.6 OFICIAL) ·
+Datas: 2026-08-23 (v0.1), 2026-08-24 (v0.4.1), 2026-08-25 (v0.8.6) e 2026-08-31 (v0.9.0 OFICIAL) ·
 Windows 11 · mesmos sites de teste, mesma maquina
 
 ## Cover Your Tracks — fingerprint (v0.1 → v0.8.6 FINAL)
@@ -63,17 +63,28 @@ o motor. Cosmetic filtering verificado ao vivo: todas as caixas de ad escondidas
 | Chrome | No | No | unique |
 | Edge | No | No | unique |
 
-## Leitura honesta (v0.8.6)
+## Leitura honesta (v0.9.0)
 
 - **Ad blocking**: paridade funcional com Brave nos hosts reais (85/85 bloqueados,
   identico ao v0.3 por A/B). Scores absolutos flutuam com a versao do tester.
-- **Fingerprinting**: mesma classe do Brave nos vetores ativos. Diferenca
-  remanescente: vendor string fixa (~11 bits estaveis mas compartilhados) vs
-  randomizacao por sessao do Brave. Mitigacao exigiria randomizacao por sessao
-  que quebraria consistencia de renderizacao.
+  DOM removal pass (v0.8.7) elevou turtlecute de 88 → 94.
+- **Fingerprinting**: mesma classe do Brave nos vetores ativos (canvas/audio/WebGL
+  hash todos "randomized by first party domain"). Diferenca remanescente: vendor
+  string fixa (~11 bits estaveis mas compartilhados) vs randomizacao por sessao
+  do Brave. Mitigacao exigiria randomizacao por sessao que quebraria consistencia.
+- **Robustez (v0.9.0)**: crash recovery (handlers de processo), session restore
+  (tabs persistidas a cada navegacao, restauradas no arranque — verificado ao
+  vivo com force-kill), CSP na UI chrome, guard will-navigate. 94/94 testes.
 - **Posicionamento**: sem guerra anti-bot contra Google (spoofing removido);
   credenciais ficam no browser principal do usuario.
-- **Custo**: motor otimizado ≈ µs/request; cosmetic via insertCSS nativo sem lag.
+- **Custo**: motor otimizado ≈ µs/request; cosmetic via insertCSS nativo + DOM
+  removal sem lag perceptivel.
+
+## Release
+
+v0.9.0 publicada em github.com/Eddienews/forgeos-browser (publico, MIT) com
+binarios para win32-x64, darwin-x64/arm64, linux-x64/arm64 (Raspberry Pi).
+Branch main protegida (PR obrigatoria). CI Actions builda cada tag.
 
 ## Gaps restantes (para tabela futura)
 
