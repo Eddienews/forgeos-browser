@@ -4,6 +4,13 @@ on:
   push:
     tags:
       - 'v*'
+  pull_request:
+    # PRs run the unit tests (fast feedback for contributors); packaging
+    # stays tag-only (each release rebuilds all 5 targets).
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
+      - 'results/**'
 
 jobs:
   build:
@@ -46,12 +53,15 @@ jobs:
           esac
 
       - name: Package application
+        if: github.event_name == 'push'  # tag releases package; PRs test only
         run: node scripts/package.js --platform=${{ steps.platform.outputs.plat }} --arch=${{ matrix.arch }}
 
       - name: Create portable archive
+        if: github.event_name == 'push'
         run: node scripts/make-portable.js --platform=${{ steps.platform.outputs.plat }} --arch=${{ matrix.arch }}
 
       - name: Upload artifacts
+        if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
           name: ForgeBrowserLab-${{ steps.platform.outputs.plat }}-${{ matrix.arch }}
