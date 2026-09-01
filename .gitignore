@@ -10,3 +10,6 @@ forge-settings.json
 forge-history.json
 forge-allowlist.json
 forge-fp-level
+
+# build artifacts
+/dist/
