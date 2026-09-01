@@ -207,7 +207,7 @@ module.exports = [
     },
   },
   {
-    name: 'transcript lifecycle replaces VTT output with readable text',
+    name: 'transcript lifecycle keeps timestamped VTT and readable text outputs',
     gate: 'J',
     async fn(a) {
       const dir = tempDir();
@@ -226,8 +226,9 @@ module.exports = [
         const txt = vtt.replace(/\.vtt$/, '.txt');
         a.strictEqual(done.state, 'done');
         a.ok(done.files.includes(txt));
+        a.ok(done.files.includes(vtt));
         a.strictEqual(fs.readFileSync(txt, 'utf8'), 'Hello ForgeOS\n');
-        a.strictEqual(fs.existsSync(vtt), false);
+        a.strictEqual(fs.existsSync(vtt), true);
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
@@ -276,7 +277,8 @@ module.exports = [
         a.strictEqual(result.state, 'done');
         a.ok(result.warning);
         a.strictEqual(fs.readFileSync(vtt.replace(/\.vtt$/, '.txt'), 'utf8'), 'Partial success\n');
-        a.strictEqual(fs.existsSync(vtt), false);
+        a.ok(result.files.includes(vtt));
+        a.strictEqual(fs.existsSync(vtt), true);
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }

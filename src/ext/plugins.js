@@ -206,13 +206,10 @@ class PluginRunner {
               this.fs.writeFileSync(txtPath, vttToPlainText(vttPath, this.fs), 'utf8');
               return txtPath;
             });
-            // VTT is an implementation detail. Remove only caption files
-            // produced or updated by this job, after every TXT write succeeds.
-            for (const vttPath of sourceFiles) this.fs.unlinkSync(vttPath);
             const warning = code === 0 ? undefined : classifyYtDlpError(
               boundedOutput(stderrLines), code, { kind, subtitleLangs }
             );
-            finish({ state: 'done', code, files, warning });
+            finish({ state: 'done', code, files: [...files, ...sourceFiles], warning });
             safeLog(this.log, code === 0 ? 'INFO' : 'WARN', 'transcript converted to text', {
               count: files.length, partial: code !== 0, job: jobId,
             });

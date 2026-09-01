@@ -76,8 +76,8 @@ See the official [yt-dlp installation guide](https://github.com/yt-dlp/yt-dlp#in
 for Windows and Linux. Restart ForgeOS after installing dependencies. Every job
 still requires explicit approval, supports cancellation, writes only to the
 downloads directory, and returns actionable errors. Transcript jobs keep clean
-`.txt` output rather than the intermediate timestamped VTT caption data.
-Download only content you are authorized to save.
+`.txt` output for reading alongside timestamped `.vtt` captions for playback
+and editing. Download only content you are authorized to save.
 
 ### Run on each platform
 
