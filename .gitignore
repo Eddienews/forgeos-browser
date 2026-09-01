@@ -13,3 +13,5 @@ forge-fp-level
 
 # build artifacts
 /dist/
+forge-allowlist.json.presets
+forge-session.json
