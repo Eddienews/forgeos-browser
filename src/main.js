@@ -40,6 +40,7 @@ const { classifyField } = require('./engine/sensitive-fields');
 const { createPageWebPreferences } = require('./page-web-preferences');
 const { DARK_SCROLLBAR_CSS, supportsPageAppearance } = require('./engine/page-appearance');
 const { isExistingPathInside, upsertDownload } = require('./engine/download-center');
+const { pageProcessingPolicy } = require('./engine/page-processing-policy');
 
 const TOOLBAR_H = 42; // must match renderer CSS --bar-h
 let menuRightInset = 0;
@@ -279,6 +280,8 @@ function createTab(url = 'about:blank', opts = {}) {
   let domRemovalTimer = null;
   wc.on('did-finish-load', () => {
     if (domRemovalTimer) clearTimeout(domRemovalTimer);
+    const url = wc.getURL();
+    if (!pageProcessingPolicy(url).allowDomRemoval) return;
     domRemovalTimer = setTimeout(() => injectDomRemoval(tab, wc.getURL()), 1200);
   });
 
@@ -291,6 +294,7 @@ function createTab(url = 'about:blank', opts = {}) {
   });
 
   wc.on('did-finish-load', () => {
+    if (!pageProcessingPolicy(wc.getURL()).allowAutomaticAgentView) return;
     refreshAgentView(tab).then(() => sendState()).catch(() => {});
   });
 
@@ -975,6 +979,7 @@ function injectCosmetic(tab, url) {
 function injectDomRemoval(tab, url) {
   if (!cosmetic || !tab || !url.startsWith('http')) return;
   try {
+    if (!pageProcessingPolicy(url).allowDomRemoval) return;
     if (settings.all().blockAds === false) return;
     let host = '';
     try { host = new URL(url).hostname; } catch {}
