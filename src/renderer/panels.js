@@ -157,7 +157,10 @@
       if (d.retryable) actions.appendChild(downloadAction('Retry', () => F.downloadRetry(d.id)));
       if (d.path && d.state === 'completed') {
         if (!d.executable) actions.appendChild(downloadAction('Open', () => F.downloadOpen(d.id)));
-        actions.appendChild(downloadAction('Show in Finder', () => F.downloadReveal(d.id)));
+        const revealLabel = F.platform === 'darwin' ? 'Show in Finder'
+          : F.platform === 'win32' ? 'Show in Explorer'
+            : 'Show in folder';
+        actions.appendChild(downloadAction(revealLabel, () => F.downloadReveal(d.id)));
       }
       if (actions.childElementCount) card.appendChild(actions);
       host.appendChild(card);
