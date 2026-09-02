@@ -321,12 +321,15 @@
     F.plugin(kind).then((r) => {
       if (r && r.state === 'error') { hideProgress(); showToast('⚠ ' + r.error); }
       else if (r && r.state === 'denied') { hideProgress(); showToast('✕ Action denied.'); }
-      else if (r && r.state === 'started' && pluginBusy) { currentJobId = r.jobId; }
+      else if (r && r.state === 'started' && pluginBusy) {
+        currentJobId = r.jobId;
+        F.togglePanels('downloads');
+      }
     }).catch((e) => { hideProgress(); showToast('⚠ ' + String(e)); });
   }
   $('btn-dlvideo').addEventListener('click', () => runPlugin('video'));
   $('btn-transcribe').addEventListener('click', () => runPlugin('transcript'));
-  $('btn-downloads').addEventListener('click', () => { closeMenu(); F.openDownloads(); });
+  $('btn-downloads').addEventListener('click', () => { closeMenu(); F.togglePanels('downloads'); });
 
   F.onPluginEvent?.((evt) => {
     if (!evt) return;
@@ -335,7 +338,11 @@
         currentJobId = evt.jobId;
         break;
       case 'progress':
-        setProgress(evt.pct, `${evt.kind === 'transcript' ? '✎' : '⬇'} ${Math.round(evt.pct)}%`);
+        setProgress(evt.pct, [
+          `${evt.kind === 'transcript' ? '✎' : '⬇'} ${Math.round(evt.pct)}%`,
+          evt.speed,
+          evt.eta ? `ETA ${evt.eta}` : null,
+        ].filter(Boolean).join(' · '));
         break;
       case 'done':
         hideProgress();

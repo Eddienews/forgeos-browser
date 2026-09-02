@@ -146,7 +146,7 @@ src/
 │   ├── fingerprint*.js       exposure map + UA/permission posture
 │   ├── agent-view.js         untrusted-context boundary
 │   ├── credential-policy.js  no-credentials gate
-│   └── ...                 17 modules total
+│   └── ...                 testable browser policy and state modules
 ├── ext/
 │   ├── electron-adapter.js  webRequest + cookie policy wiring
 │   ├── agent-api.js         localhost capability API
@@ -154,6 +154,8 @@ src/
 │   └── ytdlp-tools.js       discovery, commands, output conversion
 └── renderer/              single-bar walnut-glass UI
 ```
+
+The prioritized product backlog lives in [`FEATURE_LIST.md`](FEATURE_LIST.md).
 
 ## Disclaimer
 

@@ -39,6 +39,7 @@ const { cleanUrlString } = require('./engine/url-cleaner');
 const { classifyField } = require('./engine/sensitive-fields');
 const { createPageWebPreferences } = require('./page-web-preferences');
 const { DARK_SCROLLBAR_CSS, supportsPageAppearance } = require('./engine/page-appearance');
+const { isExistingPathInside, upsertDownload } = require('./engine/download-center');
 
 const TOOLBAR_H = 42; // must match renderer CSS --bar-h
 let menuRightInset = 0;
@@ -106,7 +107,7 @@ function getSessionFor(partitionKey) {
     let e = sessions.get('__default__');
     if (!e) {
       const s = session.defaultSession;
-      e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r) }) };
+      e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, downloadsDir: DL_DIR(), getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r) }) };
       sessions.set('__default__', e);
     }
     return e;
@@ -114,16 +115,91 @@ function getSessionFor(partitionKey) {
   let e = sessions.get(partitionKey);
   if (!e) {
     const s = session.fromPartition(partitionKey);
-    e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r) }) };
+    e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, downloadsDir: DL_DIR(), getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r) }) };
     sessions.set(partitionKey, e);
   }
   return e;
 }
 
 function pushDownload(record) {
-  downloads.unshift(record);
-  if (downloads.length > 50) downloads.pop();
-  sendToChrome('forge:download', record);
+  const saved = upsertDownload(downloads, record, 50);
+  if (saved) sendToChrome('forge:download', saved);
+  return saved;
+}
+
+function pluginDownloadRecord(event, context) {
+  if (!event || !event.jobId) return null;
+  const state = event.state === 'done' ? 'completed'
+    : event.state === 'progress' ? 'running'
+      : event.state;
+  let sourceDomain = '';
+  try { sourceDomain = new URL(context.url).hostname; } catch {}
+  const safeFiles = Array.isArray(event.files)
+    ? event.files.filter((file) => isExistingPathInside(DL_DIR(), file))
+    : [];
+  const preferred = safeFiles.find((file) => context.kind === 'transcript' ? /\.txt$/i.test(file) : /\.mp4$/i.test(file))
+    || safeFiles[0]
+    || null;
+  let size = null;
+  if (preferred) {
+    try { size = fs.statSync(preferred).size; } catch {}
+  }
+  return pushDownload({
+    id: event.jobId,
+    kind: 'plugin',
+    pluginKind: event.kind || context.kind,
+    filename: preferred ? path.basename(preferred) : context.label,
+    source_domain: sourceDomain,
+    url: context.url,
+    state,
+    pct: state === 'completed' ? 100 : event.pct,
+    speed: event.speed || null,
+    eta: event.eta || null,
+    totalLabel: event.total || null,
+    size,
+    content_type: context.kind === 'transcript' ? 'text/plain' : 'video/mp4',
+    path: preferred,
+    files: safeFiles,
+    error: event.error || null,
+    warning: event.warning || null,
+    cancellable: state === 'running',
+    retryable: state === 'error' || state === 'cancelled',
+    executable: false,
+  });
+}
+
+async function runPluginJob(kind, pageUrl, label) {
+  const context = {
+    kind,
+    url: pageUrl,
+    label: label || (kind === 'transcript' ? 'YouTube transcript' : 'YouTube video'),
+  };
+  const result = await plugins.run(
+    kind,
+    pageUrl,
+    async () => {
+      if (!chromeWin) return { approved: false };
+      const response = await dialog.showMessageBox(chromeWin, {
+        type: 'question',
+        title: 'ForgeOS Browser — approval required',
+        message: `Plugin wants to ${kind === 'transcript' ? 'fetch a transcript' : 'download the video'} from this page`,
+        detail: pageUrl,
+        buttons: ['Deny', 'Approve'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      const approved = response.response === 1 && !response.checkboxChecked;
+      log.log(approved ? 'ALLOW' : 'DENY', 'plugin approval ' + (approved ? 'granted' : 'denied'), { url: pageUrl.slice(0, 200), kind });
+      return { approved };
+    },
+    (event) => {
+      pluginDownloadRecord(event, context);
+      sendToChrome('forge:plugin-event', event);
+    }
+  );
+  if (result.state !== 'started') pluginDownloadRecord(result, context);
+  return result;
 }
 
 /* ------------------------------------------------------------------ */
@@ -349,8 +425,14 @@ function sendToChrome(channel, payload) {
 }
 
 /** Phase 14/17 control-center window: privacy, agent view, log, downloads. */
-function togglePanels() {
+function togglePanels(section = null) {
   if (panelWin && !panelWin.isDestroyed()) {
+    if (section) {
+      panelWin.show();
+      panelWin.focus();
+      panelWin.webContents.send('forge:panel-section', section);
+      return;
+    }
     panelWin.close();
     panelWin = null;
     return;
@@ -368,6 +450,11 @@ function togglePanels() {
     },
   });
   panelWin.loadFile(path.join(APP_ROOT, 'renderer', 'panels.html'));
+  if (section) {
+    panelWin.webContents.once('did-finish-load', () => {
+      if (panelWin && !panelWin.isDestroyed()) panelWin.webContents.send('forge:panel-section', section);
+    });
+  }
   panelWin.on('closed', () => { panelWin = null; });
   panelWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   sendState();
@@ -462,7 +549,10 @@ ipcMain.handle('forge:set-menu-open', (_e, state) => {
     sendState();
     return true;
   });
-  ipcMain.handle('forge:toggle-panel', () => { togglePanels(); return true; });
+  ipcMain.handle('forge:toggle-panel', (_e, section) => {
+    togglePanels(section === 'downloads' ? 'downloads' : null);
+    return true;
+  });
   ipcMain.handle('forge:clear-session', async () => {
     log.log('INFO', 'clear session requested');
     const todo = new Set(sessions.values());
@@ -534,30 +624,35 @@ ipcMain.handle('forge:set-menu-open', (_e, state) => {
     if (!t || !t.url || !/^https?:/i.test(t.url)) {
       return { state: 'error', error: 'Open a video page first.' };
     }
-    const pageUrl = t.url;
-    return plugins.run(
-      kind,
-      pageUrl,
-      async () => {
-        if (!chromeWin) return { approved: false };
-        const r = await dialog.showMessageBox(chromeWin, {
-          type: 'question',
-          title: 'Forge Browser Lab — approval required',
-          message: `Plugin wants to ${kind === 'transcript' ? 'fetch a transcript' : 'download the video'} from this page`,
-          detail: pageUrl,
-          buttons: ['Deny', 'Approve'],
-          defaultId: 0,
-          cancelId: 0,
-          noLink: true,
-        });
-        const approved = r.response === 1 && !r.checkboxChecked;
-        log.log(approved ? 'ALLOW' : 'DENY', 'plugin approval ' + (approved ? 'granted' : 'denied'), { url: pageUrl.slice(0, 200), kind });
-        return { approved };
-      },
-      (evt) => sendToChrome('forge:plugin-event', evt)
-    );
+    return runPluginJob(kind, t.url, t.title);
   });
   ipcMain.handle('forge:plugin-cancel', (_e, jobId) => plugins.cancel(jobId));
+  ipcMain.handle('forge:download-cancel', (_e, id) => {
+    if (plugins.cancel(id)) return true;
+    for (const entry of sessions.values()) {
+      if (entry.adapter.cancelDownload(id)) return true;
+    }
+    return false;
+  });
+  ipcMain.handle('forge:download-retry', (_e, id) => {
+    const record = downloads.find((item) => item.id === id);
+    if (!record || record.kind !== 'plugin' || !record.retryable || !record.url) {
+      return { state: 'error', error: 'This download cannot be retried.' };
+    }
+    return runPluginJob(record.pluginKind, record.url, record.filename);
+  });
+  ipcMain.handle('forge:download-open', async (_e, id) => {
+    const record = downloads.find((item) => item.id === id);
+    if (!record || record.executable || !isExistingPathInside(DL_DIR(), record.path)) return false;
+    const error = await shell.openPath(record.path);
+    return !error;
+  });
+  ipcMain.handle('forge:download-reveal', (_e, id) => {
+    const record = downloads.find((item) => item.id === id);
+    if (!record || !isExistingPathInside(DL_DIR(), record.path)) return false;
+    shell.showItemInFolder(record.path);
+    return true;
+  });
   // Settings: load all / patch subset; the adapter reads them live per request.
   ipcMain.handle('forge:settings-get', () => settings.all());
   ipcMain.handle('forge:settings-set', (_e, patch) => {

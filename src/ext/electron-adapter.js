@@ -16,6 +16,7 @@
  */
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
 const { dialog } = require('electron');
 
@@ -27,6 +28,7 @@ const { MODES } = require('../engine/privacy-modes');
 const settings = require('../engine/settings');
 const allowlist = require('../engine/site-allowlist');
 const { GENERIC_UA } = require('../engine/fingerprint-hardening');
+const { progressPercent } = require('../engine/download-center');
 
 const DOWNLOADS_DIR = path.join(path.dirname(path.dirname(__dirname)), 'downloads');
 
@@ -60,6 +62,9 @@ class SessionAdapter {
     this.modeId = opts.modeId;
     this.getChromeWindow = opts.getChromeWindow || (() => null);
     this.onDownloadRecord = opts.onDownloadRecord || (() => {});
+    this.downloadsDir = opts.downloadsDir || DOWNLOADS_DIR;
+    this.downloadItems = new Map();
+    this.downloadSeq = 0;
     this.counters = { ads: 0, trackers: 0, analytics: 0, thirdParty: 0, params: 0, cookies: 0, allowed: 0 };
     this.snapshot = { ...this.counters };
     this.installed = false;
@@ -234,26 +239,48 @@ class SessionAdapter {
       let origin = '';
       try { origin = new URL(url).hostname; } catch {}
       const filename = safeFileName(item.getFilename());
-      const savePath = path.join(DOWNLOADS_DIR, filename);
+      const savePath = path.join(self.downloadsDir, filename);
+      const id = `browser-${Date.now()}-${++self.downloadSeq}`;
+      fs.mkdirSync(self.downloadsDir, { recursive: true });
       item.setSavePath(savePath);
-      item.once('done', (_e, state) => {
-        const record = {
+      self.downloadItems.set(id, item);
+
+      const emitRecord = (state) => {
+        const received = item.getReceivedBytes();
+        const total = item.getTotalBytes();
+        self.onDownloadRecord({
+          id,
+          kind: 'browser',
           filename,
           source_domain: origin,
-          size: item.getReceivedBytes(),
+          received,
+          total,
+          size: state === 'completed' ? received : total,
+          pct: progressPercent(received, total),
           content_type: item.getMimeType() || '',
           time: new Date().toISOString(),
           state,
           path: savePath,
           executable: EXECUTABLE_RE.test(filename),
-        };
+          cancellable: state === 'running' || state === 'paused',
+          retryable: false,
+        });
+      };
+
+      emitRecord('running');
+      item.on('updated', (_e, state) => {
+        if (state === 'progressing') emitRecord(item.isPaused() ? 'paused' : 'running');
+        else if (state === 'interrupted') emitRecord('interrupted');
+      });
+      item.once('done', (_e, state) => {
+        self.downloadItems.delete(id);
+        emitRecord(state);
         const tag = state === 'completed' ? 'INFO' : 'ERROR';
         log.log(tag, `download ${state}`, {
-          filename, source: origin, size: record.size,
-          content_type: record.content_type || 'unknown',
-          executable: record.executable ? 'YES' : 'no',
+          filename, source: origin, size: item.getReceivedBytes(),
+          content_type: item.getMimeType() || 'unknown',
+          executable: EXECUTABLE_RE.test(filename) ? 'YES' : 'no',
         });
-        self.onDownloadRecord(record);
       });
     });
 
@@ -261,6 +288,12 @@ class SessionAdapter {
   }
 
   setMode(modeId) { this.modeId = modeId; }
+
+  cancelDownload(id) {
+    const item = this.downloadItems.get(id);
+    if (!item) return false;
+    try { item.cancel(); return true; } catch { return false; }
+  }
 
   resetCounters() { this.counters = { ads: 0, trackers: 0, analytics: 0, thirdParty: 0, params: 0, cookies: 0, allowed: 0 }; }
 
