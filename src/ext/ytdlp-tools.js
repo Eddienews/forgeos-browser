@@ -177,7 +177,10 @@ function buildYtDlpArgs(kind, pageUrl, options = {}) {
 
   if (kind === 'video') {
     args.push(
-      '--format', 'bv[height<=1080][vcodec^=avc1]+ba[acodec^=mp4a]/b[height<=1080][vcodec^=avc1][acodec^=mp4a]/b[height<=1080][ext=mp4]/bv*[height<=1080]+ba/b[height<=1080]',
+      // An MP4 container alone is not enough for Apple playback. Never fall
+      // back to AV1/VP9 or Opus inside MP4: QuickTime can open that file but
+      // may play audio without video. Fail clearly if H.264/AAC is unavailable.
+      '--format', 'bv[height<=1080][vcodec^=avc1]+ba[acodec^=mp4a]/b[height<=1080][vcodec^=avc1][acodec^=mp4a]',
       '--merge-output-format', 'mp4',
       '--print', 'after_move:FORGE_OUTPUT:%(filepath)s',
     );
@@ -281,6 +284,9 @@ function classifyYtDlpError(output, code, context = {}) {
   }
   if (/ffmpeg.*not found|ffprobe.*not found/.test(lower)) {
     return 'FFmpeg is required to merge or convert this download. Install FFmpeg and restart ForgeOS Browser.';
+  }
+  if (/requested format is not available|no video formats found/.test(lower)) {
+    return 'This video does not offer a QuickTime-compatible H.264/AAC format at 1080p or below.';
   }
   if (/unable to download|network is unreachable|timed? out|temporary failure|connection refused/.test(lower)) {
     return 'The download failed because YouTube or the network could not be reached. Check the connection and try again.';

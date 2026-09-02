@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Build](https://github.com/Eddienews/forgeos-browser/actions/workflows/build.yml/badge.svg)](https://github.com/Eddienews/forgeos-browser/actions)
-[![Tests](https://img.shields.io/badge/tests-110%20passing-brightgreen)](https://github.com/Eddienews/forgeos-browser/blob/main/tests/run-tests.js)
+[![Tests](https://img.shields.io/badge/tests-112%20passing-brightgreen)](https://github.com/Eddienews/forgeos-browser/blob/main/tests/run-tests.js)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20·%20macOS%20·%20Linux%20·%20Pi-blue)](https://github.com/Eddienews/forgeos-browser/releases)
 [![Telemetry](https://img.shields.io/badge/telemetry-zero-orange)](https://github.com/Eddienews/forgeos-browser/blob/main/PRIVACY_MODEL.md)
 
@@ -51,7 +51,7 @@ Measured vs Brave/Chrome/Edge on the same machine (see [results/BENCHMARK.md](re
 ```bash
 npm install
 npm start                 # dev
-npm test                  # 110 unit tests
+npm test                  # 112 unit tests
 npm run package           # electron-packager for host platform
 node scripts/make-portable.js   # portable zip
 # cross-platform: node scripts/package.js --platform=linux,darwin --arch=x64,arm64
@@ -77,7 +77,10 @@ for Windows and Linux. Restart ForgeOS after installing dependencies. Every job
 still requires explicit approval, supports cancellation, writes only to the
 downloads directory, and returns actionable errors. Transcript jobs keep clean
 `.txt` output for reading alongside timestamped `.vtt` captions for playback
-and editing. Download only content you are authorized to save.
+and editing. Video jobs require H.264 video and AAC audio so the resulting MP4
+plays in QuickTime and broadly compatible players; an unavailable compatible
+format is reported instead of producing a misleading audio-only MP4. Download
+only content you are authorized to save.
 
 ### Run on each platform
 
@@ -123,6 +126,14 @@ npm run package -- --platform=linux --arch=arm64
 Every version tag (`v0.8.7`, …) triggers GitHub Actions to build all 5 targets:
 Windows x64 · macOS x64/arm64 · Linux x64/arm64.
 Download from: **Actions → latest run → Artifacts**.
+
+### Version policy
+
+Every user-visible fix or improvement increments the application version before
+the build is distributed. Fixes use a patch increment, features use a minor
+increment, and incompatible releases use a major increment. The current version
+is always visible in the browser toolbar and in Settings. Unit verification
+fails if `package.json` and `package-lock.json` do not match.
 
 ## Architecture
 

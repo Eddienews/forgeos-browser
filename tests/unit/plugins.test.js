@@ -92,7 +92,7 @@ module.exports = [
     },
   },
   {
-    name: 'video command is shell-free, bounded to 1080p, and reports final output',
+    name: 'video command is shell-free and strictly selects QuickTime-compatible codecs',
     gate: 'J',
     fn(a) {
       const args = buildYtDlpArgs('video', VIDEO_URL, {
@@ -101,7 +101,8 @@ module.exports = [
       });
       const format = args[args.indexOf('--format') + 1];
       a.ok(format.startsWith('bv[height<=1080][vcodec^=avc1]+ba[acodec^=mp4a]'));
-      a.ok(format.includes('bv*[height<=1080]+ba/b[height<=1080]'));
+      a.ok(format.includes('b[height<=1080][vcodec^=avc1][acodec^=mp4a]'));
+      a.strictEqual(/av01|vp0?9|opus|bv\*/.test(format), false);
       a.ok(args.includes('after_move:FORGE_OUTPUT:%(filepath)s'));
       a.deepStrictEqual(args.slice(-2), ['--', VIDEO_URL]);
       a.ok(args.includes('node:/tools/node'));
@@ -138,6 +139,7 @@ module.exports = [
       a.match(classifyYtDlpError('ERROR: No subtitles for the requested languages', 1, { subtitleLangs: 'pt.*' }), /No subtitles/);
       a.match(classifyYtDlpError('WARNING: No supported JavaScript runtime could be found', 1), /Node 22\+/);
       a.match(classifyYtDlpError('ERROR: Sign in to confirm you are not a bot', 1), /sign-in|bot check/i);
+      a.match(classifyYtDlpError('ERROR: Requested format is not available', 1), /QuickTime-compatible/);
       a.strictEqual(classifyYtDlpError('ERROR: private video', 1), 'private video');
     },
   },

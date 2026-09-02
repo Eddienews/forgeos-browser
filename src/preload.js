@@ -14,6 +14,7 @@ const FORGE_CHANNELS = [
 ];
 
 const api = {
+  platform: process.platform,
   // actions (invoke = request/response)
   navigate: (url) => ipcRenderer.invoke('forge:navigate', url),
   back: () => ipcRenderer.invoke('forge:back'),

@@ -28,6 +28,7 @@
       <button id="btn-transcribe" title="Plugin: fetch transcript / subtitles" class="plug">✎</button>
       <button id="btn-downloads" title="Downloads folder" class="plug" style="font-size:14px;">📁</button>
       <button id="btn-star" title="Bookmark this page" class="plug">★</button>
+      <span class="toolbar-version" id="app-version" title="ForgeOS Browser version">v—</span>
       <div id="site-menu" class="menu hidden">
         <div class="menu-sec">
           <div class="menu-title" id="site-menu-host">site</div>
@@ -46,6 +47,13 @@
       </div>
       <button id="btn-gear" title="Settings &amp; tools">⚙</button>
       <div id="gear-menu" class="menu hidden">
+        <div class="settings-head">
+          <div>
+            <div class="settings-name">Settings</div>
+            <div class="settings-product">ForgeOS Browser</div>
+          </div>
+          <span class="version-badge" id="ver">v—</span>
+        </div>
         <div class="menu-sec">
           <div class="menu-title">Privacy &amp; Security</div>
           <div class="menu-hint" id="live-counters">This session: —</div>
@@ -114,7 +122,7 @@
 
         <div class="menu-sep"></div>
         <div class="menu-sec">
-          <div class="menu-hint center">ForgeOS Browser <span id="ver"></span> · Electron/Chromium<br/>Telemetry: ZERO ✓</div>
+          <div class="menu-hint center">Electron/Chromium · Telemetry: ZERO ✓</div>
         </div>
       </div>
   </div>

@@ -7,12 +7,24 @@
 (function () {
   const F = window.forge;
   const $ = (id) => document.getElementById(id);
+  document.body.classList.add(`platform-${F.platform || 'unknown'}`);
 
   let state = null;
 
   /* ---------------- gear menu ---------------- */
   const gearBtn = $('btn-gear');
   const gearMenu = $('gear-menu');
+
+  function reserveSpaceFor(menu) {
+    window.requestAnimationFrame(() => {
+      if (!menu || menu.classList.contains('hidden')) return;
+      const rect = menu.getBoundingClientRect();
+      F.setMenuOpen({
+        open: true,
+        rightInset: Math.ceil(window.innerWidth - rect.left + 8),
+      });
+    });
+  }
 
   function closeMenu() {
     gearMenu.classList.add('hidden');
@@ -25,7 +37,8 @@
     const opening = gearMenu.classList.contains('hidden');
     gearMenu.classList.toggle('hidden', !opening);
     gearBtn.classList.toggle('open', opening);
-    F.setMenuOpen(opening);
+    if (opening) reserveSpaceFor(gearMenu);
+    else F.setMenuOpen({ open: false });
   }
   gearBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(); });
   document.addEventListener('click', (e) => {
@@ -145,7 +158,7 @@
       $('site-cred-check').checked = credOk;
     } catch { $('site-cred-check').checked = false; }
     siteMenu.classList.remove('hidden');
-    F.setMenuOpen(true);
+    reserveSpaceFor(siteMenu);
     // keep page shrunk until both menus closed
     setTimeout(() => { if (siteMenu.classList.contains('hidden')) F.setMenuOpen(false); }, 0);
   }
@@ -220,7 +233,13 @@
   }
 
   // Hydrate controls from persisted settings + yt-dlp status line.
-  F.getVersion().then((v) => { const el = $('ver'); if (el) el.textContent = 'v' + v; }).catch(() => {});
+  F.getVersion().then((v) => {
+    for (const id of ['ver', 'app-version']) {
+      const el = $(id);
+      if (el) el.textContent = 'v' + v;
+    }
+    document.title = `ForgeOS Browser v${v}`;
+  }).catch(() => {});
   Promise.all([F.settingsGet(), F.ytdlpStatus()]).then(([s, yt]) => {
     if (s) {
       $('set-blockads').checked = s.blockAds !== false;
