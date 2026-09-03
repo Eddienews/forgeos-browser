@@ -159,6 +159,26 @@ function normalizeSubtitleLanguages(value) {
     : 'en.*,pt.*';
 }
 
+function cleanProgressField(value) {
+  const field = String(value || '').trim();
+  return field && !/^(?:n\/a|na|none|unknown)$/i.test(field) ? field : null;
+}
+
+function parseYtDlpProgress(line) {
+  const match = String(line || '').trim().match(
+    /^FORGE_PROGRESS:\s*(\d+(?:\.\d+)?)%?(?:\|([^|]*)\|([^|]*)\|([^|]*))?$/
+  );
+  if (!match) return null;
+  const pct = Number(match[1]);
+  if (!Number.isFinite(pct)) return null;
+  return {
+    pct: Math.max(0, Math.min(100, pct)),
+    speed: cleanProgressField(match[2]),
+    eta: cleanProgressField(match[3]),
+    total: cleanProgressField(match[4]),
+  };
+}
+
 function buildYtDlpArgs(kind, pageUrl, options = {}) {
   if (kind !== 'video' && kind !== 'transcript') throw new Error('Unsupported plugin kind');
   const args = [
@@ -167,7 +187,7 @@ function buildYtDlpArgs(kind, pageUrl, options = {}) {
     '--no-simulate',
     '--newline',
     '--color', 'never',
-    '--progress-template', 'download:FORGE_PROGRESS:%(progress._percent_str)s',
+    '--progress-template', 'download:FORGE_PROGRESS:%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s|%(progress._total_bytes_str)s',
     '--output', OUTPUT_TEMPLATE,
   ];
   if (options.jsRuntime && options.jsRuntime.path) {
@@ -308,6 +328,7 @@ module.exports = {
   installHint,
   isExecutable,
   normalizeSubtitleLanguages,
+  parseYtDlpProgress,
   resolveExecutable,
   resolveToolchain,
   resolveYtDlp,

@@ -19,4 +19,12 @@ module.exports = [
       a.match(pkg.version, /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/);
     },
   },
+  {
+    name: 'Electron dependency is pinned for reproducible packages',
+    gate: 'J',
+    fn(a) {
+      a.match(pkg.devDependencies.electron, /^\d+\.\d+\.\d+$/);
+      a.strictEqual(lock.packages['node_modules/electron'].version, pkg.devDependencies.electron);
+    },
+  },
 ];

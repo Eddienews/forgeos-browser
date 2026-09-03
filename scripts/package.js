@@ -17,6 +17,12 @@ const { execSync } = require('child_process');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
+const manifest = require(path.join(ROOT, 'package.json'));
+const electronVersion = String(manifest.devDependencies && manifest.devDependencies.electron || '').replace(/^[^0-9]*/, '');
+
+if (!/^\d+\.\d+\.\d+/.test(electronVersion)) {
+  throw new Error('package.json must declare a concrete Electron version');
+}
 
 // Parse --platform=... and --arch=...
 const platArg = process.argv.find(a => a.startsWith('--platform='));
@@ -53,6 +59,7 @@ for (const plat of requestedPlatforms) {
       'npx electron-packager . ForgeBrowserLab',
       `--platform=${plat}`,
       `--arch=${arch}`,
+      `--electron-version=${electronVersion}`,
       '--out=dist',
       '--overwrite',
       ...IGNORES,

@@ -12,6 +12,7 @@ const {
   buildYtDlpArgs,
   classifyYtDlpError,
   extractVideoId,
+  parseYtDlpProgress,
   resolveExecutable,
   vttToPlainTextContent,
 } = require('../../src/ext/ytdlp-tools');
@@ -104,8 +105,24 @@ module.exports = [
       a.ok(format.includes('b[height<=1080][vcodec^=avc1][acodec^=mp4a]'));
       a.strictEqual(/av01|vp0?9|opus|bv\*/.test(format), false);
       a.ok(args.includes('after_move:FORGE_OUTPUT:%(filepath)s'));
+      a.match(args[args.indexOf('--progress-template') + 1], /_speed_str.*_eta_str.*_total_bytes_str/);
       a.deepStrictEqual(args.slice(-2), ['--', VIDEO_URL]);
       a.ok(args.includes('node:/tools/node'));
+    },
+  },
+  {
+    name: 'yt-dlp progress includes percentage, speed, ETA, and total size',
+    gate: 'J',
+    fn(a) {
+      a.deepStrictEqual(
+        parseYtDlpProgress('FORGE_PROGRESS: 42.5%|3.20MiB/s|00:18|120.0MiB'),
+        { pct: 42.5, speed: '3.20MiB/s', eta: '00:18', total: '120.0MiB' }
+      );
+      a.deepStrictEqual(
+        parseYtDlpProgress('FORGE_PROGRESS:100%|N/A|NA|unknown'),
+        { pct: 100, speed: null, eta: null, total: null }
+      );
+      a.strictEqual(parseYtDlpProgress('ordinary output'), null);
     },
   },
   {

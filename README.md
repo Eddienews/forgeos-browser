@@ -135,6 +135,22 @@ increment, and incompatible releases use a major increment. The current version
 is always visible in the browser toolbar and in Settings. Unit verification
 fails if `package.json` and `package-lock.json` do not match.
 
+### Public ad-block benchmarks
+
+Run the non-gating live benchmark against TurtleCute, AdBlock Tester, a broad
+186-target test, Can You Block It, and the archived d3ward reference:
+
+```bash
+npm run test:adblock:public
+npm run test:adblock:public -- --target=turtlecute
+```
+
+The benchmark requires internet access and runs every site in a fresh in-memory
+session with the same network engine, filter lists, cosmetic filtering, and
+page sandbox as ForgeOS Browser. It never reads or modifies the user's browser
+profile. Public scores can change independently of the repository, so they are
+reported for regression analysis but do not gate CI.
+
 ## Architecture
 
 ```
@@ -146,7 +162,7 @@ src/
 │   ├── fingerprint*.js       exposure map + UA/permission posture
 │   ├── agent-view.js         untrusted-context boundary
 │   ├── credential-policy.js  no-credentials gate
-│   └── ...                 17 modules total
+│   └── ...                 testable browser policy and state modules
 ├── ext/
 │   ├── electron-adapter.js  webRequest + cookie policy wiring
 │   ├── agent-api.js         localhost capability API
@@ -154,6 +170,8 @@ src/
 │   └── ytdlp-tools.js       discovery, commands, output conversion
 └── renderer/              single-bar walnut-glass UI
 ```
+
+The prioritized product backlog lives in [`FEATURE_LIST.md`](FEATURE_LIST.md).
 
 ## Disclaimer
 

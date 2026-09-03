@@ -242,7 +242,7 @@ header { display: flex; align-items: center; justify-content: space-between; mar
 h1 { font: 600 13px var(--mono); letter-spacing: .14em; color: var(--amber); }
 #panel-mode { text-transform: uppercase; }
 
-#panel-nav { display: flex; gap: 4px; margin-bottom: 10px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+#panel-nav { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
 #panel-nav button {
   background: none; border: 1px solid transparent; color: var(--muted);
   padding: 4px 10px; border-radius: 5px; cursor: pointer; font-size: 12px;
@@ -283,6 +283,57 @@ code { color: var(--amber); font-family: var(--mono); }
   border-radius: 5px; padding: 4px 10px; cursor: pointer; font-size: 12px;
 }
 .list-actions button:hover { border-color: var(--amber-dim); }
+
+.download-center-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-bottom: 12px;
+}
+.download-center-head h2 { margin-top: 0; color: var(--amber); font-size: 13px; }
+.download-center-head .note { margin-top: 2px; }
+.download-center-head button, .download-actions button {
+  background: var(--bg3); border: 1px solid var(--line); color: var(--fg);
+  border-radius: 6px; padding: 5px 9px; cursor: pointer; font-size: 11px;
+}
+.download-center-head button:hover, .download-actions button:hover {
+  border-color: var(--amber-dim); color: var(--amber);
+}
+.download-list { display: flex; flex-direction: column; gap: 8px; }
+.download-empty {
+  color: var(--muted); border: 1px dashed var(--line); border-radius: 8px;
+  padding: 24px 14px; text-align: center; font-size: 12px;
+}
+.download-card {
+  background: var(--bg2); border: 1px solid var(--line); border-radius: 9px;
+  padding: 10px 11px;
+}
+.download-card.exec { border-color: rgba(209, 96, 61, .65); }
+.download-card-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.download-name {
+  color: var(--fg); font-size: 12px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.download-status {
+  flex: 0 0 auto; color: var(--muted); font: 600 9px var(--mono);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.download-status.state-running, .download-status.state-paused { color: var(--amber); }
+.download-status.state-completed { color: var(--green); }
+.download-status.state-error, .download-status.state-interrupted { color: var(--red); }
+.download-meta { color: var(--muted); font: 10.5px var(--mono); margin-top: 4px; }
+.download-progress {
+  height: 7px; overflow: hidden; margin-top: 8px;
+  background: var(--bg3); border: 1px solid var(--line); border-radius: 999px;
+}
+.download-progress-fill {
+  height: 100%; background: linear-gradient(90deg, var(--amber-dim), var(--amber));
+  transition: width .25s ease;
+}
+.download-progress-fill.indeterminate { animation: pp-slide 1.1s linear infinite alternate; }
+.download-message { margin-top: 7px; font-size: 11px; line-height: 1.4; }
+.download-message.error { color: var(--red); }
+.download-message.warning { color: var(--amber); }
+.download-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.download-actions button.danger { color: var(--red); }
 
 .demo-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .demo-actions button {

@@ -10,7 +10,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 const FORGE_CHANNELS = [
-  'forge:state', 'forge:agent-view', 'forge:log', 'forge:download', 'forge:security',
+  'forge:state', 'forge:agent-view', 'forge:log', 'forge:download', 'forge:security', 'forge:panel-section',
 ];
 
 const api = {
@@ -26,10 +26,14 @@ const api = {
   setMode: (mode) => ipcRenderer.invoke('forge:set-mode', mode),
   clearSession: () => ipcRenderer.invoke('forge:clear-session'),
   setForgetOnClose: (on) => ipcRenderer.invoke('forge:set-forget', on),
-  togglePanels: () => ipcRenderer.invoke('forge:toggle-panel'),
+  togglePanels: (section) => ipcRenderer.invoke('forge:toggle-panel', section),
   plugin: (kind) => ipcRenderer.invoke('forge:plugin', kind),
   pluginCancel: (jobId) => ipcRenderer.invoke('forge:plugin-cancel', jobId),
   openDownloads: () => ipcRenderer.invoke('forge:open-downloads'),
+  downloadCancel: (id) => ipcRenderer.invoke('forge:download-cancel', id),
+  downloadRetry: (id) => ipcRenderer.invoke('forge:download-retry', id),
+  downloadOpen: (id) => ipcRenderer.invoke('forge:download-open', id),
+  downloadReveal: (id) => ipcRenderer.invoke('forge:download-reveal', id),
   settingsGet: () => ipcRenderer.invoke('forge:settings-get'),
   settingsSet: (patch) => ipcRenderer.invoke('forge:settings-set', patch),
   setMenuOpen: (open) => ipcRenderer.invoke('forge:set-menu-open', open),
@@ -71,6 +75,7 @@ const api = {
   onAgentView: (cb) => ipcRenderer.on('forge:agent-view', (_e, v) => cb(v)),
   onLog: (cb) => ipcRenderer.on('forge:log', (_e, v) => cb(v)),
   onDownload: (cb) => ipcRenderer.on('forge:download', (_e, v) => cb(v)),
+  onPanelSection: (cb) => ipcRenderer.on('forge:panel-section', (_e, v) => cb(v)),
   onSecurity: (cb) => ipcRenderer.on('forge:security', (_e, v) => cb(v)),
 };
 

@@ -24,6 +24,24 @@ const { createPageWebPreferences } = require('../../src/page-web-preferences');
 
 const PAGES = path.join(__dirname, '..', 'pages');
 const PNG1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+const SILENT_WAV = (() => {
+  const sampleRate = 8000;
+  const dataSize = sampleRate;
+  const wav = Buffer.alloc(44 + dataSize, 128);
+  wav.write('RIFF', 0);
+  wav.writeUInt32LE(36 + dataSize, 4);
+  wav.write('WAVEfmt ', 8);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(sampleRate, 24);
+  wav.writeUInt32LE(sampleRate, 28);
+  wav.writeUInt16LE(1, 32);
+  wav.writeUInt16LE(8, 34);
+  wav.write('data', 36);
+  wav.writeUInt32LE(dataSize, 40);
+  return wav;
+})();
 const results = [];
 let server = null;
 let port = 0;
@@ -44,6 +62,16 @@ function serve() {
     if (req.url.startsWith('/ok.png')) {
       res.writeHead(200, { 'content-type': 'image/png' });
       res.end(PNG1PX);
+      return;
+    }
+    if (req.url.startsWith('/silent.wav')) {
+      res.writeHead(200, { 'content-type': 'audio/wav', 'content-length': SILENT_WAV.length });
+      res.end(SILENT_WAV);
+      return;
+    }
+    if (req.url.startsWith('/autoplay.html')) {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<!doctype html><audio id="probe" autoplay loop src="/silent.wav"></audio>');
       return;
     }
     const clean = req.url.split('?')[0].replace(/^\/+/, '');
@@ -123,6 +151,16 @@ async function main() {
   /* ---------- Gate A: browser + engine launch ---------- */
   record('A', 'browser window created, engine + adapter installed', true,
     'electron ' + process.versions.electron + ' / chromium ' + process.versions.chrome);
+
+  /* ---------- Gate K: restored media must wait for the user ---------- */
+  await loadAndWait(wc, `http://127.0.0.1:${p}/autoplay.html`);
+  const playback = await wc.executeJavaScript(`(() => {
+    const media = document.getElementById('probe');
+    return { paused: media.paused, currentTime: media.currentTime, readyState: media.readyState };
+  })()`);
+  record('K', 'media page stays paused until user activation',
+    playback.paused === true && playback.currentTime < 0.05 && playback.readyState >= 2,
+    JSON.stringify(playback));
 
   /* ---------- Test A (Gates B/C): ad/tracker requests blocked ---------- */
   await loadAndWait(wc, `http://127.0.0.1:${p}/ad_tracking.html`);
