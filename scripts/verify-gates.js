@@ -47,6 +47,10 @@ function readJson(name) {
   catch { return null; }
 }
 
+function clearJson(name) {
+  try { fs.rmSync(path.join(RES, name), { force: true }); } catch {}
+}
+
 function passes(results, test) {
   return !!results && (results.some ? results.some((r) => r.test === test && r.pass) : false);
 }
@@ -63,8 +67,10 @@ async function main() {
 
   // 1. unit
   console.log('> Unit tests (engine) ...');
-  await run('node', [path.join('tests', 'run-tests.js')], 60000);
-  const unit = readJson('unit-results.json');
+  clearJson('unit-results.json');
+  const unitRun = await run('node', [path.join('tests', 'run-tests.js')], 60000);
+  const unit = unitRun.ok ? readJson('unit-results.json') : null;
+  if (!unitRun.ok) console.error(unitRun.output);
 
   // 2. e2e
   if (!ELECTRON || !fs.existsSync(ELECTRON)) {
@@ -72,14 +78,18 @@ async function main() {
     process.exit(2);
   }
   console.log('> E2E (real Chromium + local fixtures) ...');
-  await run(ELECTRON, [path.join('tests', 'e2e', 'main.js')], 120000);
-  const e2e = readJson('e2e-results.json');
+  clearJson('e2e-results.json');
+  const e2eRun = await run(ELECTRON, [path.join('tests', 'e2e', 'main.js')], 120000);
+  const e2e = e2eRun.ok ? readJson('e2e-results.json') : null;
+  if (!e2eRun.ok) console.error(e2eRun.output);
 
   // 3. smoke
   console.log('> Smoke (real app, https://example.com) ...');
-  await run(ELECTRON, ['.', '--smoke'], 120000);
+  clearJson('smoke-report.json');
+  const smokeRun = await run(ELECTRON, ['.', '--smoke'], 120000);
   await sleep(1000);
-  const smoke = readJson('smoke-report.json');
+  const smoke = smokeRun.ok ? readJson('smoke-report.json') : null;
+  if (!smokeRun.ok) console.error(smokeRun.output);
 
   const e2eList = e2e ? e2e.results : [];
   const gateTests = {
