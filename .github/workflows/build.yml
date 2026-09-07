@@ -95,9 +95,12 @@ jobs:
             echo "No packaged archives were produced."
             exit 1
           fi
-          if ! gh release view "$TAG_NAME" >/dev/null 2>&1; then
+          if ! gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$TAG_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
               --title "ForgeOS Browser $TAG_NAME" \
               --generate-notes
           fi
-          gh release upload "$TAG_NAME" "${assets[@]}" --clobber
+          gh release upload "$TAG_NAME" "${assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
