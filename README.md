@@ -124,8 +124,9 @@ npm run package -- --platform=linux --arch=arm64
 ### CI builds (no local compile)
 
 Every version tag (`v0.8.7`, …) triggers GitHub Actions to build all 5 targets:
-Windows x64 · macOS x64/arm64 · Linux x64/arm64.
-Download from: **Actions → latest run → Artifacts**.
+Windows x64 · macOS x64/arm64 · Linux x64/arm64. The workflow publishes the
+portable ZIPs to the tag's **GitHub Release**; the original Actions artifacts
+remain available for CI inspection.
 
 ### Version policy
 
