@@ -44,6 +44,11 @@ function safeFileName(name) {
 
 const EXECUTABLE_RE = /\.(exe|msi|bat|cmd|com|scr|ps1|vbs|jar|apk|dmg|sh|bin|pif|reg|cer|iso|svg)$/i;
 
+/** Electron's synchronous message box returns the selected button index. */
+function permissionDialogAllowed(buttonIndex) {
+  return buttonIndex === 1;
+}
+
 class SessionAdapter {
   /**
    * @param {object} opts
@@ -213,7 +218,7 @@ class SessionAdapter {
       if (decision === 'ASK') {
         const win = self.getChromeWindow();
         if (win) {
-          const r = dialog.showMessageBoxSync(win, {
+          const selectedButton = dialog.showMessageBoxSync(win, {
             type: 'question',
             title: 'Forge Browser Lab — permission request',
             message: `“${permission}” permission requested by ${details.requestingUrl || 'a page'}`,
@@ -222,10 +227,11 @@ class SessionAdapter {
             defaultId: 0,
             cancelId: 0,
           });
-          log.log(r.response === 0 ? 'DENY' : 'ALLOW', `${permission} permission ${r.response === 0 ? 'denied' : 'granted'}`, {
+          const allowed = permissionDialogAllowed(selectedButton);
+          log.log(allowed ? 'ALLOW' : 'DENY', `${permission} permission ${allowed ? 'granted' : 'denied'}`, {
             permission, from: details.requestingUrl || '',
           });
-          callback(r.response === 1);
+          callback(allowed);
           return;
         }
         callback(false); // no window to ask — fail closed
@@ -316,4 +322,4 @@ class SessionAdapter {
   }
 }
 
-module.exports = { SessionAdapter, safeFileName, EXECUTABLE_RE, DOWNLOADS_DIR };
+module.exports = { SessionAdapter, safeFileName, permissionDialogAllowed, EXECUTABLE_RE, DOWNLOADS_DIR };

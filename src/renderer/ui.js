@@ -92,9 +92,29 @@
       await F.navigate($('addr').value.trim());
     }
   });
-  $('mode-select').addEventListener('change', (e) => {
-    F.setMode(e.target.value);
-    closeMenu();
+  $('mode-select').addEventListener('change', async (e) => {
+    const select = e.target;
+    const previousMode = state && state.mode;
+    const nextMode = select.value;
+    if (!previousMode || nextMode === previousMode) return;
+    const hasLoadedPages = state.tabs.some((tab) => tab.url && tab.url !== 'about:blank');
+    if (hasLoadedPages && !window.confirm(
+      'Changing privacy mode reloads all open pages so the new storage isolation can take effect.\n\n' +
+      'Unsaved form entries may be lost. Existing data from the previous mode is not deleted; use Clear session to remove it.',
+    )) {
+      select.value = previousMode;
+      return;
+    }
+    select.disabled = true;
+    try {
+      const result = await F.setMode(nextMode);
+      if (!result || !result.ok) select.value = previousMode;
+      else closeMenu();
+    } catch {
+      select.value = previousMode;
+    } finally {
+      select.disabled = false;
+    }
   });
   $('forget-check').addEventListener('change', (e) => F.setForgetOnClose(e.target.checked));
 
@@ -139,6 +159,33 @@
     if (!el || !s || !s.session) return;
     const c = s.session;
     el.textContent = `This session: ${c.ads} ads · ${c.trackers} trackers · ${c.params} params · ${c.allowed} passed`;
+  }
+
+  function formatAuditBytes(bytes) {
+    const n = Number(bytes);
+    if (!Number.isFinite(n) || n < 0) return '—';
+    if (n < 1024) return `${Math.round(n)} B`;
+    return `${(n / 1024).toFixed(1)} KiB`;
+  }
+
+  function renderAuditHealth(s) {
+    const el = $('audit-health');
+    if (!el) return;
+    const audit = s && s.audit;
+    el.classList.remove('audit-ok', 'audit-bad');
+    if (!audit || !audit.enabled) {
+      el.textContent = 'Audit: disabled';
+      el.classList.add('audit-bad');
+      return;
+    }
+    if (!audit.healthy) {
+      el.textContent = `Audit: attention required${audit.lastErrorCode ? ` · ${audit.lastErrorCode}` : ''}`;
+      el.classList.add('audit-bad');
+      return;
+    }
+    const rotation = audit.rotated ? 'rotation active' : 'rotation armed';
+    el.textContent = `Audit: active · ${formatAuditBytes(audit.bytes)} / ${formatAuditBytes(audit.maxBytes)} · ${rotation}`;
+    el.classList.add('audit-ok');
   }
 
   /* ---------------- site menu (badge click) ---------------- */
@@ -396,6 +443,7 @@
     $('mode-select').value = s.mode;
     $('mode-hint').textContent = MODE_HINTS[s.mode] || '';
     renderCounters(s);
+    renderAuditHealth(s);
     refreshBadge();
   }
 

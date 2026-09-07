@@ -18,6 +18,7 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const DIST = path.join(ROOT, 'dist');
+const manifest = require(path.join(ROOT, 'package.json'));
 
 // Parse --platform=... and --arch=...
 const platArg = process.argv.find(a => a.startsWith('--platform='));
@@ -71,7 +72,7 @@ ${PLATFORM === 'win32' ? '- Double-click **ForgeBrowserLab.exe**' : PLATFORM ===
 - Keep this folder writable: logs/, downloads/ and results/ live next to the executable.
 - Filter lists (lists/) can be refreshed on any machine with:
     node scripts/update-lists.js   (requires Node) — or just copy lists/*.txt from another install.
-- v0.4.0 — laboratory prototype. Not hardened for hostile use.
+- v${manifest.version} — laboratory prototype. Not hardened for hostile use.
 `;
   fs.writeFileSync(path.join(APP_DIR, 'PORTABLE.md'), md);
 }

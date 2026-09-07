@@ -13,6 +13,7 @@ function fakeTabs(urls, opts = {}) {
     map.set(i + 1, {
       url: u,
       forgetOnClose: Array.isArray(opts.forget) ? opts.forget[i] : !!opts.forget,
+      restoreOnRestart: Array.isArray(opts.restore) ? opts.restore[i] : opts.restore,
     });
   });
   return map;
@@ -43,13 +44,27 @@ module.exports = [
     },
   },
   {
-    name: 'skips ephemeral (forgetOnClose) tabs',
+    name: 'skips forget-on-close tabs',
     gate: 'C1',
     fn: () => {
       store.captureOpenTabs(fakeTabs(['https://keep.com', 'https://ephemeral.com'], { forget: [false, true] }), tmp);
       const restored = store.restoreTabs(tmp);
       if (JSON.stringify(restored) !== JSON.stringify(['https://keep.com'])) {
         throw new Error(`ephemeral leaked: ${restored}`);
+      }
+    },
+  },
+  {
+    name: 'skips ephemeral-mode tabs even when forget-on-close is not selected',
+    gate: 'C1',
+    fn: () => {
+      store.captureOpenTabs(fakeTabs(
+        ['https://keep.com', 'https://ephemeral.com'],
+        { forget: [false, false], restore: [true, false] },
+      ), tmp);
+      const restored = store.restoreTabs(tmp);
+      if (JSON.stringify(restored) !== JSON.stringify(['https://keep.com'])) {
+        throw new Error(`ephemeral mode leaked: ${restored}`);
       }
     },
   },
@@ -91,6 +106,19 @@ module.exports = [
       store.clear(tmp);
       const restored = store.restoreTabs(tmp);
       if (restored.length !== 0) throw new Error(`clear failed: ${restored}`);
+    },
+  },
+  {
+    name: 'capturing no open tabs replaces stale recovery state atomically',
+    gate: 'C1',
+    fn: () => {
+      store.captureOpenTabs(fakeTabs(['https://stale.example']), tmp);
+      store.captureOpenTabs(new Map(), tmp);
+      const restored = store.restoreTabs(tmp);
+      if (restored.length !== 0) throw new Error(`stale tabs survived: ${restored}`);
+      if (fs.existsSync(path.join(tmp, 'forge-session.json.tmp'))) {
+        throw new Error('temporary session file was not finalized');
+      }
     },
   },
 ];

@@ -22,7 +22,7 @@ const { FilterEngine } = require('./engine/filter-engine');
 const { EventLog } = require('./engine/event-log');
 const { SessionAdapter } = require('./ext/electron-adapter');
 const { PluginRunner } = require('./ext/plugins');
-const { sessionPlanFor, clearSessionData } = require('./engine/storage-manager');
+const { sessionPlanFor, captureTabReloadPlan, clearSessionData } = require('./engine/storage-manager');
 const { MODES, isValidMode } = require('./engine/privacy-modes');
 const { analyzeAgentView, IN_PAGE_SCRIPT, readPageView } = require('./engine/agent-view');
 const { applyAppLevelHardening } = require('./engine/fingerprint-hardening');
@@ -52,8 +52,12 @@ const RENDERER = path.join(APP_ROOT, 'renderer', 'index.html');
 // keep dirs local to the executable (USB-drive / portable mode).
 // Dev (no asar): project root is fine.
 const IS_PACKAGED = __dirname.includes('app.asar');
+const SMOKE_RUNTIME_BASE = process.argv.includes('--smoke')
+  ? process.env.FORGE_SMOKE_RUNTIME_BASE
+  : null;
 
 function getRuntimeBase() {
+  if (SMOKE_RUNTIME_BASE) return path.resolve(SMOKE_RUNTIME_BASE);
   if (!IS_PACKAGED) return path.dirname(APP_ROOT);
   const exeDir = path.dirname(process.execPath);
   // Portable mode: .portable marker next to the executable
@@ -74,6 +78,7 @@ function getDownloadDir() {
 // app.getPath.  Top-level code before ready uses a no-op fallback.
 let log = { log: () => {} }; // no-op until real init
 let engine = null;
+let agentApi = null;
 const LOG_FILE = getLogFile;
 const DL_DIR = getDownloadDir;
 const RUNTIME_BASE_REF = getRuntimeBase;
@@ -102,6 +107,11 @@ const sessions = new Map(); // partitionKey -> { session, adapter }
 let activeTabId = null;
 const downloads = [];
 const plugins = new PluginRunner({ log });
+
+function persistOpenTabs() {
+  try { return sessionStore.captureOpenTabs(tabs, getRuntimeBase()); }
+  catch { return 0; }
+}
 
 function getSessionFor(partitionKey) {
   if (partitionKey == null) {
@@ -224,7 +234,10 @@ function createTab(url = 'about:blank', opts = {}) {
   const tab = {
     id, view, wc, adapter, partition: plan.partition,
     url, title: '', history: [], index: -1,
+    modeId,
     forgetOnClose: !!opts.forgetOnClose,
+    retainHistory: plan.retainHistory,
+    restoreOnRestart: plan.restoreOnRestart,
     certError: false,
     pageCounts: { ads: 0, trackers: 0, analytics: 0, thirdParty: 0, params: 0, cookies: 0 },
     lastAgentView: null,
@@ -263,13 +276,13 @@ function createTab(url = 'about:blank', opts = {}) {
     tab.index = tab.history.length - 1;
     tab.pageCounts = adapter.takeDelta();
     log.log('INFO', 'navigated', { url: url.slice(0, 300), httpCode });
-    bh.addHistory({ url, title: wc.getTitle() });
+    if (tab.retainHistory) bh.addHistory({ url, title: wc.getTitle() });
     injectPageAppearance(tab, url);
     injectCosmetic(tab, url);
     injectDomRemoval(tab, url);
     // Crash recovery: persist open tabs on every navigation so a force-kill
     // or crash at any moment can restore the last good state.
-    try { sessionStore.captureOpenTabs(tabs, getRuntimeBase()); } catch {}
+    persistOpenTabs();
     sendState();
   });
 
@@ -290,6 +303,8 @@ function createTab(url = 'about:blank', opts = {}) {
     tab.history = tab.history.slice(0, tab.index + 1);
     tab.history.push(url);
     tab.index = tab.history.length - 1;
+    if (tab.retainHistory) bh.addHistory({ url, title: wc.getTitle() });
+    persistOpenTabs();
     sendState();
   });
 
@@ -342,11 +357,13 @@ async function refreshAgentView(tab) {
       });
     }
     sendToChrome('forge:agent-view', { tabId: tab.id, agentView: av });
+    return av;
   } catch (e) {
     // Some pages (devtools, crashes) cannot be extracted; the agent view is
     // still produced with untrusted:true and whatever is known.
     tab.lastAgentView = analyzeAgentView({ url: tab.url, title: tab.title }, { trackersBlocked: tab.pageCounts, modeId });
     sendToChrome('forge:agent-view', { tabId: tab.id, agentView: tab.lastAgentView, error: String(e).slice(0, 120) });
+    return tab.lastAgentView;
   }
 }
 
@@ -374,10 +391,10 @@ function switchTab(id, { focus = true } = {}) {
   sendState();
 }
 
-async function closeTab(id) {
+async function closeTab(id, { notify = true, persist = true } = {}) {
   const tab = tabs.get(id);
   if (!tab) return;
-  if (tab.forgetOnClose || modeId === 'ephemeral' || tab.partition) {
+  if (tab.forgetOnClose || tab.modeId === 'ephemeral' || tab.partition) {
     try { await clearSessionData(tab.adapter.session); } catch {}
     log.log('INFO', 'site data cleared on tab close', { url: tab.url.slice(0, 200), partition: tab.partition || 'default' });
   }
@@ -389,11 +406,70 @@ async function closeTab(id) {
     const next = [...tabs.keys()].pop();
     if (next != null) switchTab(next, { focus: false });
   }
+  if (persist) persistOpenTabs();
+  if (notify) sendState();
+}
+
+async function changePrivacyMode(nextModeId) {
+  if (!isValidMode(nextModeId)) return { ok: false, error: 'invalid privacy mode' };
+  if (nextModeId === modeId) return { ok: true, mode: modeId, reloadedTabs: 0 };
+
+  const previousModeId = modeId;
+  const oldTabs = [...tabs.values()];
+  const reloadPlan = captureTabReloadPlan(tabs, activeTabId);
+  const replacements = [];
+  modeId = nextModeId;
+
+  try {
+    for (const item of reloadPlan.items) {
+      replacements.push(createTab(item.url, { forgetOnClose: item.forgetOnClose }));
+    }
+  } catch (error) {
+    for (const tab of replacements) await closeTab(tab.id, { notify: false, persist: false });
+    modeId = previousModeId;
+    for (const tab of oldTabs) tab.adapter.setMode(tab.modeId);
+    sendState();
+    log.log('ERROR', 'privacy mode change failed', { from: previousModeId, to: nextModeId, error: String(error).slice(0, 160) });
+    return { ok: false, error: 'unable to recreate tabs safely' };
+  }
+
+  if (replacements.length) {
+    const selected = replacements[reloadPlan.activeIndex >= 0 ? reloadPlan.activeIndex : 0];
+    switchTab(selected.id, { focus: false });
+  }
+  for (const tab of oldTabs) await closeTab(tab.id, { notify: false, persist: false });
+  persistOpenTabs();
+  log.log('INFO', 'privacy mode changed', {
+    from: previousModeId, to: nextModeId, reloadedTabs: replacements.length,
+  });
   sendState();
+  return { ok: true, mode: modeId, reloadedTabs: replacements.length };
 }
 
 function activeTab() {
   return tabs.get(activeTabId) || null;
+}
+
+async function approveAgentNavigation(url) {
+  if (!chromeWin || chromeWin.isDestroyed()) {
+    log.log('DENY', 'agent navigation approval unavailable', { reason: 'no browser window' });
+    return false;
+  }
+  const result = await dialog.showMessageBox(chromeWin, {
+    type: 'warning',
+    title: 'ForgeOS Browser — agent navigation request',
+    message: 'An external agent wants to navigate the active tab.',
+    detail: `Destination:\n${String(url).slice(0, 1000)}\n\nAllow only if you requested this navigation.`,
+    buttons: ['Deny', 'Allow navigation'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  });
+  const allowed = result.response === 1;
+  log.log(allowed ? 'ALLOW' : 'DENY', 'agent navigation human decision', {
+    url: String(url).slice(0, 300), decision: allowed ? 'allow' : 'deny',
+  });
+  return allowed;
 }
 
 /* ------------------------------------------------------------------ */
@@ -501,6 +577,9 @@ function buildState() {
     totals,
     downloads: downloads.slice(0, 20),
     recentLogs: log.recent(100),
+    audit: typeof log.health === 'function' ? log.health() : {
+      enabled: false, healthy: false, bytes: 0, maxBytes: 0, rotated: false,
+    },
     privacyDefaults: require('./engine/fingerprint').PERMISSION_DEFAULTS,
   };
 }
@@ -546,13 +625,7 @@ ipcMain.handle('forge:set-menu-open', (_e, state) => {
     layoutActiveView();
     return true;
   });
-  ipcMain.handle('forge:set-mode', (_e, m) => {
-    if (!isValidMode(m)) return false;
-    modeId = m;
-    log.log('INFO', 'privacy mode changed', { mode: m });
-    sendState();
-    return true;
-  });
+  ipcMain.handle('forge:set-mode', (_e, m) => changePrivacyMode(m));
   ipcMain.handle('forge:toggle-panel', (_e, section) => {
     togglePanels(section === 'downloads' ? 'downloads' : null);
     return true;
@@ -570,6 +643,7 @@ ipcMain.handle('forge:set-menu-open', (_e, state) => {
     }
     downloads.length = 0;
     bh.clearHistory();
+    sessionStore.clear(getRuntimeBase());
     log.log('INFO', 'clear session complete', { cookiesRemoved: removed });
     sendState();
     return true;
@@ -578,6 +652,8 @@ ipcMain.handle('forge:set-menu-open', (_e, state) => {
     const t = activeTab();
     if (!t) return false;
     t.forgetOnClose = !!on;
+    t.restoreOnRestart = t.retainHistory && !t.forgetOnClose;
+    persistOpenTabs();
     log.log('INFO', 'forget-on-close ' + (on ? 'enabled' : 'disabled'), { url: t.url.slice(0, 200) });
     sendState();
     return true;
@@ -910,13 +986,17 @@ app.whenReady().then(() => {
       if (!t) return { error: 'no active tab', untrusted: true };
       return refreshAgentView(t); // same pipeline as the panels; marks untrusted
     },
+    approveNavigate: (url) => approveAgentNavigation(url),
     navigate: (url) => new Promise((resolve, reject) => {
       const t = activeTab();
       if (!t) return reject(new Error('no active tab'));
       navigateIn(t, url);
       resolve();
     }),
-  }).then((api) => log.log('INFO', 'agent api listening', { url: `http://127.0.0.1:${api.port}`, tokenFile: api.tokenFile }))
+  }).then((api) => {
+    agentApi = api;
+    log.log('INFO', 'agent api listening', { url: `http://127.0.0.1:${api.port}`, tokenFile: api.tokenFile });
+  })
     .catch((e) => log.log('ERROR', 'agent api failed to start', { error: String(e).slice(0, 150) }));
 
   // --smoke: automated self-check on the REAL app (used by scripts/verify-gates).
@@ -1083,8 +1163,18 @@ async function runSmoke() {
 app.on('window-all-closed', () => {
   // Persist open tabs for next launch (crash recovery) unless quitting
   // is explicitly "clean" (forget-mode handled per-tab already).
-  if (tabs.size) sessionStore.captureOpenTabs(tabs, getRuntimeBase());
+  if (tabs.size) persistOpenTabs();
+  else sessionStore.clear(getRuntimeBase());
   app.quit();
+});
+
+app.on('before-quit', () => {
+  const api = agentApi;
+  agentApi = null;
+  if (!api) return;
+  api.stop()
+    .then(({ tokenRemoved }) => log.log('INFO', 'agent api stopped', { tokenRemoved }))
+    .catch((error) => log.log('ERROR', 'agent api stop failed', { error: String(error).slice(0, 160) }));
 });
 
 // Explicitly disable anything that could phone home from this project.

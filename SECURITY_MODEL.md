@@ -51,6 +51,45 @@ permission.* Consequential actions ask; destructive ones are strongly denied.
 auth/private keys via types, autocomplete, and name/id/label hints. Automation is
 forbidden on them; values are redacted; "Enter password" is human-only.
 
+## Local agent credentials
+
+The localhost Agent API stores only its current bootstrap capability token.
+On macOS and Linux the token file is atomically replaced with owner-only `0600`
+permissions; packaged installations use the operating system's user-data
+directory. Token rotation requires the current `full` capability, persists the
+replacement before revoking every older token, clears pending navigation
+approvals, and rolls back if secure persistence fails.
+
+Authenticated command bodies must use `application/json`, must decode to an
+object, and are capped at 64 KiB for both declared and streamed payloads.
+Malformed requests receive explicit `400`, `413`, or `415` responses. API
+responses disable caching and MIME sniffing so capability tokens are not stored
+by compliant HTTP intermediaries.
+
+The listener binds only to IPv4 loopback and validates the complete `Host`
+authority against canonical loopback forms, including a numeric port when
+present. Every request carrying an `Origin` header is rejected, including
+opaque `null` and `file://` origins. Per-token rate limits expose remaining
+capacity and calculate `Retry-After` from the actual sliding-window deadline.
+
+Server startup reserves the loopback port before issuing or writing credentials,
+so a bind failure cannot replace the token of an already-running instance. Only
+one Agent API listener may start per process. Clean shutdown revokes in-memory
+capabilities, closes active connections, and removes the token file only if it
+still contains the credential owned by that server instance.
+
+Every handled Agent API request emits exactly one local audit record containing
+only a random request identifier, normalized method and route, decision, HTTP
+status, capability scope, and duration. Unknown paths collapse to `<unknown>`;
+query strings, request bodies, credentials, page content, and navigation targets
+are never recorded. The event log applies the same redaction to its bounded
+in-memory history and its local file output. On POSIX systems the active log and
+its single rotated copy use owner-only `0600` permissions. Each file is limited
+to 1 MiB, and symbolic-link destinations are refused. Control characters are
+escaped before serialization so one event always occupies one physical line.
+Settings exposes only aggregate health (enabled state, bounded size, rotation,
+and a non-sensitive error code), never the audit path or event content.
+
 ## Download security (Phase 13)
 
 Downloads go to `ForgeBrowserLab/downloads/` and are **never executed

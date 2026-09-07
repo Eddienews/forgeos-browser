@@ -13,8 +13,9 @@
  */
 'use strict';
 
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const path = require('path');
+const { PACKAGE_IGNORE_SOURCE } = require('./package-policy');
 
 const ROOT = path.join(__dirname, '..');
 const manifest = require(path.join(ROOT, 'package.json'));
@@ -38,9 +39,11 @@ const requestedArchs = archArg
   ? archArg.split('=')[1].split(',').map(s => s.trim()).filter(Boolean)
   : [hostArch];
 
-const IGNORES = [
-  '--ignore="^/(dist|results|logs|downloads|\\.git)"',
-];
+const npxCommand = hostPlatform === 'win32' ? 'npx.cmd' : 'npx';
+
+function printableArgument(value) {
+  return /^[A-Za-z0-9_./:=,-]+$/.test(value) ? value : JSON.stringify(value);
+}
 
 for (const plat of requestedPlatforms) {
   // Cross-build guard: darwin requires a darwin host
@@ -55,17 +58,19 @@ for (const plat of requestedPlatforms) {
       continue;
     }
     const outName = `ForgeBrowserLab-${plat}-${arch}`;
-    const cmd = [
-      'npx electron-packager . ForgeBrowserLab',
+    const args = [
+      'electron-packager',
+      '.',
+      'ForgeBrowserLab',
       `--platform=${plat}`,
       `--arch=${arch}`,
       `--electron-version=${electronVersion}`,
       '--out=dist',
       '--overwrite',
-      ...IGNORES,
-    ].join(' ');
-    console.log(`> ${cmd}`);
-    execSync(cmd, { cwd: ROOT, stdio: 'inherit' });
+      `--ignore=${PACKAGE_IGNORE_SOURCE}`,
+    ];
+    console.log(`> ${npxCommand} ${args.map(printableArgument).join(' ')}`);
+    execFileSync(npxCommand, args, { cwd: ROOT, stdio: 'inherit' });
     console.log(`OK: dist/${outName}`);
   }
 }

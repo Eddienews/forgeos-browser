@@ -19,21 +19,29 @@ function sessionFile(runtimeBase) {
 
 /** Capture open http(s) tab URLs (skip about:blank, ephemeral, and dupes). */
 function captureOpenTabs(tabs, runtimeBase) {
+  let tmpFile = null;
   try {
     const urls = [];
     const seen = new Set();
     for (const tab of tabs.values()) {
       const u = tab.url;
       if (!u || !/^https?:/i.test(u)) continue;      // skip blank/internal
-      if (tab.forgetOnClose) continue;               // ephemeral → never save
+      if (tab.forgetOnClose || tab.restoreOnRestart === false) continue;
       if (seen.has(u)) continue;
       seen.add(u);
       urls.push(u);
     }
     const file = sessionFile(runtimeBase);
-    fs.writeFileSync(file, JSON.stringify({ v: 1, ts: Date.now(), urls }, null, 2), 'utf8');
+    tmpFile = file + '.tmp';
+    fs.writeFileSync(tmpFile, JSON.stringify({ v: 1, ts: Date.now(), urls }, null, 2), 'utf8');
+    fs.renameSync(tmpFile, file);
     return urls.length;
-  } catch { return 0; }
+  } catch {
+    if (tmpFile) {
+      try { fs.rmSync(tmpFile, { force: true }); } catch {}
+    }
+    return 0;
+  }
 }
 
 /** Read previously saved tab URLs (returns [] on none/corrupt). */

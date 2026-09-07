@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Build](https://github.com/Eddienews/forgeos-browser/actions/workflows/build.yml/badge.svg)](https://github.com/Eddienews/forgeos-browser/actions)
-[![Tests](https://img.shields.io/badge/tests-112%20passing-brightgreen)](https://github.com/Eddienews/forgeos-browser/blob/main/tests/run-tests.js)
+[![Tests](https://img.shields.io/badge/tests-169%20passing-brightgreen)](https://github.com/Eddienews/forgeos-browser/blob/main/tests/run-tests.js)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20·%20macOS%20·%20Linux%20·%20Pi-blue)](https://github.com/Eddienews/forgeos-browser/releases)
 [![Telemetry](https://img.shields.io/badge/telemetry-zero-orange)](https://github.com/Eddienews/forgeos-browser/blob/main/PRIVACY_MODEL.md)
 
@@ -24,10 +24,10 @@ Mainstream browsers treat AI as a surface feature. ForgeOS Browser treats the ag
 - 🧬 **Fingerprint posture** — generic browser UA and restrictive permission defaults; engine-exposed entropy is measured and documented, with page shims intentionally disabled pending a sandbox-safe design
 - 🍪 **Cookie policy** — third-party cookies blocked, per-mode storage isolation (Standard/Strict/Ephemeral)
 - 🚫 **Prompt-injection scanner** — advisory-only heuristic, never modifies page content
-- 🔌 **Agent API** — localhost-only, capability-token-gated HTTP surface (read/navigate/full scopes, TTL, rate-limited) for external agents
+- 🔌 **Agent API** — localhost-only, capability-token-gated HTTP surface (read/navigate/full scopes, TTL, rotation, private token storage, rate limits, bounded private request audit) for external agents
 - ⚙️ **Trust presets** — one decision releases a whole provider ecosystem (Google, Microsoft, Apple, Social), reversible
 - 🔐 **No-credentials policy** — identity-provider sign-in is intercepted with an honest notice; credentials stay in your main browser
-- 🕵️ **Zero telemetry** — nothing leaves the machine, ever
+- 🕵️ **Zero telemetry** — nothing leaves the machine, ever; Settings shows only aggregate local-audit health
 
 ## Security model
 
@@ -51,7 +51,7 @@ Measured vs Brave/Chrome/Edge on the same machine (see [results/BENCHMARK.md](re
 ```bash
 npm install
 npm start                 # dev
-npm test                  # 112 unit tests
+npm test                  # 169 unit tests
 npm run package           # electron-packager for host platform
 node scripts/make-portable.js   # portable zip
 # cross-platform: node scripts/package.js --platform=linux,darwin --arch=x64,arm64

@@ -229,6 +229,8 @@ body.platform-darwin #bar { padding-left: 78px; }
   font: 10.5px var(--mono); color: var(--muted);
   padding: 0 9px 6px; line-height: 1.5;
 }
+.menu-hint.audit-ok { color: var(--green); }
+.menu-hint.audit-bad { color: var(--red); }
 .menu-hint.center { text-align: center; padding: 4px 9px; }
 .menu-title {
   font: 600 10px var(--mono); letter-spacing: .12em;
