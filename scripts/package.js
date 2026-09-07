@@ -39,7 +39,20 @@ const requestedArchs = archArg
   ? archArg.split('=')[1].split(',').map(s => s.trim()).filter(Boolean)
   : [hostArch];
 
-const npxCommand = hostPlatform === 'win32' ? 'npx.cmd' : 'npx';
+// Invoke the installed packager through the current Node executable instead
+// of spawning `npx.cmd` on Windows. Windows treats .cmd shims as shell
+// scripts, and child_process.execFileSync cannot launch that shim reliably
+// (it returns EINVAL on the hosted runner). Calling the real ESM entrypoint
+// keeps the packaging command identical across Windows, macOS, and Linux.
+const nodeCommand = process.execPath;
+const packagerScript = path.join(
+  ROOT,
+  'node_modules',
+  '@electron',
+  'packager',
+  'bin',
+  'electron-packager.mjs',
+);
 
 function printableArgument(value) {
   return /^[A-Za-z0-9_./:=,-]+$/.test(value) ? value : JSON.stringify(value);
@@ -59,7 +72,6 @@ for (const plat of requestedPlatforms) {
     }
     const outName = `ForgeBrowserLab-${plat}-${arch}`;
     const args = [
-      'electron-packager',
       '.',
       'ForgeBrowserLab',
       `--platform=${plat}`,
@@ -69,8 +81,8 @@ for (const plat of requestedPlatforms) {
       '--overwrite',
       `--ignore=${PACKAGE_IGNORE_SOURCE}`,
     ];
-    console.log(`> ${npxCommand} ${args.map(printableArgument).join(' ')}`);
-    execFileSync(npxCommand, args, { cwd: ROOT, stdio: 'inherit' });
+    console.log(`> ${nodeCommand} ${packagerScript} ${args.map(printableArgument).join(' ')}`);
+    execFileSync(nodeCommand, [packagerScript, ...args], { cwd: ROOT, stdio: 'inherit' });
     console.log(`OK: dist/${outName}`);
   }
 }
