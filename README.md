@@ -23,8 +23,9 @@ Mainstream browsers treat AI as a surface feature. ForgeOS Browser treats the ag
 - 🛡 **Ad/tracker blocking** — EasyList + EasyPrivacy (110k network rules, trie-optimized, ~µs/request) + cosmetic filtering (13k+17k rules, DOM removal)
 - 🧬 **Fingerprint posture** — generic browser UA and restrictive permission defaults; engine-exposed entropy is measured and documented, with page shims intentionally disabled pending a sandbox-safe design
 - 🍪 **Cookie policy** — third-party cookies blocked, per-mode storage isolation (Standard/Strict/Ephemeral)
-- 🚫 **Prompt-injection scanner** — advisory-only heuristic, never modifies page content
-- 🔌 **Agent API** — localhost-only, capability-token-gated HTTP surface (read/navigate/full scopes, TTL, rotation, private token storage, rate limits, bounded private request audit) for external agents
+- 🚫 **Prompt-injection scanner + observation filter** — the scanner reports; the filter acts, neutralising planted instructions before any model reads the page (the page itself is never modified)
+- 🔌 **Agent API** — localhost-only, capability-token-gated HTTP surface (read/navigate/control/full scopes, TTL, rotation, private token storage, rate limits, bounded private request audit) for external agents
+- 🤖 **Agent capabilities** — `GET /snapshot` (page text + a numbered table of interactive elements), `POST /act` (click/type/select/scroll by index), `POST /task` (bounded observe → decide → act loop). Reading is automatic; acting stops at a native dialog when it commits you
 - ⚙️ **Trust presets** — one decision releases a whole provider ecosystem (Google, Microsoft, Apple, Social), reversible
 - 🔐 **No-credentials policy** — identity-provider sign-in is intercepted with an honest notice; credentials stay in your main browser
 - 🕵️ **Zero telemetry** — nothing leaves the machine, ever; Settings shows only aggregate local-audit health
@@ -33,7 +34,7 @@ Mainstream browsers treat AI as a surface feature. ForgeOS Browser treats the ag
 
 See [SECURITY_MODEL.md](SECURITY_MODEL.md), [THREAT_MODEL.md](THREAT_MODEL.md), [PRIVACY_MODEL.md](PRIVACY_MODEL.md), [ARCHITECTURE.md](ARCHITECTURE.md).
 
-**Central rule:** the agent's reads are automatic; any state-changing action requires human approval.
+**Central rule:** the agent's reads are automatic; acting is not. The line is drawn at consequence, not mechanism — following a link or scrolling is free, while buying, paying, deleting, logging out, submitting a form or downloading stops at a native dialog first. Credential and payment fields are never filled automatically.
 
 ## Benchmarks
 
@@ -51,7 +52,7 @@ Measured vs Brave/Chrome/Edge on the same machine (see [results/BENCHMARK.md](re
 ```bash
 npm install
 npm start                 # dev
-npm test                  # 169 unit tests
+npm test                  # 212 unit tests
 npm run package           # electron-packager for host platform
 node scripts/make-portable.js   # portable zip
 # cross-platform: node scripts/package.js --platform=linux,darwin --arch=x64,arm64

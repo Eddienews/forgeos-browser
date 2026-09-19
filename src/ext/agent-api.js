@@ -47,6 +47,7 @@ const { ensureNavigable, UnsafeUrlError } = require('../engine/url-safety');
 const { runGoal, createHeuristicDecider } = require('../engine/agent-loop');
 const { normalizeSnapshot, elementByIndex } = require('../engine/page-snapshot');
 const { classifyAction } = require('../engine/action-policy');
+const { filterObservation } = require('../engine/snapshot-filter');
 
 const TOKEN_TTL_MS = 60 * 60 * 1000;          // 60 minutes
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;       // 1 minute
@@ -419,12 +420,37 @@ function startAgentApi({
             // One atomic read of the active tab: its text plus the numbered
             // element table an agent can act on. Reading is automatic.
             if (typeof observe !== 'function') return deny(501, 'agent capabilities unavailable');
-            const snap = await observe();
-            if (!snap || snap.error) return deny(503, (snap && snap.error) || 'no observation');
+            const rawSnap = await observe();
+            if (!rawSnap || rawSnap.error) return deny(503, (rawSnap && rawSnap.error) || 'no observation');
+            const snap = normalizeSnapshot(rawSnap);
+            // The same boundary the loop applies. A page's words reach a model
+            // filtered by default on EVERY read path — an unfiltered /snapshot
+            // would quietly undo phase 4 for callers that never use /task.
+            // ?raw=1 opts out explicitly, for a caller that needs the faithful
+            // text (analysis, evidence) and accepts it is hostile input.
+            const wantsRaw = /(?:^|[?&])raw=1(?:&|$)/.test(String(req.url || ''));
+            let pageText = snap.text;
+            let filterInfo = { applied: false };
+            if (!wantsRaw) {
+              const filtered = filterObservation(snap);
+              pageText = filtered.text;
+              filterInfo = {
+                applied: true,
+                safe: filtered.safe,
+                removed: filtered.removed,
+                injections: filtered.injections.length,
+                redactions: [...new Set(filtered.redactions)],
+              };
+              if (log && (filtered.injections.length || filtered.redactions.length)) {
+                log.log('INFO', 'observation filtered on read', {
+                  injections: filtered.injections.length, redactions: filtered.redactions.length, route: 'GET /snapshot',
+                });
+              }
+            }
             return sendJson({
               url: snap.url,
               title: snap.title,
-              text: snap.text,
+              text: pageText,
               elements: (snap.elements || []).map((el) => ({
                 index: el.index, kind: el.kind, role: el.role, label: el.label,
                 current_value: el.current_value, option_value: el.option_value, href: el.href,
@@ -433,6 +459,7 @@ function startAgentApi({
               can_scroll_up: snap.can_scroll_up,
               fingerprint: snap.fingerprint,
               truncated: !!snap.truncated,
+              filter: filterInfo,
               // These words were written by a stranger. Treat them as data.
               untrusted: true,
               instruction_authority: 'none',
@@ -445,8 +472,9 @@ function startAgentApi({
             // Observe first: a target index is only meaningful against the page
             // as it is NOW, and the element's own label is what the risk policy
             // judges — never the caller's description of it.
-            const current = await observe();
-            if (!current || current.error) return deny(503, (current && current.error) || 'no observation');
+            const rawCurrent = await observe();
+            if (!rawCurrent || rawCurrent.error) return deny(503, (rawCurrent && rawCurrent.error) || 'no observation');
+            const current = normalizeSnapshot(rawCurrent);
             const element = elementByIndex(current, body.target);
             if (!element) return deny(400, `target [${body.target}] is not in the current page`);
 
