@@ -401,4 +401,11 @@
   // AFTER applyState exists (the star block above runs earlier in the file).
   const _applyStateOrig = applyState;
   applyState = function (s) { _applyStateOrig(s); refreshStar(); };
+
+  /* Agent-action approval is NOT rendered in this window.
+   * The chrome HTML layer is always covered by the native WebContentsView
+   * (the page), so an overlay here would be invisible. Instead the main
+   * process loads src/renderer/agent-approval.html INTO the active tab when
+   * the agent requests a navigation — the human approves/denies there, and
+   * the decision returns via the forge-decision:// interception in main. */
 })();

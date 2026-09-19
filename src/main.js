@@ -94,6 +94,7 @@ try {
 let modeId = 'standard';
 let chromeWin = null;
 let panelWin = null;
+let agentApiRef = null; // resolved Agent API handle (for confirm flow)
 let tabSeq = 0;
 const tabs = new Map();   // id -> tab
 const sessions = new Map(); // partitionKey -> { session, adapter }
@@ -161,6 +162,30 @@ function createTab(url = 'about:blank', opts = {}) {
 
   wc.on('did-start-navigation', (_e, url, isInPlace, isMainFrame) => {
     if (isMainFrame && !isInPlace) tab.certError = false;
+  });
+
+  // Agent approval page decision channel: the page attempts to navigate to
+  // forge-decision://approve|deny?confirm=<id>. Page tabs have NO preload by
+  // design, so this navigation interception is how the human's click reaches
+  // the main process without weakening that rule.
+  wc.on('will-navigate', (e, url) => {
+    if (!url.startsWith('forge-decision://')) return;
+    e.preventDefault();
+    try {
+      const u = new URL(url);
+      const action = u.hostname || u.pathname.replace(/^\/+/, '');
+      const confirmId = u.searchParams.get('confirm') || '';
+      const approve = action === 'approve';
+      const ok = agentConfirm(confirmId, approve);
+      log.log('INFO', 'agent decision received', { approve, applied: ok });
+      // On DENY, clear the approval page (nothing else will replace it).
+      // On APPROVE the agent's navigation already replaces it — do not race it.
+      if (!approve) {
+        setTimeout(() => { try { wc.loadURL('about:blank').catch(() => {}); } catch {} }, 300);
+      }
+    } catch (err) {
+      log.log('ERROR', 'agent decision failed', { error: String(err).slice(0, 120) });
+    }
   });
 
   wc.on('did-navigate', (_e, url, httpCode) => {
@@ -348,6 +373,16 @@ function sendToChrome(channel, payload) {
   for (const w of targets) w.webContents.send(channel, payload);
 }
 
+/** Resolve a pending agent navigation (approve=boolean). Mirrors the API
+ * confirmation logic: the confirm_id must still be pending and unexpired. */
+function agentConfirm(confirmId, approve) {
+  try {
+    const api = agentApiRef;
+    if (!api || typeof api.resolveConfirm !== 'function') return false;
+    return api.resolveConfirm(confirmId, approve);
+  } catch { return false; }
+}
+
 /** Phase 14/17 control-center window: privacy, agent view, log, downloads. */
 function togglePanels() {
   if (panelWin && !panelWin.isDestroyed()) {
@@ -448,7 +483,7 @@ function registerIpc() {
   });
   ipcMain.handle('forge:close-tab', (_e, id) => closeTab(id));
   ipcMain.handle('forge:switch-tab', (_e, id) => { if (tabs.has(id)) switchTab(id); });
-ipcMain.handle('forge:set-menu-open', (_e, state) => {
+  ipcMain.handle('forge:set-menu-open', (_e, state) => {
     if (!chromeWin || !activeTabId) return false;
     const open = typeof state === 'object' ? !!state.open : !!state;
     menuRightInset = open ? Math.max(0, Number(state && state.rightInset) || 0) : 0;
@@ -817,7 +852,27 @@ app.whenReady().then(() => {
       navigateIn(t, url);
       resolve();
     }),
-  }).then((api) => log.log('INFO', 'agent api listening', { url: `http://127.0.0.1:${api.port}`, tokenFile: api.tokenFile }))
+    // Human-approval banner: when the agent requests a navigation, show the
+    // approval page IN the active tab (native layer — always visible). The
+    // human Approves/Denies there; authority visible.
+    onConfirmRequest: (req) => {
+      try {
+        const t = activeTab();
+        if (t && !t.wc.isDestroyed()) {
+          const page = path.join(APP_ROOT, 'renderer', 'agent-approval.html');
+          const q = `?confirm=${encodeURIComponent(req.confirmId)}&url=${encodeURIComponent(req.url)}&expires=${req.expiresInMs || 30000}`;
+          t.wc.loadURL(`file://${page}${q}`).catch(() => {});
+          log.log('INFO', 'agent approval page shown', { url: req.url.slice(0, 120) });
+        }
+      } catch (e) {
+        log.log('ERROR', 'agent approval page failed', { error: String(e).slice(0, 120) });
+      }
+      log.log('INFO', 'agent navigation awaiting human approval', { url: req.url.slice(0, 200) });
+    },
+  }).then((api) => {
+    agentApiRef = api;
+    log.log('INFO', 'agent api listening', { url: `http://127.0.0.1:${api.port}`, tokenFile: api.tokenFile });
+  })
     .catch((e) => log.log('ERROR', 'agent api failed to start', { error: String(e).slice(0, 150) }));
 
   // --smoke: automated self-check on the REAL app (used by scripts/verify-gates).
