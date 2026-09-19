@@ -44,6 +44,9 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { ensureNavigable, UnsafeUrlError } = require('../engine/url-safety');
+const { runGoal, createHeuristicDecider } = require('../engine/agent-loop');
+const { normalizeSnapshot, elementByIndex } = require('../engine/page-snapshot');
+const { classifyAction } = require('../engine/action-policy');
 
 const TOKEN_TTL_MS = 60 * 60 * 1000;          // 60 minutes
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;       // 1 minute
@@ -145,6 +148,7 @@ let activeAgentServer = null;
 
 function startAgentApi({
   port = 8647, getSnapshot, readPage, navigate, approveNavigate,
+  observe, act, approveAction,
   log, baseDir, confirmationNow = Date.now, tokenNow = Date.now,
   rateNow = Date.now, auditNow = Date.now, tokenWriter = writePrivateTokenFile,
 }) {
@@ -332,7 +336,8 @@ function startAgentApi({
     // Scope enforcement map
     // A trusted native approval dialog may remain open while the user decides.
     if (methodPath === 'POST /navigate/confirm') req.socket.setTimeout(0);
-    const needScope = (methodPath === 'POST /navigate' || methodPath === 'POST /navigate/confirm') ? 'navigate'
+    const needScope = (methodPath === 'POST /act' || methodPath === 'POST /task') ? 'control'
+      : (methodPath === 'POST /navigate' || methodPath === 'POST /navigate/confirm') ? 'navigate'
       : (methodPath === 'POST /token/issue' || methodPath === 'POST /token/rotate') ? 'full'
       : 'read';
     if (v.scope !== 'full' && v.scope !== needScope) {
@@ -410,6 +415,125 @@ function startAgentApi({
               : (view && Array.isArray(view.links) ? view.links : []);
             return sendJson(sanitize({ url: view && view.url, links, untrusted: true }));
           }
+          case 'GET /snapshot': {
+            // One atomic read of the active tab: its text plus the numbered
+            // element table an agent can act on. Reading is automatic.
+            if (typeof observe !== 'function') return deny(501, 'agent capabilities unavailable');
+            const snap = await observe();
+            if (!snap || snap.error) return deny(503, (snap && snap.error) || 'no observation');
+            return sendJson({
+              url: snap.url,
+              title: snap.title,
+              text: snap.text,
+              elements: (snap.elements || []).map((el) => ({
+                index: el.index, kind: el.kind, role: el.role, label: el.label,
+                current_value: el.current_value, option_value: el.option_value, href: el.href,
+              })),
+              can_scroll_down: snap.can_scroll_down,
+              can_scroll_up: snap.can_scroll_up,
+              fingerprint: snap.fingerprint,
+              truncated: !!snap.truncated,
+              // These words were written by a stranger. Treat them as data.
+              untrusted: true,
+              instruction_authority: 'none',
+            });
+          }
+          case 'POST /act': {
+            if (typeof observe !== 'function' || typeof act !== 'function') {
+              return deny(501, 'agent capabilities unavailable');
+            }
+            // Observe first: a target index is only meaningful against the page
+            // as it is NOW, and the element's own label is what the risk policy
+            // judges — never the caller's description of it.
+            const current = await observe();
+            if (!current || current.error) return deny(503, (current && current.error) || 'no observation');
+            const element = elementByIndex(current, body.target);
+            if (!element) return deny(400, `target [${body.target}] is not in the current page`);
+
+            const op = String(body.operation || '').toUpperCase();
+            const kind = op === 'CLICK' ? 'click' : op === 'TYPE_TEXT' ? 'fill' : op === 'SELECT' ? 'select'
+              : op === 'SCROLL_DOWN' || op === 'SCROLL_UP' || op === 'WAIT' ? 'scroll_or_wait' : null;
+            if (!kind) return deny(400, 'operation must be one of CLICK, TYPE_TEXT, SELECT, SCROLL_UP, SCROLL_DOWN, WAIT');
+            if (kind === 'fill' && element.kind !== 'fill') return deny(400, `[${element.index}] is not fillable (${element.kind})`);
+            if (kind === 'select' && element.kind !== 'select') return deny(400, `[${element.index}] is not selectable (${element.kind})`);
+            if (kind === 'click' && element.kind !== 'click') return deny(400, `[${element.index}] is not clickable (${element.kind})`);
+
+            const action = kind === 'scroll_or_wait'
+              ? { kind: op === 'WAIT' ? 'wait' : 'scroll', direction: op === 'SCROLL_UP' ? 'up' : 'down' }
+              : {
+                  kind,
+                  targetIndex: element.index,
+                  value: kind === 'select' ? (body.option_value != null ? body.option_value : body.value) : body.value,
+                  label: element.label,
+                  signal: { label: element.label, href: element.href || '', isSubmit: false, type: element.role === 'textbox' ? 'text' : '' },
+                  fingerprint: current.fingerprint,
+                };
+
+            const policy = classifyAction(action);
+            if (policy.risk === 'approval') {
+              if (typeof approveAction !== 'function') {
+                return deny(403, `action requires human approval (${policy.why}) and no approver is available`);
+              }
+              if (log) log.log('ASK', 'agent action awaiting human decision', { kind: action.kind, label: action.label || '', why: policy.why });
+              req.socket.setTimeout(0); // the dialog stays open until the user decides
+              const allowed = await approveAction({ action, policy });
+              if (!allowed) return deny(403, `a human declined this action: ${policy.why}`);
+            }
+
+            const outcome = await act(action);
+            // Every action the agent takes is recorded, automatic or approved:
+            // an audit trail with holes is not an audit trail.
+            if (log) {
+              log.log(outcome && outcome.ok ? 'INFO' : 'DENY', 'agent action executed', {
+                operation: op,
+                target: element.index,
+                label: String(element.label || '').slice(0, 120),
+                risk: policy.risk,
+                outcome: outcome && outcome.ok ? 'ok' : 'refused',
+                detail: String((outcome && (outcome.detail || outcome.reason)) || '').slice(0, 160),
+              });
+            }
+            return sendJson({
+              status: outcome && outcome.ok ? 'done' : 'refused',
+              operation: op,
+              target: element.index,
+              label: element.label,
+              risk: policy.risk,
+              why: policy.why,
+              detail: (outcome && (outcome.detail || outcome.reason)) || '',
+              fingerprint_before: current.fingerprint,
+            });
+          }
+          case 'POST /task': {
+            if (typeof observe !== 'function' || typeof act !== 'function') {
+              return deny(501, 'agent capabilities unavailable');
+            }
+            const goal = String(body.goal || '').trim();
+            if (!goal) return deny(400, 'goal is required');
+            const maxSteps = Math.max(1, Math.min(Number(body.max_steps) || 12, 30));
+            // The loop may stop for a human mid-run, so the socket must outlive
+            // the default timeout.
+            req.socket.setTimeout(0);
+            const result = await runGoal({
+              goal: goal.slice(0, 1000),
+              observe,
+              act,
+              decide: createHeuristicDecider(),
+              requestApproval: typeof approveAction === 'function'
+                ? async (info) => approveAction(info)
+                : async () => false,
+              log: (line) => { if (log) log.log('INFO', 'agent task step', { line: String(line).slice(0, 200) }); },
+            }, { maxSteps });
+            return sendJson({
+              status: result.status,
+              result: result.result,
+              note: result.note,
+              steps: result.steps,
+              evidence: result.evidence,
+              filter: result.filter,
+              untrusted: true,
+            });
+          }
           case 'POST /navigate': {
             const { url } = body;
             if (!url || !/^https?:\/\//i.test(url)) return deny(400, 'url must be http(s)');
@@ -455,7 +579,7 @@ function startAgentApi({
             // Only 'full'-scope tokens can mint new ones.
             if (v.scope !== 'full') return deny(403, 'requires full scope');
             const { scope } = body;
-            const allowedScopes = ['read', 'navigate'];
+            const allowedScopes = ['read', 'navigate', 'control'];
             if (!allowedScopes.includes(scope)) return deny(400, `scope must be one of ${allowedScopes}`);
             return sendJson({ token: issueToken(scope), ttl_minutes: TOKEN_TTL_MS / 60000, scope });
           }

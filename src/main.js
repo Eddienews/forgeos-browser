@@ -32,6 +32,11 @@ const bh = require('./engine/bookmarks-history');
 const allowlist = require('./engine/site-allowlist');
 const { compileCosmetic, selectorsForHost } = require('./engine/cosmetic-engine');
 const { startAgentApi } = require('./ext/agent-api');
+const { forgeSnapshotScript } = require('./page-snapshot');
+const { forgeActionScript, forgeScrollScript } = require('./page-actions');
+const { normalizeSnapshot } = require('./engine/page-snapshot');
+const { classifyAction } = require('./engine/action-policy');
+const { runGoal } = require('./engine/agent-loop');
 const credentialPolicy = require('./engine/credential-policy');
 const { browserViewBounds } = require('./engine/view-layout');
 const sessionStore = require('./engine/session-store');
@@ -987,6 +992,11 @@ app.whenReady().then(() => {
       return refreshAgentView(t); // same pipeline as the panels; marks untrusted
     },
     approveNavigate: (url) => approveAgentNavigation(url),
+    // v0.11 agent capabilities: the same page the panels read, now indexed and
+    // actionable. Reading is automatic; acting goes through the policy gate.
+    observe: () => readIndexedSnapshot(),
+    act: (action) => executeAgentAction(action),
+    approveAction: (info) => approveAgentAction(info),
     navigate: (url) => new Promise((resolve, reject) => {
       const t = activeTab();
       if (!t) return reject(new Error('no active tab'));
@@ -1083,6 +1093,113 @@ function injectDomRemoval(tab, url) {
     })()`;
     tab.wc.executeJavaScript(js, true).catch(() => {});
   } catch {}
+}
+
+/* ------------------------------------------------------------------------ *
+ * Agent capabilities (v0.11): observe -> decide -> act.
+ *
+ * The page is UNTRUSTED. These run through executeJavaScript on the active
+ * tab's webContents, the same path cosmetic filtering already uses, and the tab
+ * still receives no bridge. Reading is automatic; an action that commits the
+ * user stops at a native dialog first (see action-policy.js for the line).
+ *
+ * Indexes are only ever resolved back to a live node immediately before acting,
+ * so a stale index refuses instead of clicking whatever moved into that spot.
+ * ------------------------------------------------------------------------ */
+
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** One atomic read of the active tab: page text plus the numbered element table. */
+async function readIndexedSnapshot() {
+  const t = activeTab();
+  if (!t || !t.wc || t.wc.isDestroyed()) return { error: 'no active tab' };
+  try {
+    const raw = await t.wc.executeJavaScript(forgeSnapshotScript(), true);
+    const snapshot = normalizeSnapshot(raw);
+    const live = t.wc.getURL();
+    if (live) snapshot.url = live;
+    return snapshot;
+  } catch (e) {
+    return { error: String((e && e.message) || e).slice(0, 200) };
+  }
+}
+
+/** Execute one validated action against the active tab. */
+async function executeAgentAction(action) {
+  const t = activeTab();
+  if (!t || !t.wc || t.wc.isDestroyed()) return { ok: false, reason: 'no active tab' };
+  const kind = action && action.kind;
+
+  try {
+    if (kind === 'wait') {
+      await sleepMs(Number(action.ms) || 600);
+      return { ok: true, detail: 'waited' };
+    }
+    if (kind === 'scroll') {
+      const r = await t.wc.executeJavaScript(forgeScrollScript(action.direction === 'up' ? 'up' : 'down'), true);
+      return { ok: !!(r && r.ok), detail: `scrollY=${r && r.y}` };
+    }
+
+    const resolved = await t.wc.executeJavaScript(
+      forgeActionScript(action.targetIndex, kind, action.value == null ? null : String(action.value)),
+      true,
+    );
+    if (!resolved || !resolved.ok) {
+      return { ok: false, reason: (resolved && resolved.reason) || 'element not resolvable' };
+    }
+    if (resolved.done) return { ok: true, detail: 'option selected' };
+
+    if (kind === 'click') {
+      const point = { x: resolved.x, y: resolved.y, button: 'left', clickCount: 1 };
+      t.wc.sendInputEvent({ type: 'mouseDown', ...point });
+      t.wc.sendInputEvent({ type: 'mouseUp', ...point });
+      return { ok: true, detail: `clicked ${resolved.x},${resolved.y}` };
+    }
+    if (kind === 'fill') {
+      // The page script already focused the field; typing through the browser
+      // (not by assigning .value) produces the keystroke events frameworks
+      // like React listen for.
+      await t.wc.insertText(String(action.value == null ? '' : action.value));
+      return { ok: true, detail: 'typed' };
+    }
+    return { ok: false, reason: `unsupported action kind "${kind}"` };
+  } catch (e) {
+    return { ok: false, reason: String((e && e.message) || e).slice(0, 200) };
+  }
+}
+
+/**
+ * Native-dialog gate for an action that commits the user. Native, not HTML:
+ * the page view is a separate native layer, so a rendered banner can end up
+ * behind it, while a dialog is always visible and cannot be covered.
+ */
+async function approveAgentAction(info) {
+  const action = (info && info.action) || {};
+  const policy = (info && info.policy) || { why: 'unclassified' };
+  if (!chromeWin || chromeWin.isDestroyed()) {
+    log.log('DENY', 'agent action approval unavailable', { reason: 'no browser window' });
+    return false;
+  }
+  const label = String(action.label || '').slice(0, 120) || '(unlabelled element)';
+  const result = await dialog.showMessageBox(chromeWin, {
+    type: 'warning',
+    title: 'ForgeOS Browser — agent action request',
+    message: `An external agent wants to ${action.kind === 'fill' ? 'type into' : 'activate'} an element.`,
+    detail: `Element: [${action.targetIndex}] ${label}\n` +
+      (action.value ? `Value: ${String(action.value).slice(0, 200)}\n` : '') +
+      `\nWhy this needs you: ${policy.why}\n` +
+      (info && info.goal ? `\nAgent goal: ${String(info.goal).slice(0, 300)}` : '') +
+      '\n\nAllow only if you asked for this.',
+    buttons: ['Deny', 'Allow once'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  });
+  const allowed = result.response === 1;
+  log.log(allowed ? 'ALLOW' : 'DENY', 'agent action human decision', {
+    kind: action.kind, label, why: policy.why, decision: allowed ? 'allow' : 'deny',
+  });
+  return allowed;
 }
 
 
