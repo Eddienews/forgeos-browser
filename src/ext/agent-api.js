@@ -43,6 +43,7 @@ const http = require('http');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { ensureNavigable, UnsafeUrlError } = require('../engine/url-safety');
 
 const TOKEN_TTL_MS = 60 * 60 * 1000;          // 60 minutes
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;       // 1 minute
@@ -412,6 +413,19 @@ function startAgentApi({
           case 'POST /navigate': {
             const { url } = body;
             if (!url || !/^https?:\/\//i.test(url)) return deny(400, 'url must be http(s)');
+            // SSRF defense: this URL was chosen by a model, not typed by a
+            // person. Refuse destinations an agent must never reach — cloud
+            // metadata (169.254.169.254), loopback, and private networks —
+            // because the response is readable back through GET /page.
+            try {
+              await ensureNavigable(url);
+            } catch (err) {
+              if (err instanceof UnsafeUrlError) {
+                if (log) log.log('DENY', 'agent navigation refused by url safety', { url: String(url).slice(0, 200), reason: err.message.slice(0, 200) });
+                return deny(403, `destination refused: ${err.message}`);
+              }
+              throw err;
+            }
             // Confirmation flow: first call returns pending_confirmation.
             const confirmId = crypto.randomBytes(12).toString('hex');
             pendingConfirms.set(confirmId, { url, tokenId: v.id, expiresAt: confirmationNow() + CONFIRM_TTL_MS });

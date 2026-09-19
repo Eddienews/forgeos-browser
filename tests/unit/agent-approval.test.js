@@ -72,7 +72,7 @@ module.exports = [
     fn: async () => {
       const t = await boot(false);
       try {
-        const r = await req(t.port, 'POST', '/navigate', t.token, { url: 'https://denied.example' });
+        const r = await req(t.port, 'POST', '/navigate', t.token, { url: 'https://example.com/denied' });
         const c = await req(t.port, 'POST', '/navigate/confirm', t.token, { confirm_id: r.body.confirm_id });
         if (c.status !== 403) throw new Error(`denial should be 403, got ${c.status}`);
         if (t.navigated.length !== 0) throw new Error('denied navigation still ran');
@@ -88,7 +88,7 @@ module.exports = [
         const bad = await req(t.port, 'POST', '/navigate/confirm', t.token, { confirm_id: 'deadbeefdeadbeefdeadbeef' });
         if (bad.status !== 400) throw new Error(`unknown id should be 400, got ${bad.status}`);
 
-        const r = await req(t.port, 'POST', '/navigate', t.token, { url: 'https://once.example' });
+        const r = await req(t.port, 'POST', '/navigate', t.token, { url: 'https://example.com/once' });
         const first = await req(t.port, 'POST', '/navigate/confirm', t.token, { confirm_id: r.body.confirm_id });
         if (first.status !== 200) throw new Error(`first confirm failed: ${first.status}`);
         const replay = await req(t.port, 'POST', '/navigate/confirm', t.token, { confirm_id: r.body.confirm_id });
@@ -104,7 +104,7 @@ module.exports = [
       const t = await boot(true);
       try {
         const readToken = t.api.issueToken('read');
-        const r = await req(t.port, 'POST', '/navigate', readToken, { url: 'https://nope.example' });
+        const r = await req(t.port, 'POST', '/navigate', readToken, { url: 'https://example.com/nope' });
         if (r.status !== 403) throw new Error(`read token got ${r.status}, expected 403`);
         if (t.navigated.length !== 0) throw new Error('read-scope token navigated');
       } finally { await t.close(); }
