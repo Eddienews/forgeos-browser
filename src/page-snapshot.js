@@ -9,6 +9,20 @@
  * Why a numbered table: an agent that only receives raw page text cannot act —
  * it has no way to say "click THAT button". Numbers give it a vocabulary.
  *
+ * Two lists come back, and the split matters:
+ *   elements    — actionable now, on screen
+ *   below_fold  — real controls that exist but are out of view
+ *
+ * Reporting the second list is what stops an agent from scrolling blindly. A
+ * page whose only way forward is a "Next" link far below the fold used to look
+ * EMPTY: the agent saw nothing, scrolled hoping, and saw nothing again. Knowing
+ * that a named control exists below is the difference between searching and
+ * knowing.
+ *
+ * What counts as actionable is the DOM's answer, not ours: a tag rendered as
+ * <a> with no href is not a link. Sites do that for styling, and offering those
+ * as targets would waste the agent's steps.
+ *
  * Element ids live in a WeakMap keyed by the DOM node, so an index survives
  * re-snapshots as long as the node itself is still attached.
  *
@@ -80,21 +94,45 @@ function forgeSnapshotScript() {
         !["submit", "button", "reset", "checkbox", "radio", "image"].includes(el.type))) &&
     !el.readOnly;
 
-  // Only what is inside the viewport: elements below the fold are reached by
-  // scrolling first, and this keeps candidate counts bounded on real pages.
-  // ARIA roles on plain <li>/<div> are included because autocomplete menus
-  // render that way — without them, a suggestion list is visible but unclickable.
-  const MAX_ELEMENTS = 200;
-  const elements = [];
-  let occluded = 0; // covered controls, counted for diagnostics
+  // A native <a> with no href is styling, not navigation. ARIA roles on plain
+  // <li>/<div> are included because autocomplete menus render that way — without
+  // them a suggestion list is visible but unclickable.
   const selector =
     "a[href],button,input,textarea,select," +
     "[role='button'],[role='link'],[role='option'],[role='menuitem']," +
     "[role='menuitemradio'],[role='menuitemcheckbox'],[role='tab']," +
     "[role='checkbox'],[role='radio'],[role='switch']";
 
+  const MAX_ELEMENTS = 200;
+  const MAX_BELOW_FOLD = 60;
+  const elements = [];
+  const belowFold = [];
+  let occluded = 0;
+  let offscreen = 0;
+
+  // Viewport-only for the main list is a cheap focus: what is below the fold is
+  // reached by scrolling first, and this keeps candidate counts bounded. But it
+  // is an OPTIMISATION, not a defence — a native view that is not laid out yet
+  // reports 0, and filtering by that would silently empty the catalogue and
+  // leave the agent blind on a page full of controls. Only filter when usable.
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const viewportUsable = vw > 0 && vh > 0;
+  const inViewport = (x, y) => !viewportUsable || (x >= 0 && y >= 0 && x < vw && y < vh);
+
+  const describe = (el, id, label, extra) => Object.assign({
+    index: id,
+    role: roleOf(el) || "generic",
+    kind: editable(el) ? "fill" : "click",
+    label: label,
+    current_value: "value" in el ? String(el.value) : "",
+    // The raw attribute, not the resolved URL: "#anchor" says same-page and
+    // "/wiki/X" says where a link goes, which a label alone cannot.
+    href: el.tagName === "A" ? el.getAttribute("href") : null,
+  }, extra || {});
+
   for (const el of document.querySelectorAll(selector)) {
-    if (elements.length >= MAX_ELEMENTS) break;
+    if (elements.length >= MAX_ELEMENTS && belowFold.length >= MAX_BELOW_FOLD) break;
     if (el.disabled || !visible(el)) continue;
     // Largest rendered fragment, not the union box: a wrapped inline link's
     // union center can sit on text that is not the link.
@@ -103,40 +141,44 @@ function forgeSnapshotScript() {
     const rect = fragments.reduce((a, b) => (a.width * a.height >= b.width * b.height ? a : b));
     const cx = rect.x + rect.width / 2;
     const cy = rect.y + rect.height / 2;
-    if (cx < 0 || cy < 0 || cx >= innerWidth || cy >= innerHeight) continue;
+    const below = !inViewport(cx, cy);
+    if (below && belowFold.length >= MAX_BELOW_FOLD) { offscreen++; continue; }
+    if (!below && elements.length >= MAX_ELEMENTS) continue;
+
     const id = identify(el);
     const label = (accessibleName(el) || roleOf(el) || "element").replace(/\\s+/g, " ").trim();
+
+    if (el.tagName === "SELECT") {
+      const bucket = below ? belowFold : elements;
+      const cap = below ? MAX_BELOW_FOLD : MAX_ELEMENTS;
+      for (const option of el.options) {
+        if (bucket.length >= cap) break;
+        if (option.disabled) continue;
+        bucket.push(describe(el, id, label + " -> " + option.label, {
+          option_value: option.value,
+          role: "combobox",
+          kind: "select",
+          current_value: el.selectedOptions[0] ? el.selectedOptions[0].label : "",
+          below_fold: below || undefined,
+        }));
+      }
+      continue;
+    }
+
+    if (below) {
+      offscreen++;
+      belowFold.push(describe(el, id, label, { below_fold: true }));
+      continue;
+    }
+
     // The SAME occlusion test the action applies (page-actions.js): if another
     // element covers the click point, the agent cannot act here. Offering it
     // anyway taught the model to pick a control it would then be refused on —
     // the catalogue must only contain what is genuinely actionable.
     const atPoint = document.elementFromPoint(cx, cy);
     if (!atPoint || !el.contains(atPoint)) { occluded++; continue; }
-    if (el.tagName === "SELECT") {
-      for (const option of el.options) {
-        if (elements.length >= MAX_ELEMENTS) break;
-        if (option.disabled) continue;
-        elements.push({
-          index: id,
-          option_value: option.value,
-          role: "combobox",
-          kind: "select",
-          label: label + " -> " + option.label,
-          current_value: el.selectedOptions[0] ? el.selectedOptions[0].label : "",
-        });
-      }
-      continue;
-    }
-    elements.push({
-      index: id,
-      role: roleOf(el) || "generic",
-      kind: editable(el) ? "fill" : "click",
-      label: label,
-      current_value: "value" in el ? String(el.value) : "",
-      // The raw attribute, not the resolved URL: "#anchor" says same-page and
-      // "/wiki/X" says where a link goes, which a label alone cannot.
-      href: el.tagName === "A" ? el.getAttribute("href") : null,
-    });
+
+    elements.push(describe(el, id, label));
   }
 
   const bodyText = (document.body ? document.body.innerText : "").slice(0, 4000);
@@ -145,9 +187,14 @@ function forgeSnapshotScript() {
     title: document.title,
     text: bodyText,
     elements,
-    // How many controls were skipped because something covers them — a page
-    // with many of these is one where the agent will find little to press.
+    // Real controls that exist out of view: the agent should scroll toward them
+    // deliberately instead of hunting for them.
+    below_fold: belowFold,
+    // Diagnostics, so "the catalogue is empty" is answerable: an unusable
+    // viewport, an overlay, or genuinely nothing to press.
     occluded_count: occluded,
+    offscreen_count: offscreen,
+    viewport: [vw, vh],
     can_scroll_down: window.scrollY + window.innerHeight < document.documentElement.scrollHeight - 2,
     can_scroll_up: window.scrollY > 0,
   };

@@ -90,6 +90,49 @@ module.exports = [
     },
   },
   {
+    name: 'controls below the fold are reported, not hidden',
+    gate: 'L',
+    fn: async (assert) => {
+      // Regression from a live run: a paginated site whose only way forward was
+      // a "Next" link below the fold looked EMPTY to the agent — it scrolled
+      // hoping and saw nothing. Off-screen controls are real; they are now named
+      // (and kept out of the clickable list, since the action would refuse them).
+      const s = normalizeSnapshot(raw({
+        below_fold: [{ index: 42, kind: 'click', role: 'button', label: 'Next', href: '/page/2/' }],
+      }));
+      assert.strictEqual(s.below_fold.length, 1);
+      assert.strictEqual(s.below_fold[0].label, 'Next');
+      assert.strictEqual(s.below_fold[0].href, '/page/2/');
+      // It must NOT be offered as an immediate target.
+      assert.strictEqual(s.elements.find((e) => e.index === 42), undefined);
+      assert.strictEqual(candidatesByKind(s, 'click').size, 1, 'still only the on-screen one');
+      // But the whole-page catalogue knows about it.
+      assert.ok(elementCatalogue(s).some((line) => line.includes('Next')));
+      // Junk degrades quietly.
+      assert.strictEqual(normalizeSnapshot(raw({ below_fold: 'x' })).below_fold.length, 0);
+      assert.strictEqual(normalizeSnapshot(raw()).below_fold.length, 0);
+    },
+  },
+  {
+    name: 'a degenerate viewport does not empty the catalogue',
+    gate: 'L',
+    fn: async (assert) => {
+      // Regression, found live on a JS-rendered page: the snapshot filters to
+      // the viewport as a cheap focus, but a native view that is not laid out
+      // reports 0x0 — and then every element failed the position test, leaving
+      // the agent blind on a page visibly full of links. Position filtering is
+      // an optimisation, so it must yield when the viewport is unusable.
+      const s = normalizeSnapshot(raw({ viewport: [0, 0], offscreen_count: 4 }));
+      assert.deepStrictEqual(s.viewport, [0, 0]);
+      assert.strictEqual(s.offscreen_count, 4);
+      assert.strictEqual(s.elements.length, 3, 'elements survive a useless viewport');
+      assert.strictEqual(normalizeSnapshot(raw()).viewport, null, 'absent viewport is null, not [0,0]');
+      assert.strictEqual(normalizeSnapshot(raw()).offscreen_count, 0);
+      assert.deepStrictEqual(normalizeSnapshot(raw({ viewport: [1280, 720] })).viewport, [1280, 720]);
+      assert.strictEqual(normalizeSnapshot(raw({ viewport: 'junk' })).viewport, null);
+    },
+  },
+  {
     name: 'candidate selection and index lookup match the element table',
     gate: 'L',
     fn: async (assert) => {

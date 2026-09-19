@@ -155,6 +155,25 @@ module.exports = [
     },
   },
   {
+    name: 'scrolling and waiting need no target',
+    gate: 'L',
+    fn: async (assert) => {
+      // Regression: /act looked up an element before looking at the operation,
+      // so SCROLL_UP failed with 'target [1] is not in the current page' —
+      // exactly the operation an agent needs when it cannot find what it wants.
+      const t = await boot();
+      try {
+        for (const op of ['SCROLL_UP', 'SCROLL_DOWN', 'WAIT']) {
+          const r = await req(t.port, 'POST', '/act', t.token, { operation: op });
+          assert.strictEqual(r.status, 200, `${op} must not require a target`);
+          assert.strictEqual(r.body.target, null);
+          assert.ok(['scroll', 'wait'].includes(t.performed[t.performed.length - 1].kind));
+        }
+        assert.strictEqual(t.performed.length, 3);
+      } finally { await t.close(); }
+    },
+  },
+  {
     name: 'an unknown target or a mismatched operation is refused, not guessed',
     gate: 'L',
     fn: async (assert) => {

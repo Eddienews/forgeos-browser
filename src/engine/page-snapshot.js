@@ -45,6 +45,15 @@ function normalizeSnapshot(raw) {
     const el = normalizeElement(rawElements[i], i);
     if (el) elements.push(el);
   }
+  // Controls that exist out of view. They are NOT offered as action targets —
+  // the action would refuse them as 'off_screen' — but the agent must know they
+  // exist, or it scrolls blindly hoping to find what it cannot name.
+  const rawBelow = Array.isArray(src.below_fold) ? src.below_fold : [];
+  const below_fold = [];
+  for (let i = 0; i < rawBelow.length && below_fold.length < MAX_ELEMENTS; i += 1) {
+    const el = normalizeElement(rawBelow[i], i);
+    if (el) below_fold.push(el);
+  }
   const snapshot = {
     url: String(src.url || ''),
     title: String(src.title || '').slice(0, 300),
@@ -55,6 +64,13 @@ function normalizeSnapshot(raw) {
     // Controls the page covers with something else. Surfaced so a caller can
     // tell "nothing to press here" from "everything here is behind an overlay".
     occluded_count: Number.isFinite(Number(src.occluded_count)) ? Number(src.occluded_count) : 0,
+    below_fold,
+    offscreen_count: Number.isFinite(Number(src.offscreen_count)) ? Number(src.offscreen_count) : 0,
+    // The viewport the observation was judged against — [0,0] means the page
+    // could not be laid out and position filtering was skipped on purpose.
+    viewport: Array.isArray(src.viewport) && src.viewport.length === 2
+      ? [Number(src.viewport[0]) || 0, Number(src.viewport[1]) || 0]
+      : null,
     truncated: rawElements.length > elements.length,
   };
   snapshot.fingerprint = fingerprintSnapshot(snapshot);
@@ -99,7 +115,9 @@ function elementByIndex(snapshot, index) {
  * This is the agent's vocabulary — without it, "click that button" is unsayable.
  */
 function elementCatalogue(snapshot, kind) {
-  const pool = kind ? [...candidatesByKind(snapshot, kind).values()] : ((snapshot && snapshot.elements) || []);
+  const pool = kind
+    ? [...candidatesByKind(snapshot, kind).values()]
+    : [...((snapshot && snapshot.elements) || []), ...((snapshot && snapshot.below_fold) || [])];
   return pool.map((el) => {
     const bits = [`[${el.index}]`, el.kind, `${el.role}:`, el.label];
     if (el.current_value) bits.push(`= "${el.current_value}"`);

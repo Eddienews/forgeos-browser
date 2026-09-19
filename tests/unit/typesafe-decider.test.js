@@ -16,6 +16,7 @@ const snapshot = (over = {}) => ({
     { index: 2, kind: 'fill', role: 'textbox', label: 'Buscar', href: null, option_value: null },
     { index: 3, kind: 'select', role: 'combobox', label: 'Estado -> SP', href: null, option_value: 'SP' },
   ],
+  below_fold: [],
   ...over,
 });
 
@@ -171,6 +172,24 @@ module.exports = [
       assert.strictEqual(
         composeDecision({ goal_met: { noul: 0.9 }, operation: { choice: 'CLICK' }, click_target: { choice: '1' } }, snap).operation,
         'DONE', 'a confident verdict does end the run');
+    },
+  },
+  {
+    name: 'the state tells the model what exists below the fold',
+    gate: 'L',
+    fn: async (assert) => {
+      // Blind scrolling becomes a deliberate step once the model is told that a
+      // named control exists below.
+      const snap = snapshot({
+        below_fold: [{ index: 42, kind: 'click', role: 'button', label: 'Next', href: '/js/page/2/' }],
+      });
+      const state = buildState('get the next page of quotes', snap, []);
+      assert.ok(/BELOW THE FOLD/.test(state), 'the section must be present');
+      assert.ok(/\[42\] click button: Next -> \/js\/page\/2\//.test(state), 'with its destination');
+      // And it is NOT offered as a click target: the action would refuse it.
+      const q = buildQuestions(snap);
+      assert.strictEqual(q.click_target === undefined || q.click_target.criteria['42'] === undefined, true,
+        'an off-screen control must not be offered as an immediate target');
     },
   },
   {

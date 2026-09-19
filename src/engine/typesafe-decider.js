@@ -48,11 +48,15 @@ const OPERATIONS = ['CLICK', 'TYPE_TEXT', 'SELECT', 'SCROLL_DOWN', 'SCROLL_UP', 
 const NO_TARGET = '(none)';
 
 const OPERATION_CRITERIA = {
-  CLICK: 'press a link, button or control to go somewhere or open something',
+  CLICK: 'press one of the controls listed on screen (answer which one under click_target)',
   TYPE_TEXT: 'write text into an input field',
   SELECT: 'choose an option in a dropdown',
-  SCROLL_DOWN: 'the thing you need is probably further down this page',
-  SCROLL_UP: 'the thing you need is probably further up this page',
+  // These two name the below-the-fold list explicitly. Without that link the
+  // model sees the control it wants in the state, finds it absent from the
+  // on-screen criteria, and answers "(none)" — refusing instead of scrolling
+  // toward the thing it just noticed.
+  SCROLL_DOWN: 'the control that serves the goal is listed under BELOW THE FOLD — scroll down toward it',
+  SCROLL_UP: 'the control that serves the goal is listed above the current view — scroll up toward it',
   WAIT: 'the page is still loading or about to change on its own',
   DONE: 'the visible text already answers the goal; stop and report it',
   BLOCKED: 'the page refuses or cannot serve this goal (login wall, captcha, no such control)',
@@ -87,6 +91,17 @@ function buildState(goal, snapshot, history) {
   if (elements.length) {
     lines.push('', 'INTERACTIVE ELEMENTS (by index):');
     for (const el of elements.slice(0, MAX_CANDIDATES)) {
+      const target = el.href ? ` -> ${truncate(el.href, 90)}` : '';
+      lines.push(`[${el.index}] ${el.kind} ${el.role}: ${truncate(el.label, 120)}${target}`);
+    }
+  }
+  const below = (snapshot && snapshot.below_fold) || [];
+  if (below.length) {
+    // Not offered as targets (the action would refuse them as off-screen), but
+    // the model must know they exist: this is what turns blind scrolling into a
+    // deliberate step toward a named control.
+    lines.push('', 'BELOW THE FOLD — real controls, scroll to reach them:');
+    for (const el of below.slice(0, 40)) {
       const target = el.href ? ` -> ${truncate(el.href, 90)}` : '';
       lines.push(`[${el.index}] ${el.kind} ${el.role}: ${truncate(el.label, 120)}${target}`);
     }
@@ -136,7 +151,8 @@ function buildQuestions(snapshot) {
     },
     operation: {
       type: 'choice',
-      instructions: 'What is the single next action that best advances this goal from this state?',
+      instructions: 'What is the single next action that best advances this goal from this state? ' +
+        'Controls listed on screen are chosen with CLICK; controls listed under BELOW THE FOLD are reached by scrolling to them first.',
       criteria: OPERATION_CRITERIA,
     },
   };

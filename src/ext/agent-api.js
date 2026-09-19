@@ -462,6 +462,13 @@ function startAgentApi({
               // Controls the page covers with something else: a caller seeing a
               // bare page should know whether it is empty or behind an overlay.
               occluded_count: snap.occluded_count || 0,
+              offscreen_count: snap.offscreen_count || 0,
+              // Exists but out of view: the agent should scroll toward it, not hunt.
+              below_fold: (snap.below_fold || []).map((el) => ({
+                index: el.index, kind: el.kind, role: el.role, label: el.label,
+                href: el.href, option_value: el.option_value,
+              })),
+              viewport: snap.viewport || null,
               fingerprint: snap.fingerprint,
               truncated: !!snap.truncated,
               filter: filterInfo,
@@ -480,10 +487,26 @@ function startAgentApi({
             const rawCurrent = await observe();
             if (!rawCurrent || rawCurrent.error) return deny(503, (rawCurrent && rawCurrent.error) || 'no observation');
             const current = normalizeSnapshot(rawCurrent);
+            const op = String(body.operation || '').toUpperCase();
+            // Scrolling and waiting act on the page, not on an element: demanding a
+            // target for them made SCROLL_UP impossible exactly when the agent needed
+            // it — on a page whose indices had changed under it.
+            if (op === 'SCROLL_UP' || op === 'SCROLL_DOWN' || op === 'WAIT') {
+              const blind = op === 'WAIT' ? { kind: 'wait' } : { kind: 'scroll', direction: op === 'SCROLL_UP' ? 'up' : 'down' };
+              const blindPolicy = classifyAction(blind);
+              const blindOutcome = await act(blind);
+              if (log) log.log('INFO', 'agent action executed', { operation: op, risk: blindPolicy.risk, outcome: blindOutcome && blindOutcome.ok ? 'ok' : 'refused' });
+              return sendJson({
+                status: blindOutcome && blindOutcome.ok ? 'done' : 'refused',
+                operation: op, target: null, label: '', risk: blindPolicy.risk, why: blindPolicy.why,
+                detail: (blindOutcome && (blindOutcome.detail || blindOutcome.reason)) || '',
+                fingerprint_before: current.fingerprint,
+              });
+            }
+
             const element = elementByIndex(current, body.target);
             if (!element) return deny(400, `target [${body.target}] is not in the current page`);
 
-            const op = String(body.operation || '').toUpperCase();
             const kind = op === 'CLICK' ? 'click' : op === 'TYPE_TEXT' ? 'fill' : op === 'SELECT' ? 'select'
               : op === 'SCROLL_DOWN' || op === 'SCROLL_UP' || op === 'WAIT' ? 'scroll_or_wait' : null;
             if (!kind) return deny(400, 'operation must be one of CLICK, TYPE_TEXT, SELECT, SCROLL_UP, SCROLL_DOWN, WAIT');
