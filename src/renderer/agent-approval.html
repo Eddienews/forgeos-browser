@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
+<title>Agent Action Approval</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #14110d;
+    color: #ece3d4;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .card {
+    background: linear-gradient(145deg, #1b1712, #0d0b09);
+    border: 1px solid rgba(255, 170, 60, 0.35);
+    border-radius: 12px;
+    padding: 40px 48px;
+    max-width: 520px;
+    width: 90%;
+    text-align: center;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  }
+  .icon {
+    font-size: 44px;
+    width: 84px; height: 84px;
+    margin: 0 auto 20px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(255, 170, 60, 0.12);
+    border-radius: 50%;
+    border: 1px solid rgba(255, 170, 60, 0.3);
+  }
+  h1 {
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    margin-bottom: 8px;
+  }
+  .sub {
+    font-size: 13px;
+    color: #9a8f7d;
+    margin-bottom: 24px;
+  }
+  .url-box {
+    background: rgba(255, 170, 60, 0.08);
+    border: 1px solid rgba(255, 170, 60, 0.25);
+    border-radius: 6px;
+    padding: 12px 16px;
+    font-family: Consolas, Menlo, monospace;
+    font-size: 14px;
+    color: #ffaa3c;
+    word-break: break-all;
+    margin-bottom: 12px;
+  }
+  .expiry {
+    font-size: 12px;
+    color: #6e6557;
+    font-family: Consolas, Menlo, monospace;
+    margin-bottom: 28px;
+  }
+  .actions { display: flex; gap: 12px; justify-content: center; }
+  button {
+    font-size: 14px;
+    font-weight: 600;
+    padding: 12px 32px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.05s;
+  }
+  button:active { transform: translateY(1px); }
+  .deny {
+    background: transparent;
+    border-color: rgba(236, 227, 212, 0.25);
+    color: #c9c0b2;
+  }
+  .deny:hover { background: rgba(236, 227, 212, 0.08); }
+  .approve {
+    background: #ffaa3c;
+    color: #14110d;
+  }
+  .approve:hover { background: #ffb855; }
+  .note {
+    margin-top: 20px;
+    font-size: 11px;
+    color: #6e6557;
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">🤖</div>
+    <h1>Agent action requires your approval</h1>
+    <div class="sub">An AI agent is requesting a browser action. You decide.</div>
+    <div class="url-box" id="url"></div>
+    <div class="expiry" id="expiry"></div>
+    <div class="actions">
+      <button class="deny" id="deny">Deny</button>
+      <button class="approve" id="approve">Approve</button>
+    </div>
+    <div class="note">Reads are automatic. Actions require a human. That is the rule.</div>
+  </div>
+  <script>
+    const qs = new URLSearchParams(location.search);
+    const confirmId = qs.get('confirm');
+    const url = qs.get('url') || '';
+    const expiresIn = parseInt(qs.get('expires') || '30000', 10);
+    document.getElementById('url').textContent = url;
+    const expiryEl = document.getElementById('expiry');
+    const deadline = Date.now() + expiresIn;
+    const tick = () => {
+      const left = deadline - Date.now();
+      if (left <= 0) {
+        expiryEl.textContent = 'Expired — the agent was not authorized.';
+        document.getElementById('approve').disabled = true;
+        document.getElementById('deny').disabled = true;
+      } else {
+        expiryEl.textContent = 'Expires in ' + Math.ceil(left / 1000) + 's';
+      }
+    };
+    tick();
+    setInterval(tick, 500);
+    // Communicate the decision by attempting a navigation to a custom scheme.
+    // The main process intercepts it in will-navigate (page tabs have NO
+    // preload/bridge by design, so this is the channel that keeps that rule).
+    function decide(approve) {
+      location.href = 'forge-decision://' + (approve ? 'approve' : 'deny') + '?confirm=' + encodeURIComponent(confirmId);
+    }
+    document.getElementById('approve').addEventListener('click', () => decide(true));
+    document.getElementById('deny').addEventListener('click', () => decide(false));
+  </script>
+</body>
+</html>

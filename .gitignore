@@ -15,3 +15,4 @@ forge-fp-level
 /dist/
 forge-allowlist.json.presets
 forge-session.json
+scripts/_*.js

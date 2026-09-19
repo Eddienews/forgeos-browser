@@ -59,7 +59,7 @@ function sanitize(obj) {
   return out;
 }
 
-function startAgentApi({ port = 8647, getSnapshot, readPage, navigate, log, baseDir }) {
+function startAgentApi({ port, baseDir, log, getSnapshot, readPage, navigate, onConfirmRequest }) {
   const masterSecret = generateToken();
   const issued = new Map();   // tokenId -> { scope, expiresAt }
   const revoked = new Set();
@@ -101,6 +101,18 @@ function startAgentApi({ port = 8647, getSnapshot, readPage, navigate, log, base
     for (const id of issued.keys()) revoked.add(id);
     issued.clear();
     return { ok: true };
+  }
+
+  /** Approve/deny a pending navigation from the chrome UI (human decision). */
+  function resolveConfirm(confirmId, approve) {
+    const pend = pendingConfirms.get(confirmId);
+    if (!pend) return false;                 // unknown/expired/already used
+    pendingConfirms.delete(confirmId);
+    if (approve !== true) return false;      // denied → do nothing
+    if (Date.now() > pend.expiresAt) return false;
+    navigate(pend.url).catch(() => {});
+    if (log) log.log('INFO', 'agent navigation approved by human', { url: pend.url.slice(0, 200) });
+    return true;
   }
 
   function rateLimited(key) {
@@ -201,6 +213,8 @@ function startAgentApi({ port = 8647, getSnapshot, readPage, navigate, log, base
             // Confirmation flow: first call returns pending_confirmation.
             const confirmId = crypto.randomBytes(12).toString('hex');
             pendingConfirms.set(confirmId, { url, expiresAt: Date.now() + CONFIRM_TTL_MS });
+            // Notify the browser chrome so the HUMAN can approve visually.
+            try { if (onConfirmRequest) onConfirmRequest({ confirmId, url, expiresInMs: CONFIRM_TTL_MS }); } catch {}
             return json(res, {
               status: 'pending_confirmation',
               confirm_id: confirmId,
@@ -242,7 +256,7 @@ function startAgentApi({ port = 8647, getSnapshot, readPage, navigate, log, base
 
   return new Promise((resolve) => {
     server.listen(port, '127.0.0.1', () => {
-      resolve({ server, port, tokenFile, bootstrapToken, issueToken, verifyToken });
+      resolve({ server, port, tokenFile, bootstrapToken, issueToken, verifyToken, resolveConfirm });
     });
   });
 }
