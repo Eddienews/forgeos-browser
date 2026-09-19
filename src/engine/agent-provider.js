@@ -65,18 +65,31 @@ function writePrivateKeyFile(filePath, contents, { fileSystem = fs, platform = p
   }
 }
 
-/** Reject anything that is not plausibly a key for this provider. */
+/**
+ * Sanity-check a key without imposing a format we do not own.
+ *
+ * An earlier version required a `sk-` prefix and REJECTED a real key that did
+ * not have it — locking out the one person who could have fixed it. The shape
+ * of a third party's credential is theirs to define and theirs to reject: the
+ * provider answers 401 if the key is wrong, and the API degrades cleanly. So we
+ * only refuse what cannot possibly be a key (empty, whitespace, absurd length),
+ * and merely WARN about an unexpected shape.
+ */
 function validateKey(providerId, rawKey) {
   const provider = PROVIDERS[providerId];
   if (!provider) return { ok: false, reason: `unknown provider "${providerId}"` };
   const key = String(rawKey == null ? '' : rawKey).trim();
-  if (!key) return { ok: false, reason: 'key is empty' };
-  if (key.length > 400) return { ok: false, reason: 'key is implausibly long' };
-  if (/\s/.test(key)) return { ok: false, reason: 'key contains whitespace' };
-  if (!provider.keyPattern.test(key)) {
-    return { ok: false, reason: `key does not look like a ${provider.label} key (expected ${provider.keyHint})` };
-  }
-  return { ok: true, key };
+  if (!key) return { ok: false, reason: 'the key is empty' };
+  if (key.length > 500) return { ok: false, reason: 'the key is implausibly long' };
+  if (/\s/.test(key)) return { ok: false, reason: 'the key contains whitespace' };
+  if (key.length < 8) return { ok: false, reason: 'the key is too short to be real' };
+  const asExpected = provider.keyPattern.test(key);
+  return {
+    ok: true,
+    key,
+    // Informative only: never blocks saving.
+    warning: asExpected ? null : `does not start with "${provider.keyHint}" — saved anyway; the provider will reject it if it is wrong`,
+  };
 }
 
 /** Short, non-revealing form for the UI: first 3 + last 2 characters. */
@@ -112,7 +125,7 @@ function readKey(baseDir, { env = process.env, fileSystem = fs } = {}) {
   }
 }
 
-/** Save a key after validation. Returns a report that never contains the key. */
+/** Save a key after a sanity check. Returns a report that never contains the key. */
 function saveKey(baseDir, providerId, rawKey, { fileSystem = fs, platform = process.platform } = {}) {
   const check = validateKey(providerId, rawKey);
   if (!check.ok) return { ok: false, reason: check.reason };
@@ -121,7 +134,7 @@ function saveKey(baseDir, providerId, rawKey, { fileSystem = fs, platform = proc
   } catch (error) {
     return { ok: false, reason: `could not write the key file: ${String((error && error.message) || error).slice(0, 120)}` };
   }
-  return { ok: true, provider: providerId, hint: maskKey(check.key) };
+  return { ok: true, provider: providerId, hint: maskKey(check.key), warning: check.warning || null };
 }
 
 /** Remove the stored key. The environment variable, if set, still applies. */

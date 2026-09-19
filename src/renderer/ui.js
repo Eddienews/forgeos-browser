@@ -352,14 +352,16 @@
     if (btn) btn.disabled = true;
     F.agentKeySet('typesafe', key).then((r) => {
       if (btn) btn.disabled = false;
-      if (input) input.value = ''; // never leave it sitting in the DOM
       if (r && r.ok) {
-        agentKeyMsg(`Saved ${r.hint || ''} — /task now decides with Jev.`, true);
+        if (input) input.value = ''; // clear only on success
+        agentKeyMsg(`Saved ${r.hint || ''} — /task now decides with Jev.` +
+          (r.warning ? ` Note: it ${r.warning}` : ''), true);
         refreshAgentKey();
       } else {
-        agentKeyMsg((r && r.reason) || 'Could not save the key.', false);
+        // Keep what was pasted: nobody should have to retype a key to fix it.
+        agentKeyMsg(`Not saved: ${(r && r.reason) || 'unknown error'}.`, false);
       }
-    }).catch(() => { if (btn) btn.disabled = false; agentKeyMsg('Could not save the key.', false); });
+    }).catch(() => { if (btn) btn.disabled = false; agentKeyMsg('Could not reach the browser process.', false); });
   }
 
   const saveKeyBtn = $('mi-agent-key-save');

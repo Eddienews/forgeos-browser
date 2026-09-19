@@ -15,18 +15,18 @@ function tmpDir() {
 
 module.exports = [
   {
-    name: 'a plausible key is accepted, junk is rejected with a reason',
+    name: 'only impossible keys are refused — an unexpected shape is saved with a warning',
     gate: 'A',
     fn: async (assert) => {
       assert.strictEqual(provider.validateKey('typesafe', A_KEY).ok, true);
+
+      // Refused: cannot possibly be a key.
       const bad = [
         ['', /empty/],
         ['   ', /empty/],
-        ['nope', /does not look like/],
-        ['pk-abcdefghijklmnop1234', /does not look like/],
-        ['sk-short', /does not look like/],
+        ['abc', /too short/],
         ['sk-abc defghijklmnop123', /whitespace/],
-        ['sk-' + 'a'.repeat(500), /implausibly long/],
+        ['sk-' + 'a'.repeat(600), /implausibly long/],
       ];
       for (const [key, pattern] of bad) {
         const r = provider.validateKey('typesafe', key);
@@ -34,6 +34,26 @@ module.exports = [
         assert.ok(pattern.test(r.reason), `reason for ${JSON.stringify(key.slice(0, 12))} was: ${r.reason}`);
       }
       assert.strictEqual(provider.validateKey('nope-provider', A_KEY).ok, false);
+    },
+  },
+  {
+    name: 'a real key with an unexpected prefix is ACCEPTED, not locked out',
+    gate: 'A',
+    fn: async (assert) => {
+      // Regression: an earlier version required a `sk-` prefix and rejected a
+      // real key that lacked it — locking out the only person who could fix it.
+      // The shape of a third party's credential is not ours to impose.
+      const unusual = 'ts_live_9f3a7c21bb84de0091';
+      const v = provider.validateKey('typesafe', unusual);
+      assert.strictEqual(v.ok, true, 'a plausible key must be accepted whatever its prefix');
+      assert.ok(v.warning && /does not start with/.test(v.warning), 'the mismatch is reported, not enforced');
+
+      const dir = tmpDir();
+      const saved = provider.saveKey(dir, 'typesafe', unusual);
+      assert.strictEqual(saved.ok, true);
+      assert.ok(saved.warning, 'the save report carries the warning');
+      assert.strictEqual(provider.readKey(dir, { env: {} }).key, unusual, 'and it really was stored');
+      assert.ok(!JSON.stringify(saved).includes(unusual), 'still no key in the report');
     },
   },
   {
