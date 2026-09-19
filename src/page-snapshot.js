@@ -195,6 +195,11 @@ function forgeSnapshotScript() {
     occluded_count: occluded,
     offscreen_count: offscreen,
     viewport: [vw, vh],
+    // The scroll position is part of the page's state: without it, scrolling a
+    // page whose controls are all below the fold produces an identical
+    // observation, and a loop that detects 'nothing changed' stops the very
+    // action it needs.
+    scroll_y: Math.round(window.scrollY),
     can_scroll_down: window.scrollY + window.innerHeight < document.documentElement.scrollHeight - 2,
     can_scroll_up: window.scrollY > 0,
   };

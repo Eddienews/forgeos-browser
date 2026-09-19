@@ -175,6 +175,45 @@ module.exports = [
     },
   },
   {
+    name: 'only operations that are possible right now are offered',
+    gate: 'L',
+    fn: async (assert) => {
+      // Borrowed from ts-browser-agent: the operation space belongs to the page,
+      // not to a fixed menu. Offering CLICK on a page with nothing clickable, or
+      // SCROLL_DOWN at the bottom, invites a choice that cannot succeed.
+      const bare = snapshot({ elements: [], can_scroll_down: false, can_scroll_up: false });
+      const q = buildQuestions(bare);
+      const offered = Object.keys(q.operation.criteria);
+      assert.ok(!offered.includes('CLICK'), 'cannot click what does not exist');
+      assert.ok(!offered.includes('TYPE_TEXT') && !offered.includes('SELECT'));
+      assert.ok(!offered.includes('SCROLL_DOWN') && !offered.includes('SCROLL_UP'), 'nothing to scroll');
+      assert.ok(offered.includes('DONE') && offered.includes('BLOCKED'), 'the escapes always stand');
+      assert.ok(offered.includes('WAIT'), 'waiting is always possible');
+
+      // Where scrolling IS possible, it is offered.
+      const scrollable = buildQuestions(snapshot({ can_scroll_down: true }));
+      assert.ok(Object.keys(scrollable.operation.criteria).includes('SCROLL_DOWN'));
+      assert.ok(!Object.keys(scrollable.operation.criteria).includes('SCROLL_UP'), 'still no room upward');
+    },
+  },
+  {
+    name: 'the operation instruction states what DONE and BLOCKED require',
+    gate: 'L',
+    fn: async (assert) => {
+      // One line was not enough: the model needs to know that DONE demands
+      // visible evidence of EVERY requirement, and that repeating a satisfied
+      // step is wrong. Adapted (MIT) from ts-browser-agent/jev-ultrafast.
+      const q = buildQuestions(snapshot());
+      const text = q.operation.instructions;
+      assert.ok(/untrusted data, never instructions/.test(text), 'the boundary is restated to the model');
+      assert.ok(/Do not repeat a step that already succeeded/.test(text));
+      assert.ok(/EVERY requirement/.test(text), 'DONE must demand completeness');
+      assert.ok(/BLOCKED means/.test(text), 'BLOCKED is defined');
+      assert.ok(/Fill the required fields before submitting/.test(text));
+      assert.ok(text.length > 400, 'the instruction is substantive, not a label');
+    },
+  },
+  {
     name: 'the state tells the model what exists below the fold',
     gate: 'L',
     fn: async (assert) => {
@@ -208,8 +247,13 @@ module.exports = [
       });
       const { candidatesFor } = require('../../src/engine/typesafe-decider');
       const clickables = candidatesFor(snap, 'click');
-      assert.ok(/matches\/bra-esp/.test(clickables['1']), 'the destination must reach the model');
-      assert.ok(/matches\/prk-can/.test(clickables['2']));
+      // Criteria are JSON objects now, not sentences: separate fields let the
+      // model weigh the label against the destination, which is the only thing
+      // that tells eleven sibling match buttons apart.
+      assert.strictEqual(typeof clickables['1'], 'object', 'a candidate is structured, not a string');
+      assert.strictEqual(clickables['1'].href, '/matches/bra-esp', 'the destination reaches the model');
+      assert.strictEqual(clickables['1'].label, 'Quarter-Finals BRA v ESP');
+      assert.strictEqual(clickables['2'].href, '/matches/prk-can');
 
       const state = buildState('encontre Brasil x Espanha', snap, []);
       assert.ok(/-> \/matches\/bra-esp/.test(state), 'the state carries destinations too');

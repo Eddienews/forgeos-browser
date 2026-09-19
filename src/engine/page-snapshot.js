@@ -59,6 +59,7 @@ function normalizeSnapshot(raw) {
     title: String(src.title || '').slice(0, 300),
     text: String(src.text || '').slice(0, 8000),
     elements,
+    scroll_y: Number.isFinite(Number(src.scroll_y)) ? Number(src.scroll_y) : 0,
     can_scroll_down: !!src.can_scroll_down,
     can_scroll_up: !!src.can_scroll_up,
     // Controls the page covers with something else. Surfaced so a caller can
@@ -85,6 +86,10 @@ function normalizeSnapshot(raw) {
 function fingerprintSnapshot(snapshot) {
   const material = {
     url: snapshot.url,
+    // Scrolling IS a state change even when the text and the on-screen element
+    // table are unchanged — which is exactly the case on a page whose controls
+    // are all below the fold.
+    scroll_y: snapshot.scroll_y,
     text: snapshot.text,
     elements: (snapshot.elements || []).map((el) => [
       el.index, el.kind, el.label, el.current_value, el.option_value, el.href,

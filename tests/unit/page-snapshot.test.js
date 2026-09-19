@@ -90,6 +90,26 @@ module.exports = [
     },
   },
   {
+    name: 'scrolling changes the fingerprint even when nothing else does',
+    gate: 'L',
+    fn: async (assert) => {
+      // Regression from a live run: the agent correctly chose SCROLL_DOWN on a
+      // page whose controls were all below the fold, the loop saw an identical
+      // observation (same text, same empty on-screen table), concluded "the page
+      // did not change" and STOPPED the run — killing the one action that would
+      // have worked. The scroll position is part of the page's state.
+      const above = normalizeSnapshot(raw({ scroll_y: 0 }));
+      const below = normalizeSnapshot(raw({ scroll_y: 600 }));
+      assert.notStrictEqual(above.fingerprint, below.fingerprint,
+        'scrolling must register as a change');
+      assert.strictEqual(normalizeSnapshot(raw({ scroll_y: 0 })).fingerprint, above.fingerprint,
+        'and the same position remains the same state');
+      assert.strictEqual(above.scroll_y, 0);
+      assert.strictEqual(below.scroll_y, 600);
+      assert.strictEqual(normalizeSnapshot(raw()).scroll_y, 0, 'absent means top');
+    },
+  },
+  {
     name: 'controls below the fold are reported, not hidden',
     gate: 'L',
     fn: async (assert) => {

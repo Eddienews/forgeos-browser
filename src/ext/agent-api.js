@@ -469,6 +469,7 @@ function startAgentApi({
                 href: el.href, option_value: el.option_value,
               })),
               viewport: snap.viewport || null,
+              scroll_y: snap.scroll_y || 0,
               fingerprint: snap.fingerprint,
               truncated: !!snap.truncated,
               filter: filterInfo,
