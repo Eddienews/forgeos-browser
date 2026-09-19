@@ -102,6 +102,20 @@
 
         <div class="menu-sep"></div>
         <div class="menu-sec">
+          <div class="menu-title">AI Agent <span style="opacity:.6">(bring your own key)</span></div>
+          <div class="menu-hint" id="agent-key-status">TypeSafe (Jev): checking…</div>
+          <input id="agent-key-input" class="key-input" type="password" placeholder="sk-…"
+                 autocomplete="off" spellcheck="false" />
+          <div class="key-actions">
+            <button class="menu-row action" id="mi-agent-key-save">Save key</button>
+            <button class="menu-row action danger" id="mi-agent-key-clear">Remove</button>
+          </div>
+          <div class="menu-hint" id="agent-key-msg"></div>
+          <div class="menu-hint">Used by <code>POST /task</code> to decide each step. Optional — with no key the built-in offline decider runs. Stored locally with owner-only permissions; never logged, never sent anywhere but the provider.</div>
+        </div>
+
+        <div class="menu-sep"></div>
+        <div class="menu-sec">
           <div class="menu-title">Appearance</div>
           <label class="menu-row" for="set-zoom">
             <span>Page zoom</span>

@@ -48,6 +48,8 @@ const { runGoal, createHeuristicDecider } = require('../engine/agent-loop');
 const { normalizeSnapshot, elementByIndex } = require('../engine/page-snapshot');
 const { classifyAction } = require('../engine/action-policy');
 const { filterObservation } = require('../engine/snapshot-filter');
+const agentProvider = require('../engine/agent-provider');
+const { createTypeSafeDecider } = require('../engine/typesafe-decider');
 
 const TOKEN_TTL_MS = 60 * 60 * 1000;          // 60 minutes
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;       // 1 minute
@@ -542,16 +544,65 @@ function startAgentApi({
             // The loop may stop for a human mid-run, so the socket must outlive
             // the default timeout.
             req.socket.setTimeout(0);
+
+            // Which decider runs this goal. The user's own key turns the loop
+            // from a rule of thumb into a model decision; with no key the
+            // built-in offline decider runs, so the feature works out of the
+            // box. A model failure degrades to the offline decider instead of
+            // failing the run — and says so.
+            const stored = agentProvider.readKey(baseDir, {});
+            const calls = { ok: 0, failed: 0, totalMs: 0 };
+            let deciderKind = 'heuristic';
+            let deciderModel = null;
+            let decider;
+            if (stored.key) {
+              try {
+                const modelDecider = createTypeSafeDecider({
+                  apiKey: stored.key,
+                  textValue: body.text_value != null ? String(body.text_value) : null,
+                  onCall: (info) => {
+                    if (info.ok) { calls.ok += 1; calls.totalMs += info.ms || 0; }
+                    else calls.failed += 1;
+                  },
+                });
+                const offline = createHeuristicDecider();
+                deciderKind = 'typesafe';
+                deciderModel = 'jev-latest';
+                decider = async (ctx) => {
+                  try {
+                    const d = await modelDecider(ctx);
+                    if (d && d.operation) return d;
+                    const h = await offline(ctx);
+                    return { ...h, reasoning: `${h.reasoning} (offline fallback: the model returned no operation)` };
+                  } catch (err) {
+                    const h = await offline(ctx);
+                    return { ...h, reasoning: `${h.reasoning} (offline fallback: ${String((err && err.message) || err).slice(0, 120)})` };
+                  }
+                };
+              } catch (err) {
+                decider = createHeuristicDecider();
+                if (log) log.log('DENY', 'inference decider unavailable', { error: String((err && err.message) || err).slice(0, 120) });
+              }
+            } else {
+              decider = createHeuristicDecider();
+            }
+
             const result = await runGoal({
               goal: goal.slice(0, 1000),
               observe,
               act,
-              decide: createHeuristicDecider(),
+              decide: decider,
               requestApproval: typeof approveAction === 'function'
                 ? async (info) => approveAction(info)
                 : async () => false,
               log: (line) => { if (log) log.log('INFO', 'agent task step', { line: String(line).slice(0, 200) }); },
             }, { maxSteps });
+            if (log) {
+              log.log('INFO', 'agent task finished', {
+                status: result.status, steps: result.steps, decider: deciderKind,
+                model_calls: calls.ok, model_failures: calls.failed,
+              });
+            }
             return sendJson({
               status: result.status,
               result: result.result,
@@ -559,6 +610,14 @@ function startAgentApi({
               steps: result.steps,
               evidence: result.evidence,
               filter: result.filter,
+              // Which brain ran it, and what it cost — never the key.
+              decider: {
+                kind: deciderKind,
+                model: deciderModel,
+                calls: calls.ok,
+                failures: calls.failed,
+                average_ms: calls.ok ? Math.round(calls.totalMs / calls.ok) : null,
+              },
               untrusted: true,
             });
           }

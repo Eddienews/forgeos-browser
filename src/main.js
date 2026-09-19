@@ -43,6 +43,7 @@ const sessionStore = require('./engine/session-store');
 const { cleanUrlString } = require('./engine/url-cleaner');
 const { classifyField } = require('./engine/sensitive-fields');
 const { createPageWebPreferences } = require('./page-web-preferences');
+const agentProvider = require('./engine/agent-provider');
 const { DARK_SCROLLBAR_CSS, supportsPageAppearance } = require('./engine/page-appearance');
 const { isExistingPathInside, upsertDownload } = require('./engine/download-center');
 const { pageProcessingPolicy } = require('./engine/page-processing-policy');
@@ -746,6 +747,24 @@ function registerIpc() {
     return res;
   });
   ipcMain.handle('forge:version', () => app.getVersion());
+  /* ---- agent inference key (v0.11): the user's own, never the project's ----
+   * The key is written to its own 0600 file, never to settings.json, and it is
+   * never logged or echoed back: the renderer only ever learns whether one
+   * exists and a masked hint. */
+  ipcMain.handle('forge:agent-key-status', () => agentProvider.status(getRuntimeBase()));
+  ipcMain.handle('forge:agent-key-set', (_e, payload) => {
+    const provider = (payload && payload.provider) || 'typesafe';
+    const result = agentProvider.saveKey(getRuntimeBase(), provider, payload && payload.key);
+    // Note what happened, never what was written.
+    if (result.ok) log.log('INFO', 'agent inference key stored', { provider, hint: result.hint });
+    else log.log('DENY', 'agent inference key rejected', { provider, reason: String(result.reason || '').slice(0, 120) });
+    return result;
+  });
+  ipcMain.handle('forge:agent-key-clear', () => {
+    const result = agentProvider.clearKey(getRuntimeBase());
+    if (result.ok) log.log('INFO', 'agent inference key removed', { removed: !!result.removed });
+    return result;
+  });
   ipcMain.handle('forge:ytdlp-status', () => {
     // Path inspection only: opening the menu must never launch an external
     // process. Actual tools start only after the plugin approval dialog.

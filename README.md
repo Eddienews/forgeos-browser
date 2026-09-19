@@ -26,6 +26,7 @@ Mainstream browsers treat AI as a surface feature. ForgeOS Browser treats the ag
 - 🚫 **Prompt-injection scanner + observation filter** — the scanner reports; the filter acts, neutralising planted instructions before any model reads the page (the page itself is never modified)
 - 🔌 **Agent API** — localhost-only, capability-token-gated HTTP surface (read/navigate/control/full scopes, TTL, rotation, private token storage, rate limits, bounded private request audit) for external agents
 - 🤖 **Agent capabilities** — `GET /snapshot` (page text + a numbered table of interactive elements), `POST /act` (click/type/select/scroll by index), `POST /task` (bounded observe → decide → act loop). Reading is automatic; acting stops at a native dialog when it commits you
+- 🔑 **Bring your own inference key** (Settings → AI Agent) — the `/task` loop runs on a built-in offline decider with no key at all; paste a [TypeSafe (Jev)](https://console.typesafe.ai/settings/keys) key and each step is instead decided by the model (`jev-latest`), one request per step, with the answer chosen from the page rather than generated. Stored in its own file, never in settings; never logged, never returned by any endpoint. A provider failure degrades to the offline decider instead of failing the run
 - ⚙️ **Trust presets** — one decision releases a whole provider ecosystem (Google, Microsoft, Apple, Social), reversible
 - 🔐 **No-credentials policy** — identity-provider sign-in is intercepted with an honest notice; credentials stay in your main browser
 - 🕵️ **Zero telemetry** — nothing leaves the machine, ever; Settings shows only aggregate local-audit health
@@ -52,7 +53,7 @@ Measured vs Brave/Chrome/Edge on the same machine (see [results/BENCHMARK.md](re
 ```bash
 npm install
 npm start                 # dev
-npm test                  # 212 unit tests
+npm test                  # 227 unit tests
 npm run package           # electron-packager for host platform
 node scripts/make-portable.js   # portable zip
 # cross-platform: node scripts/package.js --platform=linux,darwin --arch=x64,arm64

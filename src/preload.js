@@ -36,6 +36,10 @@ const api = {
   downloadReveal: (id) => ipcRenderer.invoke('forge:download-reveal', id),
   settingsGet: () => ipcRenderer.invoke('forge:settings-get'),
   settingsSet: (patch) => ipcRenderer.invoke('forge:settings-set', patch),
+  // The key itself is never read back into the renderer: only its status.
+  agentKeyStatus: () => ipcRenderer.invoke('forge:agent-key-status'),
+  agentKeySet: (provider, key) => ipcRenderer.invoke('forge:agent-key-set', { provider, key }),
+  agentKeyClear: () => ipcRenderer.invoke('forge:agent-key-clear'),
   setMenuOpen: (open) => ipcRenderer.invoke('forge:set-menu-open', open),
   allowIs: (host) => ipcRenderer.invoke('forge:allow-is', host),
   presetsList: () => ipcRenderer.invoke('forge:presets-list'),

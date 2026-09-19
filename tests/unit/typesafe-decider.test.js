@@ -1,0 +1,212 @@
+/* typesafe-decider.test.js — the Jev-backed step decision, with the network
+ * mocked. These tests assert the two things that matter: the questions sent
+ * carry the goal and the page (never the key in the body), and the answers are
+ * composed into a decision the loop can trust. No real request is ever made. */
+'use strict';
+const { createTypeSafeDecider, buildQuestions, buildState, composeDecision, paragraphsOf } = require('../../src/engine/typesafe-decider');
+
+const KEY = 'sk-test-key-abcdefghijklmnop';
+
+const snapshot = (over = {}) => ({
+  url: 'https://loja.example/produto',
+  title: 'Produto',
+  text: 'Um parágrafo suficientemente longo para contar como candidato a resposta.\nOutro parágrafo igualmente longo sobre o preço final com frete para São Paulo.',
+  elements: [
+    { index: 1, kind: 'click', role: 'button', label: 'Ver detalhes', href: '/d', option_value: null },
+    { index: 2, kind: 'fill', role: 'textbox', label: 'Buscar', href: null, option_value: null },
+    { index: 3, kind: 'select', role: 'combobox', label: 'Estado -> SP', href: null, option_value: 'SP' },
+  ],
+  ...over,
+});
+
+/** A fetch double that records the request and replies with given answers. */
+function fakeFetch(answers, { ok = true, status = 200 } = {}) {
+  const calls = [];
+  const fn = async (url, init) => {
+    calls.push({ url, init });
+    return {
+      ok, status,
+      json: async () => ({ model: 'jev-latest', answers }),
+    };
+  };
+  fn.calls = calls;
+  return fn;
+}
+
+module.exports = [
+  {
+    name: 'questions cover operation, each element kind, and the answer passage',
+    gate: 'L',
+    fn: async (assert) => {
+      const q = buildQuestions(snapshot());
+      assert.strictEqual(q.operation.type, 'choice');
+      assert.ok(q.operation.criteria.CLICK && q.operation.criteria.DONE, 'the operation space is offered');
+      assert.deepStrictEqual(Object.keys(q.click_target.criteria), ['1']);
+      assert.deepStrictEqual(Object.keys(q.fill_target.criteria), ['2']);
+      assert.deepStrictEqual(Object.keys(q.select_target.criteria), ['3']);
+      assert.ok(Object.keys(q.answer.criteria).length >= 1, 'answers are picked from the page, never generated');
+      assert.strictEqual(q.goal_met.type, 'noul');
+
+      // No elements of a kind means no question about that kind.
+      const bare = buildQuestions(snapshot({ elements: [] }));
+      assert.strictEqual(bare.click_target, undefined);
+      assert.strictEqual(bare.fill_target, undefined);
+      assert.strictEqual(bare.select_target, undefined);
+      assert.ok(bare.operation, 'the operation question always stands');
+    },
+  },
+  {
+    name: 'the state carries the goal, the page and what was already tried',
+    gate: 'L',
+    fn: async (assert) => {
+      const state = buildState('leia o preço final', snapshot(), [
+        { operation: 'CLICK', target: 1, outcome: 'ok', detail: 'clicked 10,10' },
+      ]);
+      assert.ok(/GOAL: leia o preço final/.test(state));
+      assert.ok(/loja\.example/.test(state), 'the URL is part of the state');
+      assert.ok(/\[1\] click button: Ver detalhes/.test(state), 'elements are addressable by index');
+      assert.ok(/ALREADY TRIED/.test(state) && /CLICK \[1\]/.test(state), 'history discourages repeating a step');
+      assert.ok(/suficientemente longo/.test(state), 'the page text is included');
+    },
+  },
+  {
+    name: 'a high goal-met answer wins and the result is picked from the page',
+    gate: 'L',
+    fn: async (assert) => {
+      const snap = snapshot();
+      const decision = composeDecision({
+        goal_met: { type: 'noul', noul: 0.92 },
+        operation: { type: 'choice', choice: 'CLICK', probabilities: { CLICK: 0.6, DONE: 0.3 }, confidence: 0.4 },
+        answer: { type: 'choice', choice: '1', probabilities: {}, confidence: 0.9 },
+      }, snap);
+      assert.strictEqual(decision.operation, 'DONE', 'an answered page must not be clicked further');
+      const paragraphs = paragraphsOf(snap.text);
+      assert.strictEqual(decision.result, paragraphs[1], 'the result is a passage of the page, not generated text');
+      assert.ok(/goal met/.test(decision.reasoning));
+    },
+  },
+  {
+    name: 'an operation with its element index becomes an actionable decision',
+    gate: 'L',
+    fn: async (assert) => {
+      const snap = snapshot();
+      const click = composeDecision({
+        goal_met: { noul: 0.1 },
+        operation: { choice: 'CLICK', probabilities: { CLICK: 0.8 }, confidence: 0.7 },
+        click_target: { choice: '1', probabilities: { 1: 0.9 }, confidence: 0.9 },
+      }, snap);
+      assert.strictEqual(click.operation, 'CLICK');
+      assert.strictEqual(click.target, 1);
+
+      const select = composeDecision({
+        goal_met: { noul: 0.1 },
+        operation: { choice: 'SELECT' },
+        select_target: { choice: '3' },
+      }, snap);
+      assert.strictEqual(select.operation, 'SELECT');
+      assert.strictEqual(select.target, 3);
+      assert.strictEqual(select.option_value, 'SP', 'the option value comes from the element table');
+
+      const scroll = composeDecision({ goal_met: { noul: 0 }, operation: { choice: 'SCROLL_DOWN' } }, snap);
+      assert.strictEqual(scroll.operation, 'SCROLL_DOWN');
+
+      const blocked = composeDecision({ goal_met: { noul: 0 }, operation: { choice: 'BLOCKED' } }, snap);
+      assert.strictEqual(blocked.operation, 'BLOCKED');
+    },
+  },
+  {
+    name: 'unusable model answers never become a blind action',
+    gate: 'A2',
+    fn: async (assert) => {
+      const snap = snapshot();
+      // An index that is not on the page.
+      const ghost = composeDecision({
+        goal_met: { noul: 0 }, operation: { choice: 'CLICK' }, click_target: { choice: '99' },
+      }, snap);
+      assert.strictEqual(ghost.operation, null, 'a target that does not exist must not be clicked');
+
+      // A word where a number was expected.
+      const wordy = composeDecision({
+        goal_met: { noul: 0 }, operation: { choice: 'CLICK' }, click_target: { choice: 'the first link' },
+      }, snap);
+      assert.strictEqual(wordy.operation, null);
+
+      // An operation outside the offered set.
+      const invented = composeDecision({ goal_met: { noul: 0 }, operation: { choice: 'TELEPORT' } }, snap);
+      assert.strictEqual(invented.operation, null);
+
+      // Typing with no text to type: Jev classifies, it does not generate.
+      const emptyType = composeDecision({
+        goal_met: { noul: 0 }, operation: { choice: 'TYPE_TEXT' }, fill_target: { choice: '2' },
+      }, snap);
+      assert.strictEqual(emptyType.operation, null, 'TYPE_TEXT without a value must not run');
+      assert.ok(/no text was provided/.test(emptyType.reasoning));
+
+      // Nothing at all.
+      assert.strictEqual(composeDecision(null, snap).operation, null);
+      assert.strictEqual(composeDecision({}, snap).operation, null);
+    },
+  },
+  {
+    name: 'the request carries the state and the questions, and the key only in the header',
+    gate: 'A2',
+    fn: async (assert) => {
+      const fetchImpl = fakeFetch({
+        goal_met: { noul: 0.1 },
+        operation: { choice: 'DONE' },
+        answer: { choice: '0' },
+      });
+      const decide = createTypeSafeDecider({ apiKey: KEY, fetchImpl });
+      const decision = await decide({ snapshot: snapshot(), history: [], step: 1, goal: 'leia o preço' });
+
+      assert.strictEqual(fetchImpl.calls.length, 1, 'one call per step, not one per question');
+      const { url, init } = fetchImpl.calls[0];
+      assert.strictEqual(url, 'https://api.typesafe.ai/v1/systemone');
+      assert.strictEqual(init.method, 'POST');
+      assert.strictEqual(init.headers.Authorization, `Bearer ${KEY}`);
+      const body = JSON.parse(init.body);
+      assert.strictEqual(body.model, 'jev-latest');
+      assert.ok(/leia o preço/.test(body.state), 'the goal reaches the model');
+      assert.ok(body.questions.operation, 'the questions are sent');
+      assert.ok(!JSON.stringify(body).includes(KEY), 'the key must never appear in the body');
+      assert.strictEqual(decision.operation, 'DONE');
+      assert.strictEqual(decision.provider, 'typesafe');
+      assert.ok(Number.isFinite(decision.latencyMs));
+    },
+  },
+  {
+    name: 'a failing provider throws so the caller can fall back, and is counted',
+    gate: 'A2',
+    fn: async (assert) => {
+      const calls = [];
+      const decide = createTypeSafeDecider({
+        apiKey: KEY,
+        fetchImpl: fakeFetch({}, { ok: false, status: 401 }),
+        onCall: (info) => calls.push(info),
+      });
+      let threw = null;
+      try {
+        await decide({ snapshot: snapshot(), history: [], step: 1, goal: 'x' });
+      } catch (error) { threw = error; }
+      assert.ok(threw, 'a provider failure must surface, not be silently swallowed');
+      assert.ok(/401/.test(threw.message));
+      assert.strictEqual(calls.length, 1);
+      assert.strictEqual(calls[0].ok, false);
+
+      // A transport failure is the same contract.
+      const broken = createTypeSafeDecider({ apiKey: KEY, fetchImpl: async () => { throw new Error('socket hang up'); } });
+      let netError = null;
+      try { await broken({ snapshot: snapshot(), history: [], step: 1, goal: 'x' }); } catch (e) { netError = e; }
+      assert.ok(netError && /socket hang up/.test(netError.message));
+    },
+  },
+  {
+    name: 'building a decider without a key is refused at construction',
+    gate: 'A2',
+    fn: async (assert) => {
+      let threw = null;
+      try { createTypeSafeDecider({ fetchImpl: async () => ({}) }); } catch (e) { threw = e; }
+      assert.ok(threw && /key is required/.test(threw.message));
+    },
+  },
+];

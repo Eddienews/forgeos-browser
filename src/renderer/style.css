@@ -221,6 +221,22 @@ body.platform-darwin #bar { padding-left: 78px; }
 }
 .menu-row.action { justify-content: flex-start; }
 .menu-row.action.danger { color: var(--red); }
+
+/* Agent inference key (Settings → AI Agent). The stored value is never read
+   back into the renderer, so this field is write-only: password type, no
+   autofill, and it is cleared the moment it is saved. */
+.key-input {
+  width: calc(100% - 18px);
+  margin: 2px 9px 6px;
+  background: var(--bg3); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 5px;
+  padding: 5px 7px; font: 11px var(--mono);
+}
+.key-input:focus { outline: none; border-color: var(--amber); }
+.key-actions { display: flex; gap: 6px; padding: 0 9px 4px; }
+.key-actions .menu-row.action { flex: 1; justify-content: center; padding: 4px 8px; }
+.key-ok { color: var(--green); }
+.key-bad { color: var(--red); }
 .menu-row select {
   background: var(--bg3); color: var(--fg); border: 1px solid var(--line);
   border-radius: 5px; padding: 3px 6px; font-size: 12px;

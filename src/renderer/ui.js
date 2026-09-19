@@ -305,6 +305,82 @@
     }
   }).catch(() => {});
 
+  /* ---------------- agent inference key (Settings → AI Agent) ----------------
+   * The key never comes back into the renderer: we render its STATUS only, and
+   * the field is cleared the moment it is saved. A key supplied through the
+   * environment is shown but not editable here. */
+  function renderAgentKey(st) {
+    const statusEl = $('agent-key-status');
+    if (!statusEl) return;
+    const input = $('agent-key-input');
+    const clearBtn = $('mi-agent-key-clear');
+    if (!st || !st.configured) {
+      statusEl.textContent = 'TypeSafe (Jev): not configured — the offline decider is used';
+      statusEl.className = 'menu-hint';
+      if (input) { input.disabled = false; input.value = ''; input.placeholder = 'sk-…'; }
+      if (clearBtn) clearBtn.disabled = true;
+      return;
+    }
+    statusEl.textContent = `${st.providerLabel || 'TypeSafe'} (Jev): configured ${st.hint || ''}` +
+      (st.source === 'env' ? ' · from environment' : '');
+    statusEl.className = 'menu-hint key-ok';
+    const editable = st.editable !== false;
+    if (input) {
+      input.value = '';
+      input.disabled = !editable;
+      input.placeholder = editable ? 'replace key…' : 'set by FORGE_TYPESAFE_API_KEY';
+    }
+    if (clearBtn) clearBtn.disabled = !editable;
+  }
+
+  function refreshAgentKey() {
+    return F.agentKeyStatus().then(renderAgentKey).catch(() => {});
+  }
+
+  function agentKeyMsg(text, ok) {
+    const el = $('agent-key-msg');
+    if (!el) return;
+    el.textContent = text || '';
+    el.className = 'menu-hint ' + (ok ? 'key-ok' : 'key-bad');
+  }
+
+  function saveAgentKey() {
+    const input = $('agent-key-input');
+    const btn = $('mi-agent-key-save');
+    const key = input ? input.value.trim() : '';
+    if (!key) { agentKeyMsg('Paste a key first.', false); return; }
+    if (btn) btn.disabled = true;
+    F.agentKeySet('typesafe', key).then((r) => {
+      if (btn) btn.disabled = false;
+      if (input) input.value = ''; // never leave it sitting in the DOM
+      if (r && r.ok) {
+        agentKeyMsg(`Saved ${r.hint || ''} — /task now decides with Jev.`, true);
+        refreshAgentKey();
+      } else {
+        agentKeyMsg((r && r.reason) || 'Could not save the key.', false);
+      }
+    }).catch(() => { if (btn) btn.disabled = false; agentKeyMsg('Could not save the key.', false); });
+  }
+
+  const saveKeyBtn = $('mi-agent-key-save');
+  if (saveKeyBtn) saveKeyBtn.addEventListener('click', saveAgentKey);
+  const keyInput = $('agent-key-input');
+  if (keyInput) keyInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveAgentKey(); });
+  const clearKeyBtn = $('mi-agent-key-clear');
+  if (clearKeyBtn) clearKeyBtn.addEventListener('click', () => {
+    clearKeyBtn.disabled = true;
+    F.agentKeyClear().then((r) => {
+      clearKeyBtn.disabled = false;
+      if (r && r.ok) {
+        agentKeyMsg('Key removed — back to the offline decider.', true);
+        refreshAgentKey();
+      } else {
+        agentKeyMsg((r && r.reason) || 'Could not remove the key.', false);
+      }
+    }).catch(() => { clearKeyBtn.disabled = false; });
+  });
+  refreshAgentKey();
+
   /* ---------------- plugins: ⬇ video / ✎ transcript ---------------- */
   // Persistent progress pill (bottom-right): shows while a job runs.
   let progressEl = null;
