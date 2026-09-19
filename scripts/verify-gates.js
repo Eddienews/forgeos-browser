@@ -11,6 +11,7 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
@@ -22,10 +23,10 @@ const RES = path.join(ROOT, 'results');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function run(cmd, args, timeoutMs) {
+function run(cmd, args, timeoutMs, { env = process.env } = {}) {
   // execFileSync blocks; wrap with a spawn for timeouts.
   const { spawn } = require('child_process');
-  const child = spawn(cmd, args, { cwd: ROOT, windowsHide: true });
+  const child = spawn(cmd, args, { cwd: ROOT, windowsHide: true, env });
   let out = '';
   let done = false;
   const failed = { ok: false, output: '' };
@@ -47,8 +48,8 @@ function readJson(name) {
   catch { return null; }
 }
 
-function passes(results, test) {
-  return !!results && (results.some ? results.some((r) => r.test === test && r.pass) : false);
+function clearJson(name) {
+  try { fs.rmSync(path.join(RES, name), { force: true }); } catch {}
 }
 
 function passesAll(results, test) {
@@ -63,8 +64,10 @@ async function main() {
 
   // 1. unit
   console.log('> Unit tests (engine) ...');
-  await run('node', [path.join('tests', 'run-tests.js')], 60000);
-  const unit = readJson('unit-results.json');
+  clearJson('unit-results.json');
+  const unitRun = await run('node', [path.join('tests', 'run-tests.js')], 60000);
+  const unit = unitRun.ok ? readJson('unit-results.json') : null;
+  if (!unitRun.ok) console.error(unitRun.output);
 
   // 2. e2e
   if (!ELECTRON || !fs.existsSync(ELECTRON)) {
@@ -72,20 +75,32 @@ async function main() {
     process.exit(2);
   }
   console.log('> E2E (real Chromium + local fixtures) ...');
-  await run(ELECTRON, [path.join('tests', 'e2e', 'main.js')], 120000);
-  const e2e = readJson('e2e-results.json');
+  clearJson('e2e-results.json');
+  const e2eRun = await run(ELECTRON, [path.join('tests', 'e2e', 'main.js')], 120000);
+  const e2e = e2eRun.ok ? readJson('e2e-results.json') : null;
+  if (!e2eRun.ok) console.error(e2eRun.output);
 
   // 3. smoke
   console.log('> Smoke (real app, https://example.com) ...');
-  await run(ELECTRON, ['.', '--smoke'], 120000);
+  clearJson('smoke-report.json');
+  const smokeRuntime = fs.mkdtempSync(path.join(os.tmpdir(), 'forge-smoke-runtime-'));
+  let smokeRun;
+  try {
+    smokeRun = await run(ELECTRON, ['.', '--smoke'], 120000, {
+      env: { ...process.env, FORGE_SMOKE_RUNTIME_BASE: smokeRuntime },
+    });
+  } finally {
+    fs.rmSync(smokeRuntime, { recursive: true, force: true });
+  }
   await sleep(1000);
-  const smoke = readJson('smoke-report.json');
+  const smoke = smokeRun.ok ? readJson('smoke-report.json') : null;
+  if (!smokeRun.ok) console.error(smokeRun.output);
 
   const e2eList = e2e ? e2e.results : [];
   const gateTests = {
-    A: { label: 'Minimal browser launches', checks: ['A'] },
-    B: { label: 'Network interception works', checks: ['A'] },
-    C: { label: 'Ad/tracker blocking works', checks: ['A'] },
+    A: { label: 'Minimal browser launches', checks: ['LAUNCH'] },
+    B: { label: 'Network interception works', checks: ['BLOCKING'] },
+    C: { label: 'Ad/tracker blocking works', checks: ['BLOCKING'] },
     D: { label: 'Cookie policy works', checks: ['B', 'C'] },
     E: { label: 'Tracking URL cleanup works', checks: ['D'] },
     F: { label: 'Agent-safe content representation works', checks: ['G'] },
@@ -104,8 +119,9 @@ async function main() {
     let detail;
     if (gate === 'A') {
       const smokeOk = smoke && smoke.code === 0 && smoke.url && smoke.security && smoke.security.label === 'HTTPS';
-      pass = smokeOk && passes(e2eList, 'A');
-      detail = `smoke ${smokeOk && smoke.title ? 'PASS (' + smoke.title + ')' : 'FAIL'} + e2e ${passes(e2eList, 'A') ? 'PASS' : 'FAIL'}`;
+      const e2ePass = passesAll(e2eList, 'LAUNCH');
+      pass = smokeOk && e2ePass;
+      detail = `smoke ${smokeOk && smoke.title ? 'PASS (' + smoke.title + ')' : 'FAIL'} + e2e ${e2ePass ? 'PASS' : 'FAIL'}`;
     } else if (gate === 'J') {
       pass = unit && unit.fail === 0 && e2e && e2e.results.every((r) => r.pass);
       detail = `unit ${unit && unit.fail === 0 ? 'PASS' : 'FAIL'} + e2e all ${e2e ? (e2e.results.every((r) => r.pass) ? 'PASS' : 'FAIL') : 'n/a'}`;
@@ -116,7 +132,7 @@ async function main() {
       detail = `unit ${unitPass ? 'PASS' : 'FAIL'}(${unitGate ? unitGate.total - unitGate.failed : 0}/${unitGate ? unitGate.total : 0}) + e2e ${e2ePass ? 'PASS' : 'FAIL'} + real-app smoke ${smokePass ? 'PASS' : 'FAIL'}`;
     } else {
       const unitPass = unitGate && unitGate.failed === 0 && unitGate.total > 0;
-      const e2ePass = spec.checks.length === 0 ? true : spec.checks.every((t) => passes(e2eList, t));
+      const e2ePass = spec.checks.length === 0 ? true : spec.checks.every((t) => passesAll(e2eList, t));
       pass = unitPass && e2ePass;
       const parts = [];
       if (unitGate && unitGate.total > 0) parts.push(`unit ${unitPass ? 'PASS' : 'FAIL'}(${unitGate.total - unitGate.failed}/${unitGate.total})`);
@@ -154,4 +170,8 @@ async function main() {
   process.exit(all ? 0 : 1);
 }
 
-main().catch((e) => { console.error('verify crashed: ', e); process.exit(2); });
+if (require.main === module) {
+  main().catch((e) => { console.error('verify crashed: ', e); process.exit(2); });
+}
+
+module.exports = { passesAll };

@@ -3,7 +3,7 @@
 /* Gates I/J + Phases 5/7/15/22/23 — modes, storage planning, permissions,
  * event log, fingerprint posture. */
 const { MODES, describe, isValidMode } = require('../../src/engine/privacy-modes');
-const { sessionPlanFor, registrableHost, clearSessionData, STORAGE_TYPES } = require('../../src/engine/storage-manager');
+const { sessionPlanFor, captureTabReloadPlan, registrableHost, clearSessionData, STORAGE_TYPES } = require('../../src/engine/storage-manager');
 const { permissionFor, PERMISSION_DEFAULTS, EXPOSURE_MAP } = require('../../src/engine/fingerprint');
 const { EventLog } = require('../../src/engine/event-log');
 const os = require('os');
@@ -54,6 +54,8 @@ module.exports = [
         const p = sessionPlanFor('https://example.com', mode, false);
         a.ok(p.partition && p.partition.startsWith('forge-tab-'), mode);
         a.strictEqual(p.ephemeral, true, mode);
+        a.strictEqual(p.retainHistory, mode === 'strict', mode);
+        a.strictEqual(p.restoreOnRestart, mode === 'strict', mode);
       }
     },
   },
@@ -64,6 +66,25 @@ module.exports = [
       const p = sessionPlanFor('https://example.com', 'standard', true);
       a.strictEqual(p.dedicated, true);
       a.strictEqual(p.ephemeral, true);
+      a.strictEqual(p.retainHistory, true);
+      a.strictEqual(p.restoreOnRestart, false);
+    },
+  },
+  {
+    name: 'privacy-mode reload plan preserves tab order, urls, active tab, and forget flags',
+    gate: 'I',
+    fn(a) {
+      const tabs = new Map([
+        [7, { id: 7, url: 'https://one.example', forgetOnClose: false }],
+        [9, { id: 9, url: 'https://two.example', forgetOnClose: true }],
+      ]);
+      a.deepStrictEqual(captureTabReloadPlan(tabs, 9), {
+        items: [
+          { url: 'https://one.example', forgetOnClose: false },
+          { url: 'https://two.example', forgetOnClose: true },
+        ],
+        activeIndex: 1,
+      });
     },
   },
   {
@@ -144,6 +165,30 @@ module.exports = [
       a.ok(!line.includes('hunter2s3cret'));
       a.ok(!line.includes('abc.def.ghi'));
       a.ok(line.includes('<redacted>'));
+      const memory = JSON.stringify(log.recent());
+      a.ok(!memory.includes('hunter2s3cret'));
+      a.ok(!memory.includes('abc.def.ghi'));
+      a.ok(memory.includes('<redacted>'));
+    },
+  },
+  {
+    name: 'event log control characters cannot forge additional physical records',
+    gate: 'J',
+    fn(a) {
+      const log = new EventLog(null);
+      const line = log.log('INFO\n[ALLOW]', 'message\r\nforged=1', {
+        value: 'safe\u0000text\u2028tail',
+      });
+      a.strictEqual(line.includes('\n'), false);
+      a.strictEqual(line.includes('\r'), false);
+      a.ok(line.includes('\\u000a'));
+      a.ok(line.includes('\\u000d'));
+      a.ok(line.includes('\\u0000'));
+      a.ok(line.includes('\\u2028'));
+      const entry = log.recent(1)[0];
+      a.strictEqual(entry.tag.includes('\n'), false);
+      a.strictEqual(entry.message.includes('\r'), false);
+      a.ok(entry.fields.value.includes('\\u0000'));
     },
   },
   {
@@ -159,6 +204,60 @@ module.exports = [
         a.ok(content.includes('utm_source'));
       } finally {
         try { fs.unlinkSync(tmp); } catch {}
+      }
+    },
+  },
+  {
+    name: 'event log repairs private permissions and keeps one bounded rotation',
+    gate: 'J',
+    fn(a) {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'forge-log-rotation-test-'));
+      const file = path.join(dir, 'events.log');
+      const rotated = `${file}.1`;
+      try {
+        fs.writeFileSync(file, '', { mode: 0o644 });
+        if (process.platform !== 'win32') fs.chmodSync(file, 0o644);
+        const log = new EventLog(file, 20, { maxFileBytes: 256 });
+        log.log('INFO', 'first-' + 'a'.repeat(80));
+        log.log('INFO', 'second-' + 'b'.repeat(80));
+        log.log('INFO', 'third-' + 'c'.repeat(80));
+        a.strictEqual(fs.existsSync(rotated), true);
+        a.ok(fs.statSync(file).size <= 256);
+        a.ok(fs.statSync(rotated).size <= 256);
+        a.ok(fs.readFileSync(rotated, 'utf8').includes('first-'));
+        a.ok(fs.readFileSync(file, 'utf8').includes('third-'));
+        const health = log.health();
+        a.strictEqual(health.enabled, true);
+        a.strictEqual(health.healthy, true);
+        a.strictEqual(health.maxBytes, 256);
+        a.strictEqual(health.rotated, true);
+        a.strictEqual(Object.hasOwn(health, 'path'), false);
+        if (process.platform !== 'win32') {
+          a.strictEqual(fs.statSync(file).mode & 0o777, 0o600);
+          a.strictEqual(fs.statSync(rotated).mode & 0o777, 0o600);
+        }
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'event log refuses a symbolic-link destination',
+    gate: 'J',
+    fn(a) {
+      if (process.platform === 'win32') return;
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'forge-log-symlink-test-'));
+      const target = path.join(dir, 'target.txt');
+      const link = path.join(dir, 'events.log');
+      try {
+        fs.writeFileSync(target, 'preserve-me', { mode: 0o600 });
+        fs.symlinkSync(target, link);
+        const log = new EventLog(link);
+        log.log('INFO', 'must not follow link');
+        a.strictEqual(fs.readFileSync(target, 'utf8'), 'preserve-me');
+        a.strictEqual(log.health().healthy, false);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
       }
     },
   },

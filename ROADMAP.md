@@ -3,6 +3,16 @@
 Laboratory prototype · Electron/Chromium · local-first · zero telemetry.
 Status legend: [x] done · [~] partial · [ ] planned · (v0.x) target version.
 
+The canonical forward-looking backlog is maintained in `FEATURE_LIST.md`.
+
+---
+
+## v0.10 — Download Center ✅
+
+- [x] Live progress, speed, ETA, and persistent in-session job status.
+- [x] Cancel, retry, open file, reveal file, and open downloads folder actions.
+- [x] Regular browser downloads and approval-gated YouTube jobs in one view.
+
 ---
 
 ## v0.1 — Foundation ✅ (shipped)
@@ -115,8 +125,8 @@ Status legend: [x] done · [~] partial · [ ] planned · (v0.x) target version.
 
 ## Verification ritual (every release)
 
-1. npm test            (unit, 87+)
-2. npm run verify      (gates A–J composed)
+1. npm test            (unit, 120+)
+2. npm run verify      (gates A–K composed)
 3. adblock.turtlecute.org   → target ≥110/132
 4. adblock-tester.com       → target ≥95/100
 5. coveryourtracks.eff.org  → ads Yes / invisible Yes / fingerprint bits recorded

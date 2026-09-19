@@ -8,6 +8,7 @@ results/
 forge-agent-token
 forge-settings.json
 forge-history.json
+forge-bookmarks.json
 forge-allowlist.json
 forge-fp-level
 

@@ -13,10 +13,17 @@
  */
 'use strict';
 
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const path = require('path');
+const { PACKAGE_IGNORE_SOURCE } = require('./package-policy');
 
 const ROOT = path.join(__dirname, '..');
+const manifest = require(path.join(ROOT, 'package.json'));
+const electronVersion = String(manifest.devDependencies && manifest.devDependencies.electron || '').replace(/^[^0-9]*/, '');
+
+if (!/^\d+\.\d+\.\d+/.test(electronVersion)) {
+  throw new Error('package.json must declare a concrete Electron version');
+}
 
 // Parse --platform=... and --arch=...
 const platArg = process.argv.find(a => a.startsWith('--platform='));
@@ -32,9 +39,24 @@ const requestedArchs = archArg
   ? archArg.split('=')[1].split(',').map(s => s.trim()).filter(Boolean)
   : [hostArch];
 
-const IGNORES = [
-  '--ignore="^/(dist|results|logs|downloads|\\.git)"',
-];
+// Invoke the installed packager through the current Node executable instead
+// of spawning `npx.cmd` on Windows. Windows treats .cmd shims as shell
+// scripts, and child_process.execFileSync cannot launch that shim reliably
+// (it returns EINVAL on the hosted runner). Calling the real ESM entrypoint
+// keeps the packaging command identical across Windows, macOS, and Linux.
+const nodeCommand = process.execPath;
+const packagerScript = path.join(
+  ROOT,
+  'node_modules',
+  '@electron',
+  'packager',
+  'bin',
+  'electron-packager.mjs',
+);
+
+function printableArgument(value) {
+  return /^[A-Za-z0-9_./:=,-]+$/.test(value) ? value : JSON.stringify(value);
+}
 
 for (const plat of requestedPlatforms) {
   // Cross-build guard: darwin requires a darwin host
@@ -49,16 +71,18 @@ for (const plat of requestedPlatforms) {
       continue;
     }
     const outName = `ForgeBrowserLab-${plat}-${arch}`;
-    const cmd = [
-      'npx electron-packager . ForgeBrowserLab',
+    const args = [
+      '.',
+      'ForgeBrowserLab',
       `--platform=${plat}`,
       `--arch=${arch}`,
+      `--electron-version=${electronVersion}`,
       '--out=dist',
       '--overwrite',
-      ...IGNORES,
-    ].join(' ');
-    console.log(`> ${cmd}`);
-    execSync(cmd, { cwd: ROOT, stdio: 'inherit' });
+      `--ignore=${PACKAGE_IGNORE_SOURCE}`,
+    ];
+    console.log(`> ${nodeCommand} ${packagerScript} ${args.map(printableArgument).join(' ')}`);
+    execFileSync(nodeCommand, [packagerScript, ...args], { cwd: ROOT, stdio: 'inherit' });
     console.log(`OK: dist/${outName}`);
   }
 }

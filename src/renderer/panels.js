@@ -11,14 +11,20 @@
   let agentView = null;
 
   /* ---------------- section switching ---------------- */
+  function activateSection(name) {
+    const button = document.querySelector(`#panel-nav button[data-sec="${name}"]`);
+    const section = $('sec-' + name);
+    if (!button || !section) return;
+    document.querySelectorAll('#panel-nav button').forEach((x) => x.classList.remove('active'));
+    button.classList.add('active');
+    document.querySelectorAll('.sec').forEach((s) => s.classList.add('hidden'));
+    section.classList.remove('hidden');
+  }
+
   document.querySelectorAll('#panel-nav button').forEach((b) => {
-    b.addEventListener('click', () => {
-      document.querySelectorAll('#panel-nav button').forEach((x) => x.classList.remove('active'));
-      b.classList.add('active');
-      document.querySelectorAll('.sec').forEach((s) => s.classList.add('hidden'));
-      $('sec-' + b.dataset.sec).classList.remove('hidden');
-    });
+    b.addEventListener('click', () => activateSection(b.dataset.sec));
   });
+  F.onPanelSection?.((name) => activateSection(name));
 
   /* ---------------- privacy dashboard ---------------- */
   function renderPrivacy(s) {
@@ -69,27 +75,98 @@
   }
 
   /* ---------------- downloads ---------------- */
+  function formatBytes(value) {
+    const bytes = Number(value);
+    if (!Number.isFinite(bytes) || bytes < 0) return null;
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let amount = bytes;
+    let unit = 0;
+    while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit += 1; }
+    return `${amount >= 10 || unit === 0 ? amount.toFixed(0) : amount.toFixed(1)} ${units[unit]}`;
+  }
+
+  function downloadAction(label, action, className = '') {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    if (className) button.className = className;
+    button.addEventListener('click', action);
+    return button;
+  }
+
   function renderDownloads(list) {
-    const body = $('d-table').querySelector('tbody');
-    body.innerHTML = '';
+    const host = $('download-list');
+    host.innerHTML = '';
+    if (!list.length) {
+      const empty = document.createElement('div');
+      empty.className = 'download-empty';
+      empty.textContent = 'No downloads in this session yet.';
+      host.appendChild(empty);
+      return;
+    }
     for (const d of list) {
-      const tr = document.createElement('tr');
-      if (d.executable) tr.className = 'exec';
-      const cells = [
-        d.executable ? d.filename + ' ⚠ unknown executable' : d.filename,
-        d.source_domain || '—',
-        d.size >= 0 ? (d.size / 1024).toFixed(0) + ' KB' : '—',
-        d.content_type || '—',
-        d.state,
-      ];
-      for (const c of cells) {
-        const td = document.createElement('td');
-        td.textContent = c;
-        tr.appendChild(td);
+      const card = document.createElement('article');
+      card.className = 'download-card' + (d.executable ? ' exec' : '');
+
+      const top = document.createElement('div');
+      top.className = 'download-card-top';
+      const name = document.createElement('div');
+      name.className = 'download-name';
+      name.textContent = (d.filename || (d.pluginKind === 'transcript' ? 'YouTube transcript' : 'Download'))
+        + (d.executable ? ' ⚠ unknown executable' : '');
+      name.title = d.filename || '';
+      const status = document.createElement('span');
+      status.className = `download-status state-${d.state || 'unknown'}`;
+      status.textContent = d.state || 'unknown';
+      top.append(name, status);
+      card.appendChild(top);
+
+      const metaParts = [d.source_domain || null];
+      const received = formatBytes(d.received);
+      const total = formatBytes(d.total) || d.totalLabel || formatBytes(d.size);
+      if (received && total && d.state === 'running') metaParts.push(`${received} / ${total}`);
+      else if (total) metaParts.push(total);
+      if (d.speed) metaParts.push(d.speed);
+      if (d.eta) metaParts.push(`ETA ${d.eta}`);
+      const meta = document.createElement('div');
+      meta.className = 'download-meta';
+      meta.textContent = metaParts.filter(Boolean).join(' · ') || 'Preparing download…';
+      card.appendChild(meta);
+
+      const pct = Number(d.pct);
+      if (Number.isFinite(pct) || d.state === 'running') {
+        const progress = document.createElement('div');
+        progress.className = 'download-progress';
+        const fill = document.createElement('div');
+        fill.className = 'download-progress-fill' + (Number.isFinite(pct) ? '' : ' indeterminate');
+        fill.style.width = Number.isFinite(pct) ? `${Math.max(0, Math.min(100, pct))}%` : '30%';
+        progress.appendChild(fill);
+        card.appendChild(progress);
       }
-      body.appendChild(tr);
+
+      if (d.error || d.warning) {
+        const message = document.createElement('div');
+        message.className = d.error ? 'download-message error' : 'download-message warning';
+        message.textContent = d.error || d.warning;
+        card.appendChild(message);
+      }
+
+      const actions = document.createElement('div');
+      actions.className = 'download-actions';
+      if (d.cancellable) actions.appendChild(downloadAction('Cancel', () => F.downloadCancel(d.id), 'danger'));
+      if (d.retryable) actions.appendChild(downloadAction('Retry', () => F.downloadRetry(d.id)));
+      if (d.path && d.state === 'completed') {
+        if (!d.executable) actions.appendChild(downloadAction('Open', () => F.downloadOpen(d.id)));
+        const revealLabel = F.platform === 'darwin' ? 'Show in Finder'
+          : F.platform === 'win32' ? 'Show in Explorer'
+            : 'Show in folder';
+        actions.appendChild(downloadAction(revealLabel, () => F.downloadReveal(d.id)));
+      }
+      if (actions.childElementCount) card.appendChild(actions);
+      host.appendChild(card);
     }
   }
+  $('downloads-folder').addEventListener('click', () => F.openDownloads());
 
   /* ---------------- bookmarks & history ---------------- */
   function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
@@ -205,8 +282,10 @@
   F.onAgentView(({ agentView: av }) => renderAgent(av));
   F.onLog((payload) => renderLog(payload));
   F.onDownload((d) => {
-    const list = state ? [d, ...(state.downloads || [])].slice(0, 20) : [d];
-    renderDownloads(list);
+    const list = state ? (state.downloads || []).filter((item) => item.id !== d.id) : [];
+    list.unshift(d);
+    if (state) state.downloads = list.slice(0, 20);
+    renderDownloads(list.slice(0, 20));
   });
 
   Promise.all([F.getState(), F.getAgentView()]).then(([s, av]) => {

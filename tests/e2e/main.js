@@ -14,6 +14,7 @@
 const { app, BrowserWindow, session } = require('electron');
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const { FilterEngine } = require('../../src/engine/filter-engine');
@@ -21,9 +22,28 @@ const { EventLog } = require('../../src/engine/event-log');
 const { SessionAdapter } = require('../../src/ext/electron-adapter');
 const { analyzeAgentView, IN_PAGE_SCRIPT } = require('../../src/engine/agent-view');
 const { createPageWebPreferences } = require('../../src/page-web-preferences');
+const sessionStore = require('../../src/engine/session-store');
 
 const PAGES = path.join(__dirname, '..', 'pages');
 const PNG1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+const SILENT_WAV = (() => {
+  const sampleRate = 8000;
+  const dataSize = sampleRate;
+  const wav = Buffer.alloc(44 + dataSize, 128);
+  wav.write('RIFF', 0);
+  wav.writeUInt32LE(36 + dataSize, 4);
+  wav.write('WAVEfmt ', 8);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(sampleRate, 24);
+  wav.writeUInt32LE(sampleRate, 28);
+  wav.writeUInt16LE(1, 32);
+  wav.writeUInt16LE(8, 34);
+  wav.write('data', 36);
+  wav.writeUInt32LE(dataSize, 40);
+  return wav;
+})();
 const results = [];
 let server = null;
 let port = 0;
@@ -44,6 +64,23 @@ function serve() {
     if (req.url.startsWith('/ok.png')) {
       res.writeHead(200, { 'content-type': 'image/png' });
       res.end(PNG1PX);
+      return;
+    }
+    if (req.url.startsWith('/silent.wav')) {
+      res.writeHead(200, { 'content-type': 'audio/wav', 'content-length': SILENT_WAV.length });
+      res.end(SILENT_WAV);
+      return;
+    }
+    if (req.url.startsWith('/autoplay.html')) {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(`<!doctype html>
+        <button id="play" style="position:absolute;left:0;top:0;width:120px;height:60px">Play</button>
+        <audio id="probe" autoplay loop src="/silent.wav"></audio>
+        <script>
+          window.__playEvents = 0;
+          probe.addEventListener('play', () => { window.__playEvents += 1; });
+          play.addEventListener('click', () => probe.play());
+        </script>`);
       return;
     }
     const clean = req.url.split('?')[0].replace(/^\/+/, '');
@@ -121,13 +158,45 @@ async function main() {
   const wc = win.webContents;
 
   /* ---------- Gate A: browser + engine launch ---------- */
-  record('A', 'browser window created, engine + adapter installed', true,
+  record('LAUNCH', 'browser window created, engine + adapter installed', true,
     'electron ' + process.versions.electron + ' / chromium ' + process.versions.chrome);
+
+  /* ---------- Gate K: restored media must wait for the user ---------- */
+  const mediaUrl = `http://127.0.0.1:${p}/autoplay.html`;
+  const restoreDir = fs.mkdtempSync(path.join(os.tmpdir(), 'forge-media-restore-'));
+  sessionStore.captureOpenTabs(new Map([[1, {
+    url: mediaUrl, forgetOnClose: false, restoreOnRestart: true,
+  }]]), restoreDir);
+  const restoredMediaUrl = sessionStore.restoreTabs(restoreDir)[0];
+  sessionStore.clear(restoreDir);
+  fs.rmSync(restoreDir, { recursive: true, force: true });
+  record('K', 'media URL passes through crash-recovery persistence',
+    restoredMediaUrl === mediaUrl, `restored=${restoredMediaUrl || 'none'}`);
+  await loadAndWait(wc, restoredMediaUrl);
+  const playback = await wc.executeJavaScript(`(() => {
+    const media = document.getElementById('probe');
+    return { paused: media.paused, currentTime: media.currentTime, readyState: media.readyState, playEvents: window.__playEvents };
+  })()`);
+  record('K', 'restored media page stays paused until user activation',
+    playback.paused === true && playback.currentTime < 0.05 && playback.readyState >= 2 && playback.playEvents === 0,
+    JSON.stringify(playback));
+
+  wc.focus();
+  wc.sendInputEvent({ type: 'mouseDown', x: 50, y: 30, button: 'left', clickCount: 1 });
+  wc.sendInputEvent({ type: 'mouseUp', x: 50, y: 30, button: 'left', clickCount: 1 });
+  await sleep(300);
+  const activatedPlayback = await wc.executeJavaScript(`(() => {
+    const media = document.getElementById('probe');
+    return { paused: media.paused, currentTime: media.currentTime, playEvents: window.__playEvents };
+  })()`);
+  record('K', 'media plays after an explicit user click',
+    activatedPlayback.paused === false && activatedPlayback.playEvents > 0,
+    JSON.stringify(activatedPlayback));
 
   /* ---------- Test A (Gates B/C): ad/tracker requests blocked ---------- */
   await loadAndWait(wc, `http://127.0.0.1:${p}/ad_tracking.html`);
   const ad = await wc.executeJavaScript('({ adLoaded: !!window.__adLoaded, gaLoaded: !!window.__gaLoaded, okLoaded: !!window.__okLoaded })');
-  record('A', 'advertising request blocked (Test A)',
+  record('BLOCKING', 'advertising request blocked (Test A)',
     ad.okLoaded === true && ad.adLoaded === false && ad.gaLoaded === false, JSON.stringify(ad));
 
   /* ---------- Tests B & C (Gate D): cookies ---------- */

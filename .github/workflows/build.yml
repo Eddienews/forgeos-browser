@@ -67,3 +67,40 @@ jobs:
           name: ForgeBrowserLab-${{ steps.platform.outputs.plat }}-${{ matrix.arch }}
           path: dist/ForgeBrowserLab-portable-${{ steps.platform.outputs.plat }}-${{ matrix.arch }}.zip
           if-no-files-found: warn
+
+  release:
+    name: Publish release downloads
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download packaged archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ForgeBrowserLab-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          shopt -s nullglob
+          assets=(release-assets/*.zip)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "No packaged archives were produced."
+            exit 1
+          fi
+          if ! gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "ForgeOS Browser $TAG_NAME" \
+              --generate-notes
+          fi
+          gh release upload "$TAG_NAME" "${assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber

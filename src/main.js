@@ -22,7 +22,7 @@ const { FilterEngine } = require('./engine/filter-engine');
 const { EventLog } = require('./engine/event-log');
 const { SessionAdapter } = require('./ext/electron-adapter');
 const { PluginRunner } = require('./ext/plugins');
-const { sessionPlanFor, clearSessionData } = require('./engine/storage-manager');
+const { sessionPlanFor, captureTabReloadPlan, clearSessionData } = require('./engine/storage-manager');
 const { MODES, isValidMode } = require('./engine/privacy-modes');
 const { analyzeAgentView, IN_PAGE_SCRIPT, readPageView } = require('./engine/agent-view');
 const { applyAppLevelHardening } = require('./engine/fingerprint-hardening');
@@ -39,6 +39,8 @@ const { cleanUrlString } = require('./engine/url-cleaner');
 const { classifyField } = require('./engine/sensitive-fields');
 const { createPageWebPreferences } = require('./page-web-preferences');
 const { DARK_SCROLLBAR_CSS, supportsPageAppearance } = require('./engine/page-appearance');
+const { isExistingPathInside, upsertDownload } = require('./engine/download-center');
+const { pageProcessingPolicy } = require('./engine/page-processing-policy');
 
 const TOOLBAR_H = 42; // must match renderer CSS --bar-h
 let menuRightInset = 0;
@@ -50,8 +52,12 @@ const RENDERER = path.join(APP_ROOT, 'renderer', 'index.html');
 // keep dirs local to the executable (USB-drive / portable mode).
 // Dev (no asar): project root is fine.
 const IS_PACKAGED = __dirname.includes('app.asar');
+const SMOKE_RUNTIME_BASE = process.argv.includes('--smoke')
+  ? process.env.FORGE_SMOKE_RUNTIME_BASE
+  : null;
 
 function getRuntimeBase() {
+  if (SMOKE_RUNTIME_BASE) return path.resolve(SMOKE_RUNTIME_BASE);
   if (!IS_PACKAGED) return path.dirname(APP_ROOT);
   const exeDir = path.dirname(process.execPath);
   // Portable mode: .portable marker next to the executable
@@ -72,6 +78,7 @@ function getDownloadDir() {
 // app.getPath.  Top-level code before ready uses a no-op fallback.
 let log = { log: () => {} }; // no-op until real init
 let engine = null;
+let agentApi = null;
 const LOG_FILE = getLogFile;
 const DL_DIR = getDownloadDir;
 const RUNTIME_BASE_REF = getRuntimeBase;
@@ -94,7 +101,6 @@ try {
 let modeId = 'standard';
 let chromeWin = null;
 let panelWin = null;
-let agentApiRef = null; // resolved Agent API handle (for confirm flow)
 let tabSeq = 0;
 const tabs = new Map();   // id -> tab
 const sessions = new Map(); // partitionKey -> { session, adapter }
@@ -102,12 +108,17 @@ let activeTabId = null;
 const downloads = [];
 const plugins = new PluginRunner({ log });
 
+function persistOpenTabs() {
+  try { return sessionStore.captureOpenTabs(tabs, getRuntimeBase()); }
+  catch { return 0; }
+}
+
 function getSessionFor(partitionKey) {
   if (partitionKey == null) {
     let e = sessions.get('__default__');
     if (!e) {
       const s = session.defaultSession;
-      e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r) }) };
+      e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, downloadsDir: DL_DIR(), getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r) }) };
       sessions.set('__default__', e);
     }
     return e;
@@ -115,16 +126,91 @@ function getSessionFor(partitionKey) {
   let e = sessions.get(partitionKey);
   if (!e) {
     const s = session.fromPartition(partitionKey);
-    e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r) }) };
+    e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, downloadsDir: DL_DIR(), getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r) }) };
     sessions.set(partitionKey, e);
   }
   return e;
 }
 
 function pushDownload(record) {
-  downloads.unshift(record);
-  if (downloads.length > 50) downloads.pop();
-  sendToChrome('forge:download', record);
+  const saved = upsertDownload(downloads, record, 50);
+  if (saved) sendToChrome('forge:download', saved);
+  return saved;
+}
+
+function pluginDownloadRecord(event, context) {
+  if (!event || !event.jobId) return null;
+  const state = event.state === 'done' ? 'completed'
+    : event.state === 'progress' ? 'running'
+      : event.state;
+  let sourceDomain = '';
+  try { sourceDomain = new URL(context.url).hostname; } catch {}
+  const safeFiles = Array.isArray(event.files)
+    ? event.files.filter((file) => isExistingPathInside(DL_DIR(), file))
+    : [];
+  const preferred = safeFiles.find((file) => context.kind === 'transcript' ? /\.txt$/i.test(file) : /\.mp4$/i.test(file))
+    || safeFiles[0]
+    || null;
+  let size = null;
+  if (preferred) {
+    try { size = fs.statSync(preferred).size; } catch {}
+  }
+  return pushDownload({
+    id: event.jobId,
+    kind: 'plugin',
+    pluginKind: event.kind || context.kind,
+    filename: preferred ? path.basename(preferred) : context.label,
+    source_domain: sourceDomain,
+    url: context.url,
+    state,
+    pct: state === 'completed' ? 100 : event.pct,
+    speed: event.speed || null,
+    eta: event.eta || null,
+    totalLabel: event.total || null,
+    size,
+    content_type: context.kind === 'transcript' ? 'text/plain' : 'video/mp4',
+    path: preferred,
+    files: safeFiles,
+    error: event.error || null,
+    warning: event.warning || null,
+    cancellable: state === 'running',
+    retryable: state === 'error' || state === 'cancelled',
+    executable: false,
+  });
+}
+
+async function runPluginJob(kind, pageUrl, label) {
+  const context = {
+    kind,
+    url: pageUrl,
+    label: label || (kind === 'transcript' ? 'YouTube transcript' : 'YouTube video'),
+  };
+  const result = await plugins.run(
+    kind,
+    pageUrl,
+    async () => {
+      if (!chromeWin) return { approved: false };
+      const response = await dialog.showMessageBox(chromeWin, {
+        type: 'question',
+        title: 'ForgeOS Browser — approval required',
+        message: `Plugin wants to ${kind === 'transcript' ? 'fetch a transcript' : 'download the video'} from this page`,
+        detail: pageUrl,
+        buttons: ['Deny', 'Approve'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      const approved = response.response === 1 && !response.checkboxChecked;
+      log.log(approved ? 'ALLOW' : 'DENY', 'plugin approval ' + (approved ? 'granted' : 'denied'), { url: pageUrl.slice(0, 200), kind });
+      return { approved };
+    },
+    (event) => {
+      pluginDownloadRecord(event, context);
+      sendToChrome('forge:plugin-event', event);
+    }
+  );
+  if (result.state !== 'started') pluginDownloadRecord(result, context);
+  return result;
 }
 
 /* ------------------------------------------------------------------ */
@@ -148,7 +234,10 @@ function createTab(url = 'about:blank', opts = {}) {
   const tab = {
     id, view, wc, adapter, partition: plan.partition,
     url, title: '', history: [], index: -1,
+    modeId,
     forgetOnClose: !!opts.forgetOnClose,
+    retainHistory: plan.retainHistory,
+    restoreOnRestart: plan.restoreOnRestart,
     certError: false,
     pageCounts: { ads: 0, trackers: 0, analytics: 0, thirdParty: 0, params: 0, cookies: 0 },
     lastAgentView: null,
@@ -162,30 +251,6 @@ function createTab(url = 'about:blank', opts = {}) {
 
   wc.on('did-start-navigation', (_e, url, isInPlace, isMainFrame) => {
     if (isMainFrame && !isInPlace) tab.certError = false;
-  });
-
-  // Agent approval page decision channel: the page attempts to navigate to
-  // forge-decision://approve|deny?confirm=<id>. Page tabs have NO preload by
-  // design, so this navigation interception is how the human's click reaches
-  // the main process without weakening that rule.
-  wc.on('will-navigate', (e, url) => {
-    if (!url.startsWith('forge-decision://')) return;
-    e.preventDefault();
-    try {
-      const u = new URL(url);
-      const action = u.hostname || u.pathname.replace(/^\/+/, '');
-      const confirmId = u.searchParams.get('confirm') || '';
-      const approve = action === 'approve';
-      const ok = agentConfirm(confirmId, approve);
-      log.log('INFO', 'agent decision received', { approve, applied: ok });
-      // On DENY, clear the approval page (nothing else will replace it).
-      // On APPROVE the agent's navigation already replaces it — do not race it.
-      if (!approve) {
-        setTimeout(() => { try { wc.loadURL('about:blank').catch(() => {}); } catch {} }, 300);
-      }
-    } catch (err) {
-      log.log('ERROR', 'agent decision failed', { error: String(err).slice(0, 120) });
-    }
   });
 
   wc.on('did-navigate', (_e, url, httpCode) => {
@@ -211,13 +276,13 @@ function createTab(url = 'about:blank', opts = {}) {
     tab.index = tab.history.length - 1;
     tab.pageCounts = adapter.takeDelta();
     log.log('INFO', 'navigated', { url: url.slice(0, 300), httpCode });
-    bh.addHistory({ url, title: wc.getTitle() });
+    if (tab.retainHistory) bh.addHistory({ url, title: wc.getTitle() });
     injectPageAppearance(tab, url);
     injectCosmetic(tab, url);
     injectDomRemoval(tab, url);
     // Crash recovery: persist open tabs on every navigation so a force-kill
     // or crash at any moment can restore the last good state.
-    try { sessionStore.captureOpenTabs(tabs, getRuntimeBase()); } catch {}
+    persistOpenTabs();
     sendState();
   });
 
@@ -228,6 +293,8 @@ function createTab(url = 'about:blank', opts = {}) {
   let domRemovalTimer = null;
   wc.on('did-finish-load', () => {
     if (domRemovalTimer) clearTimeout(domRemovalTimer);
+    const url = wc.getURL();
+    if (!pageProcessingPolicy(url).allowDomRemoval) return;
     domRemovalTimer = setTimeout(() => injectDomRemoval(tab, wc.getURL()), 1200);
   });
 
@@ -236,10 +303,13 @@ function createTab(url = 'about:blank', opts = {}) {
     tab.history = tab.history.slice(0, tab.index + 1);
     tab.history.push(url);
     tab.index = tab.history.length - 1;
+    if (tab.retainHistory) bh.addHistory({ url, title: wc.getTitle() });
+    persistOpenTabs();
     sendState();
   });
 
   wc.on('did-finish-load', () => {
+    if (!pageProcessingPolicy(wc.getURL()).allowAutomaticAgentView) return;
     refreshAgentView(tab).then(() => sendState()).catch(() => {});
   });
 
@@ -287,11 +357,13 @@ async function refreshAgentView(tab) {
       });
     }
     sendToChrome('forge:agent-view', { tabId: tab.id, agentView: av });
+    return av;
   } catch (e) {
     // Some pages (devtools, crashes) cannot be extracted; the agent view is
     // still produced with untrusted:true and whatever is known.
     tab.lastAgentView = analyzeAgentView({ url: tab.url, title: tab.title }, { trackersBlocked: tab.pageCounts, modeId });
     sendToChrome('forge:agent-view', { tabId: tab.id, agentView: tab.lastAgentView, error: String(e).slice(0, 120) });
+    return tab.lastAgentView;
   }
 }
 
@@ -319,10 +391,10 @@ function switchTab(id, { focus = true } = {}) {
   sendState();
 }
 
-async function closeTab(id) {
+async function closeTab(id, { notify = true, persist = true } = {}) {
   const tab = tabs.get(id);
   if (!tab) return;
-  if (tab.forgetOnClose || modeId === 'ephemeral' || tab.partition) {
+  if (tab.forgetOnClose || tab.modeId === 'ephemeral' || tab.partition) {
     try { await clearSessionData(tab.adapter.session); } catch {}
     log.log('INFO', 'site data cleared on tab close', { url: tab.url.slice(0, 200), partition: tab.partition || 'default' });
   }
@@ -334,11 +406,70 @@ async function closeTab(id) {
     const next = [...tabs.keys()].pop();
     if (next != null) switchTab(next, { focus: false });
   }
+  if (persist) persistOpenTabs();
+  if (notify) sendState();
+}
+
+async function changePrivacyMode(nextModeId) {
+  if (!isValidMode(nextModeId)) return { ok: false, error: 'invalid privacy mode' };
+  if (nextModeId === modeId) return { ok: true, mode: modeId, reloadedTabs: 0 };
+
+  const previousModeId = modeId;
+  const oldTabs = [...tabs.values()];
+  const reloadPlan = captureTabReloadPlan(tabs, activeTabId);
+  const replacements = [];
+  modeId = nextModeId;
+
+  try {
+    for (const item of reloadPlan.items) {
+      replacements.push(createTab(item.url, { forgetOnClose: item.forgetOnClose }));
+    }
+  } catch (error) {
+    for (const tab of replacements) await closeTab(tab.id, { notify: false, persist: false });
+    modeId = previousModeId;
+    for (const tab of oldTabs) tab.adapter.setMode(tab.modeId);
+    sendState();
+    log.log('ERROR', 'privacy mode change failed', { from: previousModeId, to: nextModeId, error: String(error).slice(0, 160) });
+    return { ok: false, error: 'unable to recreate tabs safely' };
+  }
+
+  if (replacements.length) {
+    const selected = replacements[reloadPlan.activeIndex >= 0 ? reloadPlan.activeIndex : 0];
+    switchTab(selected.id, { focus: false });
+  }
+  for (const tab of oldTabs) await closeTab(tab.id, { notify: false, persist: false });
+  persistOpenTabs();
+  log.log('INFO', 'privacy mode changed', {
+    from: previousModeId, to: nextModeId, reloadedTabs: replacements.length,
+  });
   sendState();
+  return { ok: true, mode: modeId, reloadedTabs: replacements.length };
 }
 
 function activeTab() {
   return tabs.get(activeTabId) || null;
+}
+
+async function approveAgentNavigation(url) {
+  if (!chromeWin || chromeWin.isDestroyed()) {
+    log.log('DENY', 'agent navigation approval unavailable', { reason: 'no browser window' });
+    return false;
+  }
+  const result = await dialog.showMessageBox(chromeWin, {
+    type: 'warning',
+    title: 'ForgeOS Browser — agent navigation request',
+    message: 'An external agent wants to navigate the active tab.',
+    detail: `Destination:\n${String(url).slice(0, 1000)}\n\nAllow only if you requested this navigation.`,
+    buttons: ['Deny', 'Allow navigation'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  });
+  const allowed = result.response === 1;
+  log.log(allowed ? 'ALLOW' : 'DENY', 'agent navigation human decision', {
+    url: String(url).slice(0, 300), decision: allowed ? 'allow' : 'deny',
+  });
+  return allowed;
 }
 
 /* ------------------------------------------------------------------ */
@@ -373,19 +504,15 @@ function sendToChrome(channel, payload) {
   for (const w of targets) w.webContents.send(channel, payload);
 }
 
-/** Resolve a pending agent navigation (approve=boolean). Mirrors the API
- * confirmation logic: the confirm_id must still be pending and unexpired. */
-function agentConfirm(confirmId, approve) {
-  try {
-    const api = agentApiRef;
-    if (!api || typeof api.resolveConfirm !== 'function') return false;
-    return api.resolveConfirm(confirmId, approve);
-  } catch { return false; }
-}
-
 /** Phase 14/17 control-center window: privacy, agent view, log, downloads. */
-function togglePanels() {
+function togglePanels(section = null) {
   if (panelWin && !panelWin.isDestroyed()) {
+    if (section) {
+      panelWin.show();
+      panelWin.focus();
+      panelWin.webContents.send('forge:panel-section', section);
+      return;
+    }
     panelWin.close();
     panelWin = null;
     return;
@@ -403,6 +530,11 @@ function togglePanels() {
     },
   });
   panelWin.loadFile(path.join(APP_ROOT, 'renderer', 'panels.html'));
+  if (section) {
+    panelWin.webContents.once('did-finish-load', () => {
+      if (panelWin && !panelWin.isDestroyed()) panelWin.webContents.send('forge:panel-section', section);
+    });
+  }
   panelWin.on('closed', () => { panelWin = null; });
   panelWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   sendState();
@@ -445,6 +577,9 @@ function buildState() {
     totals,
     downloads: downloads.slice(0, 20),
     recentLogs: log.recent(100),
+    audit: typeof log.health === 'function' ? log.health() : {
+      enabled: false, healthy: false, bytes: 0, maxBytes: 0, rotated: false,
+    },
     privacyDefaults: require('./engine/fingerprint').PERMISSION_DEFAULTS,
   };
 }
@@ -490,14 +625,11 @@ function registerIpc() {
     layoutActiveView();
     return true;
   });
-  ipcMain.handle('forge:set-mode', (_e, m) => {
-    if (!isValidMode(m)) return false;
-    modeId = m;
-    log.log('INFO', 'privacy mode changed', { mode: m });
-    sendState();
+  ipcMain.handle('forge:set-mode', (_e, m) => changePrivacyMode(m));
+  ipcMain.handle('forge:toggle-panel', (_e, section) => {
+    togglePanels(section === 'downloads' ? 'downloads' : null);
     return true;
   });
-  ipcMain.handle('forge:toggle-panel', () => { togglePanels(); return true; });
   ipcMain.handle('forge:clear-session', async () => {
     log.log('INFO', 'clear session requested');
     const todo = new Set(sessions.values());
@@ -511,6 +643,7 @@ function registerIpc() {
     }
     downloads.length = 0;
     bh.clearHistory();
+    sessionStore.clear(getRuntimeBase());
     log.log('INFO', 'clear session complete', { cookiesRemoved: removed });
     sendState();
     return true;
@@ -519,6 +652,8 @@ function registerIpc() {
     const t = activeTab();
     if (!t) return false;
     t.forgetOnClose = !!on;
+    t.restoreOnRestart = t.retainHistory && !t.forgetOnClose;
+    persistOpenTabs();
     log.log('INFO', 'forget-on-close ' + (on ? 'enabled' : 'disabled'), { url: t.url.slice(0, 200) });
     sendState();
     return true;
@@ -569,30 +704,35 @@ function registerIpc() {
     if (!t || !t.url || !/^https?:/i.test(t.url)) {
       return { state: 'error', error: 'Open a video page first.' };
     }
-    const pageUrl = t.url;
-    return plugins.run(
-      kind,
-      pageUrl,
-      async () => {
-        if (!chromeWin) return { approved: false };
-        const r = await dialog.showMessageBox(chromeWin, {
-          type: 'question',
-          title: 'Forge Browser Lab — approval required',
-          message: `Plugin wants to ${kind === 'transcript' ? 'fetch a transcript' : 'download the video'} from this page`,
-          detail: pageUrl,
-          buttons: ['Deny', 'Approve'],
-          defaultId: 0,
-          cancelId: 0,
-          noLink: true,
-        });
-        const approved = r.response === 1 && !r.checkboxChecked;
-        log.log(approved ? 'ALLOW' : 'DENY', 'plugin approval ' + (approved ? 'granted' : 'denied'), { url: pageUrl.slice(0, 200), kind });
-        return { approved };
-      },
-      (evt) => sendToChrome('forge:plugin-event', evt)
-    );
+    return runPluginJob(kind, t.url, t.title);
   });
   ipcMain.handle('forge:plugin-cancel', (_e, jobId) => plugins.cancel(jobId));
+  ipcMain.handle('forge:download-cancel', (_e, id) => {
+    if (plugins.cancel(id)) return true;
+    for (const entry of sessions.values()) {
+      if (entry.adapter.cancelDownload(id)) return true;
+    }
+    return false;
+  });
+  ipcMain.handle('forge:download-retry', (_e, id) => {
+    const record = downloads.find((item) => item.id === id);
+    if (!record || record.kind !== 'plugin' || !record.retryable || !record.url) {
+      return { state: 'error', error: 'This download cannot be retried.' };
+    }
+    return runPluginJob(record.pluginKind, record.url, record.filename);
+  });
+  ipcMain.handle('forge:download-open', async (_e, id) => {
+    const record = downloads.find((item) => item.id === id);
+    if (!record || record.executable || !isExistingPathInside(DL_DIR(), record.path)) return false;
+    const error = await shell.openPath(record.path);
+    return !error;
+  });
+  ipcMain.handle('forge:download-reveal', (_e, id) => {
+    const record = downloads.find((item) => item.id === id);
+    if (!record || !isExistingPathInside(DL_DIR(), record.path)) return false;
+    shell.showItemInFolder(record.path);
+    return true;
+  });
   // Settings: load all / patch subset; the adapter reads them live per request.
   ipcMain.handle('forge:settings-get', () => settings.all());
   ipcMain.handle('forge:settings-set', (_e, patch) => {
@@ -846,31 +986,15 @@ app.whenReady().then(() => {
       if (!t) return { error: 'no active tab', untrusted: true };
       return refreshAgentView(t); // same pipeline as the panels; marks untrusted
     },
+    approveNavigate: (url) => approveAgentNavigation(url),
     navigate: (url) => new Promise((resolve, reject) => {
       const t = activeTab();
       if (!t) return reject(new Error('no active tab'));
       navigateIn(t, url);
       resolve();
     }),
-    // Human-approval banner: when the agent requests a navigation, show the
-    // approval page IN the active tab (native layer — always visible). The
-    // human Approves/Denies there; authority visible.
-    onConfirmRequest: (req) => {
-      try {
-        const t = activeTab();
-        if (t && !t.wc.isDestroyed()) {
-          const page = path.join(APP_ROOT, 'renderer', 'agent-approval.html');
-          const q = `?confirm=${encodeURIComponent(req.confirmId)}&url=${encodeURIComponent(req.url)}&expires=${req.expiresInMs || 30000}`;
-          t.wc.loadURL(`file://${page}${q}`).catch(() => {});
-          log.log('INFO', 'agent approval page shown', { url: req.url.slice(0, 120) });
-        }
-      } catch (e) {
-        log.log('ERROR', 'agent approval page failed', { error: String(e).slice(0, 120) });
-      }
-      log.log('INFO', 'agent navigation awaiting human approval', { url: req.url.slice(0, 200) });
-    },
   }).then((api) => {
-    agentApiRef = api;
+    agentApi = api;
     log.log('INFO', 'agent api listening', { url: `http://127.0.0.1:${api.port}`, tokenFile: api.tokenFile });
   })
     .catch((e) => log.log('ERROR', 'agent api failed to start', { error: String(e).slice(0, 150) }));
@@ -935,6 +1059,7 @@ function injectCosmetic(tab, url) {
 function injectDomRemoval(tab, url) {
   if (!cosmetic || !tab || !url.startsWith('http')) return;
   try {
+    if (!pageProcessingPolicy(url).allowDomRemoval) return;
     if (settings.all().blockAds === false) return;
     let host = '';
     try { host = new URL(url).hostname; } catch {}
@@ -1038,8 +1163,18 @@ async function runSmoke() {
 app.on('window-all-closed', () => {
   // Persist open tabs for next launch (crash recovery) unless quitting
   // is explicitly "clean" (forget-mode handled per-tab already).
-  if (tabs.size) sessionStore.captureOpenTabs(tabs, getRuntimeBase());
+  if (tabs.size) persistOpenTabs();
+  else sessionStore.clear(getRuntimeBase());
   app.quit();
+});
+
+app.on('before-quit', () => {
+  const api = agentApi;
+  agentApi = null;
+  if (!api) return;
+  api.stop()
+    .then(({ tokenRemoved }) => log.log('INFO', 'agent api stopped', { tokenRemoved }))
+    .catch((error) => log.log('ERROR', 'agent api stop failed', { error: String(error).slice(0, 160) }));
 });
 
 // Explicitly disable anything that could phone home from this project.

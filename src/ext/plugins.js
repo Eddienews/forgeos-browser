@@ -18,6 +18,7 @@ const {
   buildYtDlpArgs,
   classifyYtDlpError,
   extractVideoId,
+  parseYtDlpProgress,
   resolveToolchain,
   resolveYtDlp,
   toolchainStatus,
@@ -149,12 +150,16 @@ class PluginRunner {
       if (isErrorStream) stderrLines.push(clean);
       const marker = clean.match(/^FORGE_OUTPUT:(.+)$/);
       if (marker) outputPaths.push(marker[1].trim());
-      const progress = clean.match(/FORGE_PROGRESS:\s*(\d+(?:\.\d+)?)%/) || clean.match(/\b(\d+(?:\.\d+)?)%/);
+      const parsedProgress = parseYtDlpProgress(clean);
+      const progress = parsedProgress || (() => {
+        const fallback = clean.match(/\b(\d+(?:\.\d+)?)%/);
+        return fallback ? { pct: Number(fallback[1]), speed: null, eta: null, total: null } : null;
+      })();
       if (progress) {
-        const pct = Number(progress[1]);
+        const pct = Number(progress.pct);
         if (Number.isFinite(pct) && pct !== lastPct) {
           lastPct = pct;
-          emit({ jobId, kind, state: 'progress', pct });
+          emit({ jobId, kind, state: 'progress', ...progress, pct });
         }
       }
     };

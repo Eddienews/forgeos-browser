@@ -8,7 +8,7 @@
 </head>
 <body class="panel">
   <header>
-    <h1>FORGE PRIVACY &amp; AGENT</h1>
+    <h1>FORGEOS CONTROL CENTER</h1>
     <span id="panel-mode" class="badge">standard</span>
   </header>
 
@@ -78,13 +78,17 @@
     <p class="note">History is session-scoped and capped at 500 entries. Cleared by "Clear session".</p>
   </section>
 
-  <!-- Downloads (Phase 13) -->
+  <!-- Download Center -->
   <section id="sec-downloads" class="sec hidden">
-    <table id="d-table">
-      <thead><tr><th>file</th><th>source</th><th>size</th><th>type</th><th>state</th></tr></thead>
-      <tbody></tbody>
-    </table>
-    <p class="note">Downloads go to <code>ForgeBrowserLab/downloads/</code>. Nothing is ever executed automatically.</p>
+    <div class="download-center-head">
+      <div>
+        <h2>Download Center</h2>
+        <p class="note">Live transfers and files from this browser session.</p>
+      </div>
+      <button id="downloads-folder">Open downloads folder</button>
+    </div>
+    <div id="download-list" class="download-list"></div>
+    <p class="note">Files stay in the ForgeOS Browser downloads directory. Nothing is executed automatically.</p>
   </section>
 
   <!-- Mock agent demo (Phase 25) -->

@@ -23,4 +23,12 @@ module.exports = [
       a.ok(!Object.prototype.hasOwnProperty.call(prefs, 'enableRemoteModule'));
     },
   },
+  {
+    name: 'page views require user activation before media autoplay',
+    gate: 'K',
+    fn(a) {
+      const prefs = createPageWebPreferences({ partition: 'test' });
+      a.strictEqual(prefs.autoplayPolicy, 'document-user-activation-required');
+    },
+  },
 ];

@@ -47,19 +47,35 @@ let nonce = 0;
 
 /**
  * Which session should a tab use?
- * @returns {{ partition: string|null, ephemeral: boolean, dedicated: boolean }}
+ * @returns {{ partition: string|null, ephemeral: boolean, dedicated: boolean,
+ *   retainHistory: boolean, restoreOnRestart: boolean }}
  *   partition null → Electron default session (persistent, normal browser jar)
  */
 function sessionPlanFor(host, modeId, forgetOnClose = false) {
   const mode = MODES[modeId] || MODES.standard;
   const useDedicated = forgetOnClose || mode.perSitePartitions || mode.ephemeral;
+  const retention = {
+    retainHistory: mode.retainHistory,
+    restoreOnRestart: mode.retainHistory && !forgetOnClose,
+  };
   if (!useDedicated) {
-    return { partition: null, ephemeral: false, dedicated: false };
+    return { partition: null, ephemeral: false, dedicated: false, ...retention };
   }
   nonce += 1;
   const key = (host ? registrableHost(host).replace(/[^a-z0-9.-]/g, '-') : 'tab') + '-' + nonce;
   // Never persisted: in-memory session partition, wiped on tab close.
-  return { partition: `forge-tab-${key}`, ephemeral: true, dedicated: true };
+  return { partition: `forge-tab-${key}`, ephemeral: true, dedicated: true, ...retention };
+}
+
+/** Capture only the serializable state needed to reopen tabs under a new mode. */
+function captureTabReloadPlan(tabs, activeTabId) {
+  const items = [];
+  let activeIndex = -1;
+  for (const tab of tabs.values()) {
+    if (tab.id === activeTabId) activeIndex = items.length;
+    items.push({ url: tab.url || 'about:blank', forgetOnClose: !!tab.forgetOnClose });
+  }
+  return { items, activeIndex };
 }
 
 /**
@@ -84,4 +100,7 @@ async function clearSessionData(session) {
   return removed;
 }
 
-module.exports = { sessionPlanFor, clearSessionData, hostOf, registrableHost, STORAGE_TYPES };
+module.exports = {
+  sessionPlanFor, captureTabReloadPlan, clearSessionData,
+  hostOf, registrableHost, STORAGE_TYPES,
+};

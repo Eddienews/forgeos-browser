@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Build](https://github.com/Eddienews/forgeos-browser/actions/workflows/build.yml/badge.svg)](https://github.com/Eddienews/forgeos-browser/actions)
-[![Tests](https://img.shields.io/badge/tests-112%20passing-brightgreen)](https://github.com/Eddienews/forgeos-browser/blob/main/tests/run-tests.js)
+[![Tests](https://img.shields.io/badge/tests-169%20passing-brightgreen)](https://github.com/Eddienews/forgeos-browser/blob/main/tests/run-tests.js)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20·%20macOS%20·%20Linux%20·%20Pi-blue)](https://github.com/Eddienews/forgeos-browser/releases)
 [![Telemetry](https://img.shields.io/badge/telemetry-zero-orange)](https://github.com/Eddienews/forgeos-browser/blob/main/PRIVACY_MODEL.md)
 
@@ -24,10 +24,10 @@ Mainstream browsers treat AI as a surface feature. ForgeOS Browser treats the ag
 - 🧬 **Fingerprint posture** — generic browser UA and restrictive permission defaults; engine-exposed entropy is measured and documented, with page shims intentionally disabled pending a sandbox-safe design
 - 🍪 **Cookie policy** — third-party cookies blocked, per-mode storage isolation (Standard/Strict/Ephemeral)
 - 🚫 **Prompt-injection scanner** — advisory-only heuristic, never modifies page content
-- 🔌 **Agent API** — localhost-only, capability-token-gated HTTP surface (read/navigate/full scopes, TTL, rate-limited) for external agents
+- 🔌 **Agent API** — localhost-only, capability-token-gated HTTP surface (read/navigate/full scopes, TTL, rotation, private token storage, rate limits, bounded private request audit) for external agents
 - ⚙️ **Trust presets** — one decision releases a whole provider ecosystem (Google, Microsoft, Apple, Social), reversible
 - 🔐 **No-credentials policy** — identity-provider sign-in is intercepted with an honest notice; credentials stay in your main browser
-- 🕵️ **Zero telemetry** — nothing leaves the machine, ever
+- 🕵️ **Zero telemetry** — nothing leaves the machine, ever; Settings shows only aggregate local-audit health
 
 ## Security model
 
@@ -51,7 +51,7 @@ Measured vs Brave/Chrome/Edge on the same machine (see [results/BENCHMARK.md](re
 ```bash
 npm install
 npm start                 # dev
-npm test                  # 112 unit tests
+npm test                  # 169 unit tests
 npm run package           # electron-packager for host platform
 node scripts/make-portable.js   # portable zip
 # cross-platform: node scripts/package.js --platform=linux,darwin --arch=x64,arm64
@@ -124,8 +124,9 @@ npm run package -- --platform=linux --arch=arm64
 ### CI builds (no local compile)
 
 Every version tag (`v0.8.7`, …) triggers GitHub Actions to build all 5 targets:
-Windows x64 · macOS x64/arm64 · Linux x64/arm64.
-Download from: **Actions → latest run → Artifacts**.
+Windows x64 · macOS x64/arm64 · Linux x64/arm64. The workflow publishes the
+portable ZIPs to the tag's **GitHub Release**; the original Actions artifacts
+remain available for CI inspection.
 
 ### Version policy
 
@@ -134,6 +135,22 @@ the build is distributed. Fixes use a patch increment, features use a minor
 increment, and incompatible releases use a major increment. The current version
 is always visible in the browser toolbar and in Settings. Unit verification
 fails if `package.json` and `package-lock.json` do not match.
+
+### Public ad-block benchmarks
+
+Run the non-gating live benchmark against TurtleCute, AdBlock Tester, a broad
+186-target test, Can You Block It, and the archived d3ward reference:
+
+```bash
+npm run test:adblock:public
+npm run test:adblock:public -- --target=turtlecute
+```
+
+The benchmark requires internet access and runs every site in a fresh in-memory
+session with the same network engine, filter lists, cosmetic filtering, and
+page sandbox as ForgeOS Browser. It never reads or modifies the user's browser
+profile. Public scores can change independently of the repository, so they are
+reported for regression analysis but do not gate CI.
 
 ## Architecture
 
@@ -146,7 +163,7 @@ src/
 │   ├── fingerprint*.js       exposure map + UA/permission posture
 │   ├── agent-view.js         untrusted-context boundary
 │   ├── credential-policy.js  no-credentials gate
-│   └── ...                 17 modules total
+│   └── ...                 testable browser policy and state modules
 ├── ext/
 │   ├── electron-adapter.js  webRequest + cookie policy wiring
 │   ├── agent-api.js         localhost capability API
@@ -154,6 +171,8 @@ src/
 │   └── ytdlp-tools.js       discovery, commands, output conversion
 └── renderer/              single-bar walnut-glass UI
 ```
+
+The prioritized product backlog lives in [`FEATURE_LIST.md`](FEATURE_LIST.md).
 
 ## Disclaimer
 
