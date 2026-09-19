@@ -25,6 +25,64 @@ const page = (over = {}) => ({
 
 module.exports = [
   {
+    name: 'a decider that refuses explains itself to the caller',
+    gate: 'L',
+    fn: async (assert) => {
+      // The loop used to flatten every refusal into 'the decider returned no
+      // operation', discarding the reason the model gave ('no listed element
+      // serves the goal'). That reason is the whole value of a refusal.
+      const p = fakePage([page()]);
+      const out = await runGoal({
+        goal: 'read the news',
+        observe: p.observe,
+        act: p.act,
+        decide: async () => ({ operation: null, reasoning: 'the model judged no listed element serves the goal ("(none)" for CLICK)' }),
+      }, { settleMs: 0 });
+      assert.strictEqual(out.status, 'stalled');
+      assert.ok(/no listed element serves the goal/.test(out.note),
+        `the refusal must survive to the caller, got: ${out.note}`);
+      assert.strictEqual(p.acted.length, 0, 'a refusal never acts');
+    },
+  },
+  {
+    name: 'the goal travels with every observation the decider receives',
+    gate: 'L',
+    fn: async (assert) => {
+      // Regression, and the worst bug this loop had: it passed
+      // {snapshot, summary, history, step} to the decider but NOT the goal, so a
+      // decider that reasons about the goal built its state with "GOAL: " empty
+      // and answered as if nothing had been asked — live, the model pressed a
+      // hamburger menu when told to open the news section, and declared goals
+      // met on pages that did not mention them. A decider cannot serve a goal it
+      // is not told.
+      const seen = [];
+      let n = 1;
+      await runGoal({
+        goal: 'buy a ticket for the museum',
+        observe: async () => page({ text: `conteúdo ${n}` }),
+        act: async () => { n += 1; return { ok: true }; },
+        decide: async (observation) => { seen.push(observation.goal); return { operation: 'DONE' }; },
+      }, { settleMs: 0 });
+      assert.ok(seen.length > 0, 'the decider must have run');
+      assert.strictEqual(seen[0], 'buy a ticket for the museum', 'the first observation must carry the goal');
+
+      // And on every step, not only the first.
+      const goals = [];
+      let m = 1;
+      await runGoal({
+        goal: 'leia o preço',
+        observe: async () => page({ text: `passo ${m}` }),
+        act: async () => { m += 1; return { ok: true }; },
+        decide: async (observation) => {
+          goals.push(observation.goal);
+          return goals.length >= 2 ? { operation: 'DONE' } : { operation: 'SCROLL_DOWN' };
+        },
+      }, { settleMs: 0 });
+      assert.ok(goals.length >= 2);
+      assert.ok(goals.every((g) => g === 'leia o preço'), 'every step carries the goal');
+    },
+  },
+  {
     name: 'DONE ends the loop and reports what the decider found',
     gate: 'L',
     fn: async (assert) => {

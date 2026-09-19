@@ -107,7 +107,12 @@ async function runGoal(deps, options = {}) {
       }
     }
 
-    const observation = { snapshot, summary: describeSnapshot(snapshot), history, step };
+    // The goal MUST travel with the observation. Without it a decider that
+    // reasons about the goal (the model-backed one builds its state from it)
+    // receives `undefined` and answers as if no goal had been set — which showed
+    // up live as choices with no relationship to what was asked, at confidence
+    // 0.4-0.6. The decider contract is {goal, snapshot, history, step}.
+    const observation = { goal, snapshot, summary: describeSnapshot(snapshot), history, step };
     log(`step ${step}: ${observation.summary}`);
 
     // Same page as last time, after an action? The action had no effect.
@@ -130,7 +135,10 @@ async function runGoal(deps, options = {}) {
       return finish('error', null, `decision failed: ${String(err && err.message || err).slice(0, 200)}`);
     }
     if (!decision || !decision.operation) {
-      return finish('stalled', lastResultValue(), 'the decider returned no operation');
+      // Carry the decider's own reason through: "no listed element serves the
+      // goal" tells the caller far more than "the decider returned no operation".
+      const why = decision && decision.reasoning ? String(decision.reasoning).slice(0, 300) : 'the decider returned no operation';
+      return finish('stalled', lastResultValue(), why);
     }
     const operation = String(decision.operation).toUpperCase();
     if (!OPERATIONS.includes(operation)) {

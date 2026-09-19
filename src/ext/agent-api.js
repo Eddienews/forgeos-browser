@@ -575,8 +575,13 @@ function startAgentApi({
                   try {
                     const d = await modelDecider(ctx);
                     if (d && d.operation) return d;
-                    const h = await offline(ctx);
-                    return { ...h, reasoning: `${h.reasoning} (offline fallback: the model returned no operation)` };
+                    // A REFUSAL is not a failure. When the model says no listed
+                    // element serves the goal, or that it is not confident
+                    // enough to act, that is a verdict — asking the offline
+                    // fallback would override it with a rule of thumb and turn
+                    // "I cannot do this here" into a confident-looking answer.
+                    // Only a TECHNICAL failure degrades (below).
+                    return { operation: null, reasoning: d && d.reasoning ? d.reasoning : 'the model returned no operation' };
                   } catch (err) {
                     const h = await offline(ctx);
                     return { ...h, reasoning: `${h.reasoning} (offline fallback: ${String((err && err.message) || err).slice(0, 120)})` };
