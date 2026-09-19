@@ -41,11 +41,17 @@ module.exports = [
       const q = buildQuestions(snapshot());
       assert.strictEqual(q.operation.type, 'choice');
       assert.ok(q.operation.criteria.CLICK && q.operation.criteria.DONE, 'the operation space is offered');
-      assert.deepStrictEqual(Object.keys(q.click_target.criteria), ['1']);
-      assert.deepStrictEqual(Object.keys(q.fill_target.criteria), ['2']);
-      assert.deepStrictEqual(Object.keys(q.select_target.criteria), ['3']);
-      assert.ok(Object.keys(q.answer.criteria).length >= 1, 'answers are picked from the page, never generated');
+      // Every target question also offers "nothing fits": the model's docs are
+      // explicit that without it, it picks the closest wrong thing instead.
+      assert.ok(q.click_target.criteria['1'], 'the clickable element is offered');
+      assert.ok(q.click_target.criteria['(none)'], 'the model may answer that nothing fits');
+      assert.ok(q.fill_target.criteria['2'] && q.fill_target.criteria['(none)']);
+      assert.ok(q.select_target.criteria['3'] && q.select_target.criteria['(none)']);
+      assert.ok(Object.keys(q.answer.criteria).length >= 2, 'answers are picked from the page, never generated');
+      assert.ok(q.answer.criteria['(none)'], 'and the model may say no passage answers it');
       assert.strictEqual(q.goal_met.type, 'noul');
+      assert.ok(!/\banswer no\b/i.test(q.goal_met.instructions),
+        'the noul instruction must not smuggle a negation into a yes/no question');
 
       // No elements of a kind means no question about that kind.
       const bare = buildQuestions(snapshot({ elements: [] }));
@@ -53,6 +59,33 @@ module.exports = [
       assert.strictEqual(bare.fill_target, undefined);
       assert.strictEqual(bare.select_target, undefined);
       assert.ok(bare.operation, 'the operation question always stands');
+    },
+  },
+  {
+    name: 'when the model says nothing fits, nothing is clicked',
+    gate: 'A2',
+    fn: async (assert) => {
+      // Live failure this prevents: asked to open the news section, the model
+      // was forced to name a control and named the hamburger menu. Given the
+      // option to refuse, the refusal is honoured rather than overridden.
+      const snap = snapshot();
+      const refuses = composeDecision({
+        goal_met: { noul: 0.1 },
+        operation: { choice: 'CLICK', probabilities: { CLICK: 0.6 }, confidence: 0.8 },
+        click_target: { choice: '(none)', confidence: 0.9 },
+      }, snap);
+      assert.strictEqual(refuses.operation, null, 'a refused target must not become a click');
+      assert.ok(/none/.test(refuses.reasoning));
+
+      const refusesAnswer = composeDecision({
+        goal_met: { noul: 0.9 },
+        operation: { choice: 'CLICK' },
+        click_target: { choice: '1' },
+        answer: { choice: '(none)' },
+      }, snap);
+      assert.strictEqual(refusesAnswer.operation, 'DONE');
+      assert.strictEqual(refusesAnswer.result, null,
+        '(none) must never be read as paragraph 0');
     },
   },
   {

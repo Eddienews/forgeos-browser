@@ -37,10 +37,15 @@ const DEFAULT_GOAL_MET_THRESHOLD = 0.7;
 // the loop reports it and a human or a better goal decides.
 const DEFAULT_MIN_CONFIDENCE = 0.5;
 const MAX_CANDIDATES = 250;   // Jev Choice caps at 255 options
-const MAX_STATE_TEXT = 6000;
+// Context rot is documented: accuracy falls as state fills with material the
+// question does not need. The questions are about ELEMENTS, so the page text is
+// context, not subject matter — a long dump of it drowns the element table.
+const MAX_STATE_TEXT = 1800;
 const DEFAULT_TIMEOUT_MS = 15000;
 
 const OPERATIONS = ['CLICK', 'TYPE_TEXT', 'SELECT', 'SCROLL_DOWN', 'SCROLL_UP', 'WAIT', 'DONE', 'BLOCKED'];
+/** The explicit "nothing fits" option offered on every target question. */
+const NO_TARGET = '(none)';
 
 const OPERATION_CRITERIA = {
   CLICK: 'press a link, button or control to go somewhere or open something',
@@ -122,12 +127,12 @@ function buildQuestions(snapshot) {
   const questions = {
     goal_met: {
       type: 'noul',
-      // Deliberately strict. An earlier phrasing ("the text contains what the
-      // goal asks for") fired on a headline that merely MENTIONED the subject:
-      // asked to read an article about volunteer applications, the model saw
-      // the words on the listing page and answered DONE with the page title.
-      // A Noul is a probability, so the wording has to demand completeness.
-      instructions: 'The visible text ALREADY answers the goal completely and nothing further would be found by navigating — reporting it now would fully satisfy a user who asked for exactly this. Answer no if the goal asks for more than a mention or a headline.',
+      // Deliberately strict, and phrased WITHOUT a negation: the model's own
+      // documentation warns that contradictory instructions underperform, and a
+      // Noul whose instruction says "answer no if…" is exactly that trap. The
+      // earlier wording also fired on a headline that merely mentioned the
+      // subject, so the bar is now completeness, stated positively.
+      instructions: 'The visible text on this page answers the goal completely and in full: reporting this text right now would fully satisfy someone who asked for exactly this goal. A page that merely mentions the subject, names it in a headline, or points to where the answer lives is a partial match.',
     },
     operation: {
       type: 'choice',
@@ -139,26 +144,31 @@ function buildQuestions(snapshot) {
   const clickables = candidatesFor(snapshot, 'click');
   const fillables = candidatesFor(snapshot, 'fill');
   const selectables = candidatesFor(snapshot, 'select');
-  // Only ask where there is something to choose: an empty Choice is noise.
+  // Every target question offers an explicit "nothing fits". The docs are blunt
+  // about why: without it the model is forced to pick "the closest wrong thing"
+  // — which is exactly what it did on a live site, pressing a hamburger menu
+  // when asked to open the news section.
+  // One shared constant, so composition recognises the answer.
+  const NONE = NO_TARGET;
   if (Object.keys(clickables).length) {
     questions.click_target = {
       type: 'choice',
-      instructions: 'Which control should be pressed? Answer with its index.',
-      criteria: clickables,
+      instructions: 'Which single control should be pressed to advance the goal? Choose a number, or "(none)" when no listed control serves the goal.',
+      criteria: { ...clickables, [NONE]: 'none of these controls serves the goal' },
     };
   }
   if (Object.keys(fillables).length) {
     questions.fill_target = {
       type: 'choice',
-      instructions: 'Which text field should be written into? Answer with its index.',
-      criteria: fillables,
+      instructions: 'Which single text field should be written into? Choose a number, or "(none)" when no field needs writing.',
+      criteria: { ...fillables, [NONE]: 'no field needs writing' },
     };
   }
   if (Object.keys(selectables).length) {
     questions.select_target = {
       type: 'choice',
-      instructions: 'Which dropdown option should be chosen? Answer with its index.',
-      criteria: selectables,
+      instructions: 'Which single dropdown option should be chosen? Choose a number, or "(none)" when no dropdown needs changing.',
+      criteria: { ...selectables, [NONE]: 'no dropdown needs changing' },
     };
   }
 
@@ -166,9 +176,10 @@ function buildQuestions(snapshot) {
   if (paragraphs.length) {
     const criteria = {};
     paragraphs.forEach((p, i) => { criteria[String(i)] = truncate(p, 220); });
+    criteria[NONE] = 'none of these passages answers the goal';
     questions.answer = {
       type: 'choice',
-      instructions: 'Which passage of the page is the answer the goal asks for? Choose the most complete one.',
+      instructions: 'Which single passage of the page is the answer the goal asks for? Choose the most complete one, or "(none)" when the goal needs a page that is not this one.',
       criteria,
     };
   }
@@ -189,7 +200,12 @@ function composeDecision(answers, snapshot, options = {}) {
 
   const paragraphs = paragraphsOf(snapshot && snapshot.text);
   const answerIndex = a.answer && a.answer.choice != null ? Number(a.answer.choice) : null;
-  const pickedAnswer = Number.isFinite(answerIndex) && paragraphs[answerIndex] ? paragraphs[answerIndex] : null;
+  // "(none)" is an answer, not an index: the model is allowed to say that no
+  // passage answers the goal, and that must not become paragraph 0.
+  const answerIsNone = a.answer && a.answer.choice === NO_TARGET;
+  const pickedAnswer = (!answerIsNone && Number.isFinite(answerIndex) && paragraphs[answerIndex])
+    ? paragraphs[answerIndex]
+    : null;
 
   const reasoning = [];
   if (a.operation && typeof a.operation.confidence === 'number') {
@@ -198,6 +214,13 @@ function composeDecision(answers, snapshot, options = {}) {
   if (typeof (a.goal_met && a.goal_met.noul) === 'number') {
     reasoning.push(`goal_met=${a.goal_met.noul}`);
   }
+
+  // What to report when the run ends. If we ASKED which passage answers the goal
+  // and the model said "(none)", there is no answer to give: falling back to the
+  // whole page text would hand back the very thing it just rejected.
+  const answerWasAsked = !!(a.answer && a.answer.choice != null);
+  const resultValue = pickedAnswer
+    || (answerWasAsked ? null : (snapshot && snapshot.text ? snapshot.text.slice(0, 400) : null));
 
   // The model can say "already answered" even when the operation question picks
   // something else. The threshold is deliberately above a coin flip: a Noul of
@@ -209,7 +232,7 @@ function composeDecision(answers, snapshot, options = {}) {
   if (goalMet >= threshold) {
     return {
       operation: 'DONE',
-      result: pickedAnswer || (snapshot && snapshot.text ? snapshot.text.slice(0, 400) : null),
+      result: resultValue,
       reasoning: `goal met by the visible text (noul=${goalMet} >= ${threshold})${pickedAnswer ? ' — answer picked from the page' : ''}`,
     };
   }
@@ -220,7 +243,7 @@ function composeDecision(answers, snapshot, options = {}) {
   if (operation === 'DONE') {
     return {
       operation: 'DONE',
-      result: pickedAnswer || (snapshot && snapshot.text ? snapshot.text.slice(0, 400) : null),
+      result: resultValue,
       reasoning: 'the model judged the goal met',
     };
   }
@@ -231,6 +254,15 @@ function composeDecision(answers, snapshot, options = {}) {
   if (operation === 'CLICK' || operation === 'TYPE_TEXT' || operation === 'SELECT') {
     const question = operation === 'CLICK' ? 'click_target' : operation === 'TYPE_TEXT' ? 'fill_target' : 'select_target';
     const raw = a[question] && a[question].choice;
+    // The model can refuse: "(none)" means no listed element serves the goal.
+    // Honouring that is the whole point of offering the option — acting anyway
+    // is what produced a hamburger menu as an answer to "open the news section".
+    if (raw === NO_TARGET) {
+      return {
+        operation: null,
+        reasoning: `the model judged no listed element serves the goal ("(none)" for ${operation})`,
+      };
+    }
     const index = raw == null ? null : Number(raw);
     const element = ((snapshot && snapshot.elements) || []).find((e) => e.index === index);
     if (!element) {
