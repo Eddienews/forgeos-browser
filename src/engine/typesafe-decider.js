@@ -161,8 +161,39 @@ function candidatesFor(snapshot, kind) {
   return out;
 }
 
+/**
+ * What the agent might need to TYPE, taken from the goal.
+ *
+ * Jev classifies, it does not generate: asked for a value to type it would have
+ * to invent one. So candidates are extracted with regexes and Jev PICKS among
+ * them — the pattern the provider's own docs prescribe for this exact problem.
+ * Nothing is ever written by the model.
+ */
+function textCandidates(goal) {
+  const out = {};
+  const g = String(goal || '');
+  const add = (value, why) => {
+    const v = String(value || '').replace(/\s+/g, ' ').trim();
+    if (v.length >= 2 && v.length <= 80 && !(v in out)) out[v] = why;
+  };
+  // Quoted in the goal: the surest signal the user named a literal value.
+  for (const m of g.matchAll(/["“”‘’\"']([^\"'“”‘’]{2,60})[\"'“”‘’]/g)) {
+    add(m[1], 'quoted in the goal');
+  }
+  // Named after a cue word, in English or Portuguese.
+  const after = /\b(?:about|sobre|for|para|named|chamado|called|buscar|procurar)\s+([\p{L}][\p{L}\w'-]*(?:\s+[\p{L}][\p{L}\w'-]*){0,3})/giu;
+  for (const m of g.matchAll(after)) add(m[1], 'named in the goal');
+  // Proper nouns: capitalised words that are not the goal command itself.
+  const capitalised = g.match(/\p{Lu}[\p{L}\w'-]{2,}(?:\s+\p{Lu}[\p{L}\w'-]{2,}){0,2}/gu) || [];
+  const SKIP = /^(Find|Open|Go|Read|Report|Then|The|Start|Follow|Click|Collect|Navigate|Search|Show|Get|Tell)$/i;
+  for (const c of capitalised) {
+    if (!SKIP.test(c)) add(c, 'capitalised in the goal');
+  }
+  return Object.fromEntries(Object.entries(out).slice(0, 20));
+}
+
 /** Build the question set for one observation. */
-function buildQuestions(snapshot) {
+function buildQuestions(snapshot, options = {}) {
   const clickables = candidatesFor(snapshot, 'click');
   const fillables = candidatesFor(snapshot, 'fill');
   const selectables = candidatesFor(snapshot, 'select');
@@ -218,6 +249,16 @@ function buildQuestions(snapshot) {
       instructions: 'Which single text field should be written into? Choose a number, or "(none)" when no field needs writing.',
       criteria: { ...fillables, [NONE]: 'no field needs writing' },
     };
+    // What to write. Candidates come from the goal; the model only chooses, so
+    // it can never invent a value the user did not ask for.
+    const values = textCandidates(options.goal);
+    if (Object.keys(values).length) {
+      questions.text_value = {
+        type: 'choice',
+        instructions: 'If the operation under consideration is TYPE_TEXT, which value should be written into the field?',
+        criteria: { ...values, [NONE]: 'nothing should be typed' },
+      };
+    }
   }
   if (Object.keys(selectables).length) {
     questions.select_target = {
@@ -352,11 +393,14 @@ function composeDecision(answers, snapshot, options = {}) {
     if (operation === 'TYPE_TEXT') {
       // Jev classifies, it does not generate text. The value to type comes from
       // the caller (see decider options), never invented here.
-      decision.value = options.textValue != null ? String(options.textValue) : '';
+      // Priority: an explicit value from the caller, then the choice Jev made
+      // among the goal's own words. Never a generated string.
+      const picked = a.text_value && a.text_value.choice !== NO_TARGET ? a.text_value.choice : null;
+      decision.value = options.textValue != null ? String(options.textValue) : (picked || '');
       if (!decision.value) {
         return {
           operation: null,
-          reasoning: `TYPE_TEXT into [${element.index}] but no text was provided to type`,
+          reasoning: `TYPE_TEXT into [${element.index}] but the goal names no value to type`,
         };
       }
     }
@@ -393,7 +437,7 @@ function createTypeSafeDecider(options = {}) {
     const body = {
       state: buildState(goal, snapshot, history),
       model,
-      questions: buildQuestions(snapshot),
+      questions: buildQuestions(snapshot, { goal }),
     };
 
     const controller = typeof AbortController === 'function' ? new AbortController() : null;
@@ -442,6 +486,7 @@ module.exports = {
   OPERATIONS,
   OPERATION_CRITERIA,
   OPERATION_INSTRUCTIONS,
+  textCandidates,
   DEFAULT_ENDPOINT,
   DEFAULT_MODEL,
   DEFAULT_GOAL_MET_THRESHOLD,

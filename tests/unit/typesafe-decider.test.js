@@ -175,6 +175,33 @@ module.exports = [
     },
   },
   {
+    name: 'what to type comes from the goal, as candidates the model picks from',
+    gate: 'L',
+    fn: async (assert) => {
+      // Jev classifies, it does not generate. Asked for a value to type it would
+      // have to invent one, so the values are extracted from the goal and the
+      // model merely chooses. Found live: the agent correctly clicked Search and
+      // then stalled, because nothing had given it the word to type.
+      const { textCandidates } = require('../../src/engine/typesafe-decider');
+
+      const real = textCandidates('Find and open the Wikipedia article about Philosophy, then report its first paragraph');
+      assert.ok(real.Philosophy, 'the name after a cue word is offered');
+      assert.ok(real.Wikipedia, 'proper nouns are offered');
+      assert.ok(!real.Find && !real.Then, 'goal verbs are not values');
+
+      assert.ok(textCandidates('search for "red shoes" on the shop')['red shoes'], 'quotes win');
+      assert.ok(textCandidates('procure o artigo sobre Filosofia').Filosofia, 'works in portuguese');
+      assert.deepStrictEqual(textCandidates('read the page'), {}, 'nothing to type means no choice offered');
+
+      // The question only exists when a field does, and it always allows refusal.
+      const withField = buildQuestions(snapshot(), { goal: 'search for Philosophy' });
+      assert.ok(withField.text_value, 'offered when a field is fillable');
+      assert.ok('(none)' in withField.text_value.criteria, 'and it can be refused');
+      const noField = buildQuestions(snapshot({ elements: [] }), { goal: 'search for Philosophy' });
+      assert.ok(!noField.text_value, 'not offered when there is nothing to fill');
+    },
+  },
+  {
     name: 'only operations that are possible right now are offered',
     gate: 'L',
     fn: async (assert) => {
@@ -331,7 +358,27 @@ module.exports = [
         goal_met: { noul: 0 }, operation: { choice: 'TYPE_TEXT' }, fill_target: { choice: '2' },
       }, snap);
       assert.strictEqual(emptyType.operation, null, 'TYPE_TEXT without a value must not run');
-      assert.ok(/no text was provided/.test(emptyType.reasoning));
+      assert.ok(/names no value to type/.test(emptyType.reasoning));
+
+      // ...but when the goal names a value and the model PICKS it, typing runs.
+      const picked = composeDecision({
+        goal_met: { noul: 0 }, operation: { choice: 'TYPE_TEXT' }, fill_target: { choice: '2' },
+        text_value: { choice: 'Philosophy' },
+      }, snap);
+      assert.strictEqual(picked.operation, 'TYPE_TEXT', 'a chosen value is enough to type');
+      assert.strictEqual(picked.value, 'Philosophy');
+      // The caller's explicit value still wins over the model's pick.
+      const explicit = composeDecision({
+        goal_met: { noul: 0 }, operation: { choice: 'TYPE_TEXT' }, fill_target: { choice: '2' },
+        text_value: { choice: 'Philosophy' },
+      }, snap, { textValue: 'Something else' });
+      assert.strictEqual(explicit.value, 'Something else');
+      // Refusing the value refuses the typing.
+      const refused = composeDecision({
+        goal_met: { noul: 0 }, operation: { choice: 'TYPE_TEXT' }, fill_target: { choice: '2' },
+        text_value: { choice: '(none)' },
+      }, snap);
+      assert.strictEqual(refused.operation, null, 'a refused value must not be typed');
 
       // Nothing at all.
       assert.strictEqual(composeDecision(null, snap).operation, null);
