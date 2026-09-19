@@ -28,6 +28,14 @@
 
 const DEFAULT_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
 const DEFAULT_MODEL = 'jev-latest';
+// A Noul of 0.5 means "possibly". Acting on "possibly" either stops a run that
+// should have continued or answers with a headline, so the bar is higher.
+const DEFAULT_GOAL_MET_THRESHOLD = 0.7;
+// Below this, the model is guessing. Live runs showed clicks executed on
+// confidences of 0.4-0.6 and landing on the wrong control — acting on "maybe"
+// is how a browser agent does damage. Refusing to act is the honest outcome:
+// the loop reports it and a human or a better goal decides.
+const DEFAULT_MIN_CONFIDENCE = 0.5;
 const MAX_CANDIDATES = 250;   // Jev Choice caps at 255 options
 const MAX_STATE_TEXT = 6000;
 const DEFAULT_TIMEOUT_MS = 15000;
@@ -74,8 +82,13 @@ function buildState(goal, snapshot, history) {
   if (elements.length) {
     lines.push('', 'INTERACTIVE ELEMENTS (by index):');
     for (const el of elements.slice(0, MAX_CANDIDATES)) {
-      lines.push(`[${el.index}] ${el.kind} ${el.role}: ${truncate(el.label, 120)}`);
+      const target = el.href ? ` -> ${truncate(el.href, 90)}` : '';
+      lines.push(`[${el.index}] ${el.kind} ${el.role}: ${truncate(el.label, 120)}${target}`);
     }
+  }
+  const covered = snapshot && snapshot.occluded_count;
+  if (covered) {
+    lines.push('', `NOTE: ${covered} control(s) on this page are covered by other elements and are not offered above.`);
   }
   const recent = (history || []).slice(-4);
   if (recent.length) {
@@ -92,8 +105,13 @@ function candidatesFor(snapshot, kind) {
   const out = {};
   for (const el of ((snapshot && snapshot.elements) || [])) {
     if (el.kind !== kind) continue;
-    const extra = el.option_value != null ? ` (value="${truncate(el.option_value, 40)}")` : '';
-    out[String(el.index)] = `${el.role}: ${truncate(el.label, 100)}${extra}`;
+    const bits = [`${el.role}:`, truncate(el.label, 100)];
+    // The raw href distinguishes "Quarter-Finals BRA v ESP" from eleven other
+    // match buttons when the goal names a specific one — the label alone often
+    // cannot, and the model should not have to guess.
+    if (el.href) bits.push(`-> ${truncate(el.href, 80)}`);
+    if (el.option_value != null) bits.push(`(value="${truncate(el.option_value, 40)}")`);
+    out[String(el.index)] = bits.join(' ');
     if (Object.keys(out).length >= MAX_CANDIDATES) break;
   }
   return out;
@@ -104,7 +122,12 @@ function buildQuestions(snapshot) {
   const questions = {
     goal_met: {
       type: 'noul',
-      instructions: 'The visible page text already contains the information the goal asks for, so no further action is needed.',
+      // Deliberately strict. An earlier phrasing ("the text contains what the
+      // goal asks for") fired on a headline that merely MENTIONED the subject:
+      // asked to read an article about volunteer applications, the model saw
+      // the words on the listing page and answered DONE with the page title.
+      // A Noul is a probability, so the wording has to demand completeness.
+      instructions: 'The visible text ALREADY answers the goal completely and nothing further would be found by navigating — reporting it now would fully satisfy a user who asked for exactly this. Answer no if the goal asks for more than a mention or a headline.',
     },
     operation: {
       type: 'choice',
@@ -145,7 +168,7 @@ function buildQuestions(snapshot) {
     paragraphs.forEach((p, i) => { criteria[String(i)] = truncate(p, 220); });
     questions.answer = {
       type: 'choice',
-      instructions: 'If the goal is satisfied by the page, which passage answers it? Otherwise pick the closest.',
+      instructions: 'Which passage of the page is the answer the goal asks for? Choose the most complete one.',
       criteria,
     };
   }
@@ -177,13 +200,17 @@ function composeDecision(answers, snapshot, options = {}) {
   }
 
   // The model can say "already answered" even when the operation question picks
-  // something else; a high enough noul wins, because acting on an answered page
-  // wastes a step and risks a needless click.
-  if (goalMet >= 0.5) {
+  // something else. The threshold is deliberately above a coin flip: a Noul of
+  // 0.5 means "possibly", and acting on "possibly" either stops a run that
+  // should have continued or answers with a headline. Calibrated live.
+  const threshold = typeof options.goalMetThreshold === 'number'
+    ? options.goalMetThreshold
+    : DEFAULT_GOAL_MET_THRESHOLD;
+  if (goalMet >= threshold) {
     return {
       operation: 'DONE',
       result: pickedAnswer || (snapshot && snapshot.text ? snapshot.text.slice(0, 400) : null),
-      reasoning: `goal met by the visible text (noul=${goalMet})${pickedAnswer ? ' — answer picked from the page' : ''}`,
+      reasoning: `goal met by the visible text (noul=${goalMet} >= ${threshold})${pickedAnswer ? ' — answer picked from the page' : ''}`,
     };
   }
 
@@ -209,6 +236,27 @@ function composeDecision(answers, snapshot, options = {}) {
     if (!element) {
       return { operation: null, reasoning: `${operation} but the model returned no usable target (got "${raw}")` };
     }
+
+    // Confidence is checked before acting, on BOTH the chosen operation and the
+    // chosen element. A model that is unsure must not be allowed to click: the
+    // refusal is reported with the numbers so a human can see it was hesitation,
+    // not failure. Calibrated live, where wrong clicks carried 0.4-0.6.
+    const minConfidence = typeof options.minConfidence === 'number'
+      ? options.minConfidence
+      : DEFAULT_MIN_CONFIDENCE;
+    const opConfidence = a.operation && typeof a.operation.confidence === 'number' ? a.operation.confidence : null;
+    const targetConfidence = a[question] && typeof a[question].confidence === 'number' ? a[question].confidence : null;
+    const weakest = [opConfidence, targetConfidence].filter((c) => typeof c === 'number').reduce(
+      (low, c) => (low === null || c < low ? c : low), null);
+    if (weakest !== null && weakest < minConfidence) {
+      return {
+        operation: null,
+        reasoning: `not confident enough to act on [${element.index}] ` +
+          `(operation ${opConfidence == null ? 'n/a' : opConfidence}, target ${targetConfidence == null ? 'n/a' : targetConfidence}, ` +
+          `minimum ${minConfidence}) — refusing rather than guessing`,
+      };
+    }
+
     const decision = {
       operation,
       target: element.index,
@@ -288,7 +336,11 @@ function createTypeSafeDecider(options = {}) {
     const payload = await response.json();
     if (onCall) onCall({ ok: true, ms, step });
 
-    const decision = composeDecision(payload && payload.answers, snapshot, { textValue: options.textValue });
+    const decision = composeDecision(payload && payload.answers, snapshot, {
+      textValue: options.textValue,
+      goalMetThreshold: options.goalMetThreshold,
+      minConfidence: options.minConfidence,
+    });
     return { ...decision, provider: 'typesafe', model, latencyMs: ms };
   };
 }
@@ -304,4 +356,6 @@ module.exports = {
   OPERATION_CRITERIA,
   DEFAULT_ENDPOINT,
   DEFAULT_MODEL,
+  DEFAULT_GOAL_MET_THRESHOLD,
+  DEFAULT_MIN_CONFIDENCE,
 };

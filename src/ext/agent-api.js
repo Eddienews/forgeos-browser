@@ -459,6 +459,9 @@ function startAgentApi({
               })),
               can_scroll_down: snap.can_scroll_down,
               can_scroll_up: snap.can_scroll_up,
+              // Controls the page covers with something else: a caller seeing a
+              // bare page should know whether it is empty or behind an overlay.
+              occluded_count: snap.occluded_count || 0,
               fingerprint: snap.fingerprint,
               truncated: !!snap.truncated,
               filter: filterInfo,

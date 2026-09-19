@@ -78,6 +78,18 @@ module.exports = [
     },
   },
   {
+    name: 'covered controls are reported so a caller knows why the page is bare',
+    gate: 'L',
+    fn: async (assert) => {
+      // Regression: the snapshot used to offer controls that the action would
+      // then refuse as "occluded", teaching the model to pick unusable targets.
+      const s = normalizeSnapshot(raw({ occluded_count: 7 }));
+      assert.strictEqual(s.occluded_count, 7);
+      assert.strictEqual(normalizeSnapshot(raw()).occluded_count, 0, 'absent means none');
+      assert.strictEqual(normalizeSnapshot(raw({ occluded_count: 'x' })).occluded_count, 0, 'junk is not a count');
+    },
+  },
+  {
     name: 'candidate selection and index lookup match the element table',
     gate: 'L',
     fn: async (assert) => {

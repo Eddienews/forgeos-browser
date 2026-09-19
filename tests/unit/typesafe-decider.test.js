@@ -70,6 +70,101 @@ module.exports = [
     },
   },
   {
+    name: 'an unsure model is not allowed to click',
+    gate: 'A2',
+    fn: async (assert) => {
+      // Regression from live runs: clicks executed on confidences of 0.4-0.6
+      // landed on the wrong control (a hamburger menu instead of a news link).
+      // Acting on "maybe" is how an agent does damage; refusing is honest.
+      const snap = snapshot();
+      const doubtful = {
+        goal_met: { noul: 0.1 },
+        operation: { choice: 'CLICK', probabilities: { CLICK: 0.7 }, confidence: 0.42 },
+        click_target: { choice: '1', probabilities: { 1: 0.55 }, confidence: 0.55 },
+      };
+      const held = composeDecision(doubtful, snap);
+      assert.strictEqual(held.operation, null, 'a 0.42 operation must not be executed');
+      assert.ok(/not confident enough/.test(held.reasoning));
+      assert.ok(/0\.42/.test(held.reasoning) && /0\.55/.test(held.reasoning),
+        'the refusal shows the numbers, so hesitation is visible rather than mysterious');
+
+      // The weakest of the two decides, not the strongest.
+      const weakTarget = {
+        goal_met: { noul: 0.1 },
+        operation: { choice: 'CLICK', confidence: 0.9 },
+        click_target: { choice: '1', confidence: 0.3 },
+      };
+      assert.strictEqual(composeDecision(weakTarget, snap).operation, null,
+        'a confident operation with an unsure target is still a guess');
+
+      // A confident decision still acts.
+      const certain = {
+        goal_met: { noul: 0.05 },
+        operation: { choice: 'CLICK', confidence: 0.85 },
+        click_target: { choice: '1', confidence: 0.9 },
+      };
+      assert.strictEqual(composeDecision(certain, snap).operation, 'CLICK');
+
+      // A caller may lower the bar deliberately.
+      assert.strictEqual(composeDecision(doubtful, snap, { minConfidence: 0.3 }).operation, 'CLICK');
+      // Answers without any confidence figure are not blocked by this rule.
+      assert.strictEqual(composeDecision({
+        goal_met: { noul: 0.1 }, operation: { choice: 'CLICK' }, click_target: { choice: '1' },
+      }, snap).operation, 'CLICK');
+    },
+  },
+  {
+    name: 'a "possibly answered" verdict does not stop the run',
+    gate: 'L',
+    fn: async (assert) => {
+      // Regression from a live run: asked to read an article, the model saw the
+      // subject MENTIONED on a listing page and answered DONE with the page
+      // title. A Noul in the middle is "possibly", not "yes".
+      const snap = snapshot();
+      const midConfidence = {
+        goal_met: { type: 'noul', noul: 0.55 },
+        operation: { type: 'choice', choice: 'CLICK', probabilities: { CLICK: 0.7 }, confidence: 0.6 },
+        click_target: { choice: '1' },
+      };
+      const decision = composeDecision(midConfidence, snap);
+      assert.strictEqual(decision.operation, 'CLICK', 'a 0.55 noul must not end the run');
+      assert.strictEqual(decision.target, 1);
+
+      // The bar is explicit and adjustable.
+      const { DEFAULT_GOAL_MET_THRESHOLD } = require('../../src/engine/typesafe-decider');
+      assert.ok(DEFAULT_GOAL_MET_THRESHOLD > 0.5, 'the default must be above a coin flip');
+      assert.strictEqual(composeDecision(midConfidence, snap, { goalMetThreshold: 0.5 }).operation, 'DONE',
+        'a caller may lower it deliberately');
+      assert.strictEqual(
+        composeDecision({ goal_met: { noul: 0.9 }, operation: { choice: 'CLICK' }, click_target: { choice: '1' } }, snap).operation,
+        'DONE', 'a confident verdict does end the run');
+    },
+  },
+  {
+    name: 'candidates carry the href, and covered controls are disclosed',
+    gate: 'L',
+    fn: async (assert) => {
+      // Regression from a live run on a real site: given twelve similar match
+      // buttons the model picked the wrong one, because the label alone cannot
+      // tell "BRA v ESP" apart from eleven siblings. The raw href can.
+      const snap = snapshot({
+        occluded_count: 3,
+        elements: [
+          { index: 1, kind: 'click', role: 'button', label: 'Quarter-Finals BRA v ESP', href: '/matches/bra-esp', option_value: null },
+          { index: 2, kind: 'click', role: 'button', label: 'Quarter-Finals PRK v CAN', href: '/matches/prk-can', option_value: null },
+        ],
+      });
+      const { candidatesFor } = require('../../src/engine/typesafe-decider');
+      const clickables = candidatesFor(snap, 'click');
+      assert.ok(/matches\/bra-esp/.test(clickables['1']), 'the destination must reach the model');
+      assert.ok(/matches\/prk-can/.test(clickables['2']));
+
+      const state = buildState('encontre Brasil x Espanha', snap, []);
+      assert.ok(/-> \/matches\/bra-esp/.test(state), 'the state carries destinations too');
+      assert.ok(/3 control\(s\).*covered/.test(state), 'covered controls are disclosed, not silently missing');
+    },
+  },
+  {
     name: 'a high goal-met answer wins and the result is picked from the page',
     gate: 'L',
     fn: async (assert) => {

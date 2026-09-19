@@ -52,6 +52,9 @@ function normalizeSnapshot(raw) {
     elements,
     can_scroll_down: !!src.can_scroll_down,
     can_scroll_up: !!src.can_scroll_up,
+    // Controls the page covers with something else. Surfaced so a caller can
+    // tell "nothing to press here" from "everything here is behind an overlay".
+    occluded_count: Number.isFinite(Number(src.occluded_count)) ? Number(src.occluded_count) : 0,
     truncated: rawElements.length > elements.length,
   };
   snapshot.fingerprint = fingerprintSnapshot(snapshot);

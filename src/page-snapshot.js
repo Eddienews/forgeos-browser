@@ -86,6 +86,7 @@ function forgeSnapshotScript() {
   // render that way — without them, a suggestion list is visible but unclickable.
   const MAX_ELEMENTS = 200;
   const elements = [];
+  let occluded = 0; // covered controls, counted for diagnostics
   const selector =
     "a[href],button,input,textarea,select," +
     "[role='button'],[role='link'],[role='option'],[role='menuitem']," +
@@ -105,6 +106,12 @@ function forgeSnapshotScript() {
     if (cx < 0 || cy < 0 || cx >= innerWidth || cy >= innerHeight) continue;
     const id = identify(el);
     const label = (accessibleName(el) || roleOf(el) || "element").replace(/\\s+/g, " ").trim();
+    // The SAME occlusion test the action applies (page-actions.js): if another
+    // element covers the click point, the agent cannot act here. Offering it
+    // anyway taught the model to pick a control it would then be refused on —
+    // the catalogue must only contain what is genuinely actionable.
+    const atPoint = document.elementFromPoint(cx, cy);
+    if (!atPoint || !el.contains(atPoint)) { occluded++; continue; }
     if (el.tagName === "SELECT") {
       for (const option of el.options) {
         if (elements.length >= MAX_ELEMENTS) break;
@@ -138,6 +145,9 @@ function forgeSnapshotScript() {
     title: document.title,
     text: bodyText,
     elements,
+    // How many controls were skipped because something covers them — a page
+    // with many of these is one where the agent will find little to press.
+    occluded_count: occluded,
     can_scroll_down: window.scrollY + window.innerHeight < document.documentElement.scrollHeight - 2,
     can_scroll_up: window.scrollY > 0,
   };
