@@ -93,7 +93,8 @@ function approvedMacMember(value, directory) {
     'chrome_200_percent.pak', 'resources.pak', 'icudtl.dat', 'snapshot_blob.bin',
     'v8_context_snapshot.bin', 'vk_swiftshader_icd.json', 'electron.icns']);
   const locale = name => /^[a-z]{2,3}(?:[-_][A-Za-z0-9]+)?\.lproj$/.test(name);
-  if (value === 'PORTABLE.md') return !directory;
+  // Electron Packager places its exact vendor license filenames beside .app.
+  if (['LICENSE', 'LICENSES.chromium.html', 'PORTABLE.md'].includes(value)) return !directory;
   if (['logs', 'downloads', 'results'].includes(p[0])) {
     return p.length === 1 ? directory : p.length === 2 && p[1] === '.keep' && !directory;
   }

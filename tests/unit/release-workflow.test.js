@@ -55,6 +55,8 @@ module.exports = [
       const zip = path.join(temp, 'mac.zip');
       const p = 'ForgeBrowserLab-darwin-x64/ForgeBrowserLab.app/Contents/';
       const entries = [
+        ['ForgeBrowserLab-darwin-x64/LICENSE', 'synthetic vendor license'],
+        ['ForgeBrowserLab-darwin-x64/LICENSES.chromium.html', 'synthetic vendor notices'],
         [p + 'MacOS/ForgeBrowserLab', 'binary'],
         [p + 'Resources/app.asar', 'asar'],
         [p + 'Resources/en.lproj/locale.pak', 'locale'],
@@ -65,7 +67,8 @@ module.exports = [
       try {
         syntheticZip(zip, entries);
         a.ok(verifyPortableArchive(zip, 'darwin', 'x64'));
-        for (const privatePath of [p + 'Resources/en.lproj/private-key.txt',
+        for (const privatePath of ['ForgeBrowserLab-darwin-x64/private-note.txt',
+          p + 'Resources/en.lproj/private-key.txt',
           p + 'Frameworks/Electron Framework.framework/private-key.txt']) {
           syntheticZip(zip, [...entries, [privatePath, 'synthetic secret']]);
           a.throws(() => verifyPortableArchive(zip, 'darwin', 'x64'), /Unapproved ZIP member/);
