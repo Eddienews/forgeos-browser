@@ -134,7 +134,8 @@ function approvedMacMember(value, directory) {
   if (r[1] !== 'A') return false;
   const v = r.slice(2);
   if (v.length === 1) return v[0] === name ? !directory :
-    ['Resources', 'Libraries', 'Helpers'].includes(v[0]) && directory;
+    ['Resources', 'Libraries', 'Helpers', '_CodeSignature'].includes(v[0]) && directory;
+  if (v[0] === '_CodeSignature') return v.length === 2 && v[1] === 'CodeResources' && !directory;
   if (v[0] === 'Resources') {
     if (v.length === 2) return (resource.has(v[1]) || v[1] === 'Info.plist') && !directory ||
       locale(v[1]) && directory;
@@ -227,6 +228,11 @@ function verifyPortableArchive(archive, platform, arch, options = {}) {
       if (value === 'resources/app.asar') hasAsar = true;
     }
     if (!approved) throw new Error(`Unapproved ZIP member: ${zipPath}`);
+    if (platform === 'darwin' && (value.endsWith('/_CodeSignature') ||
+      value.endsWith('/_CodeSignature/CodeResources'))) {
+      const expectedType = value.endsWith('/_CodeSignature') ? 0x4000 : 0x8000;
+      if ((mode & 0xf000) !== expectedType) throw new Error(`Invalid code signature ZIP mode: ${zipPath}`);
+    }
     if (platform === 'darwin' ? value === 'ForgeBrowserLab.app/Contents/Resources/app.asar' :
       value === 'resources/app.asar') {
       if (directory || (mode & 0xf000) === 0xa000) throw new Error(`Invalid app.asar ZIP member: ${zipPath}`);
