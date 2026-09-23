@@ -57,8 +57,11 @@ function matchesCredentialHost(url) {
     return CREDENTIAL_HOSTS.some((entry) => {
       if (entry.includes('/')) {
         // path-qualified entry
-        const [h, p] = entry.split('/');
-        return (host === h || host.endsWith('.' + h)) && u.path.startsWith('/' + p);
+        const slash = entry.indexOf('/');
+        const h = entry.slice(0, slash);
+        const p = entry.slice(slash);
+        return (host === h || host.endsWith('.' + h)) &&
+          (u.pathname === p || u.pathname.startsWith(p + '/'));
       }
       return host === entry || host.endsWith('.' + entry);
     });

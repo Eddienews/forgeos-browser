@@ -72,6 +72,7 @@ function captureTabReloadPlan(tabs, activeTabId) {
   const items = [];
   let activeIndex = -1;
   for (const tab of tabs.values()) {
+    if (tab.agentOwned) continue; // never recreate an agent tab as an ordinary unproxied tab
     if (tab.id === activeTabId) activeIndex = items.length;
     items.push({ url: tab.url || 'about:blank', forgetOnClose: !!tab.forgetOnClose });
   }

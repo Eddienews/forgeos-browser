@@ -92,11 +92,12 @@ function neutraliseLine() {
  * Filter one observation before a model sees it.
  * @param {{text?: string, title?: string, elements?: Array<object>}} snapshot
  * @param {{maxText?: number}} [options]
- * @returns {{text: string, redactions: string[], injections: object[], removed: number, safe: boolean}}
+ * @returns {{text: string, title: string, redactions: string[], injections: object[], removed: number, safe: boolean}}
  */
 function filterObservation(snapshot, options = {}) {
   const maxText = options.maxText || 4000;
   const flags = scanInjection(snapshot && snapshot.text);
+  const titleFlags = scanInjection(snapshot && snapshot.title);
   const flaggedLines = new Set(flags.map((f) => f.line));
 
   let lines = String((snapshot && snapshot.text) || '').split('\n');
@@ -111,13 +112,23 @@ function filterObservation(snapshot, options = {}) {
 
   const joined = lines.join('\n');
   const { text, hits } = redactSecrets(joined);
+  // runGoal passes the normalized snapshot itself to the decider (including
+  // title and its derived summary), so updating only the return value would
+  // leave this metadata exposed. Filter that actual object before it is used.
+  const titleResult = redactSecrets(titleFlags.length
+    ? REMOVAL_MARKER : (snapshot && snapshot.title) || '');
+  if (snapshot && typeof snapshot === 'object') snapshot.title = titleResult.text;
+  const injections = [...flags, ...titleFlags.map((f) => ({ ...f, channel: 'title' }))]
+    .map((f) => ({ ...f, excerpt: redactSecrets(f.excerpt).text }));
+  const redactions = [...hits, ...titleResult.hits];
 
   return {
     text: text.slice(0, maxText),
-    redactions: hits,
-    injections: flags,
-    removed,
-    safe: flags.length === 0 && hits.length === 0,
+    title: titleResult.text,
+    redactions,
+    injections,
+    removed: removed + (titleFlags.length ? 1 : 0),
+    safe: injections.length === 0 && redactions.length === 0,
   };
 }
 

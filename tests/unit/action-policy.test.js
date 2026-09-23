@@ -10,13 +10,9 @@ module.exports = [
     gate: 'A2',
     fn: async (assert) => {
       const cases = [
-        { kind: 'click', signal: { label: 'Próxima página', href: '/page/2' } },
-        { kind: 'click', signal: { label: 'Artigo sobre o Rosetta Stone', href: '/wiki/Rosetta_Stone' } },
-        { kind: 'click', signal: { label: 'Ver detalhes', href: '#' } },
+        { kind: 'click', signal: { label: 'Ver detalhes', href: '#', isAnchor: true } },
         { kind: 'scroll' },
         { kind: 'wait' },
-        { kind: 'select' },
-        { kind: 'fill', signal: { label: 'Buscar produtos', type: 'text' } },
       ];
       for (const action of cases) {
         const v = classifyAction(action);
@@ -65,11 +61,37 @@ module.exports = [
         { kind: 'fill', signal: { type: 'text', label: 'Número do cartão' } },
         { kind: 'fill', signal: { type: 'text', label: 'CVV' } },
         { kind: 'fill', signal: { type: 'credit-card-number', label: '' } },
+        { kind: 'fill', signal: { type: 'text', name: 'api_key', label: 'Access key' } },
+        { kind: 'fill', signal: { type: 'text', name: 'ssn', label: 'Identity' } },
+        { kind: 'fill', signal: { type: 'text', autocomplete: 'off cc-number', label: 'Number' } },
+        { kind: 'fill', signal: { type: 'text', sensitive: true, label: 'Unknown' } },
+        { kind: 'click', signal: { label: 'Continue', type: 'button', href: null } },
+        { kind: 'click', signal: { label: 'Next', href: '/article', isAnchor: true } },
+        { kind: 'click', signal: { label: 'External', href: 'https://example.org/article', isAnchor: true } },
+        { kind: 'click', signal: { label: 'Unknown', href: '#%3CREDACTED%3E', isAnchor: true } },
+        { kind: 'click', signal: { label: 'Continue', href: '#safe', type: 'button' } },
+        { kind: 'click', signal: { label: 'Continue', href: '#safe', isAnchor: false } },
+        { kind: 'click', signal: { label: 'Continue', href: '#safe', isSubmit: true, isAnchor: true } },
       ];
       for (const action of cases) {
         const v = classifyAction(action);
         assert.strictEqual(v.risk, 'approval', `${JSON.stringify(action.signal)} must require approval`);
       }
+    },
+  },
+  {
+    name: 'plain type=button Continue and cross-document anchors fail closed; only proven fragment anchors are automatic',
+    gate: 'C1',
+    fn: async (assert) => {
+      for (const signal of [
+        { label: 'Continue', type: 'button', isAnchor: false },
+        { label: 'Continue', href: '#section', isAnchor: false },
+        { label: 'Read', href: '/article', isAnchor: true },
+        { label: 'Read', href: 'https://example.org/', isAnchor: true },
+      ]) assert.strictEqual(classifyAction({ kind: 'click', signal }).risk, 'approval');
+      assert.strictEqual(classifyAction({ kind: 'click', signal: { label: 'Contents', href: '#section', isAnchor: true } }).risk, 'auto');
+      assert.strictEqual(classifyAction({ kind: 'fill', signal: { label: 'Search', type: 'text' } }).risk, 'approval');
+      assert.strictEqual(classifyAction({ kind: 'select', signal: { label: 'Region' } }).risk, 'approval');
     },
   },
   {

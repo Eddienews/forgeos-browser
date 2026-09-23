@@ -31,9 +31,12 @@
  */
 'use strict';
 
+const { snapshotSafetyScript } = require('./engine/sensitive-fields');
+
 /** Build (or reuse) the per-page agent store. */
 function forgeSnapshotScript() {
   return `(() => {
+  ${snapshotSafetyScript()}
   const store = (window.__forgeAgent ??= { ids: new WeakMap(), nodes: new Map(), next: 1 });
   const identify = (el) => {
     if (!store.ids.has(el)) store.ids.set(el, store.next++);
@@ -73,6 +76,9 @@ function forgeSnapshotScript() {
       }).join(" ").trim();
       if (fromContent) return fromContent;
     }
+    if (el.tagName === "INPUT" && ["submit", "button", "reset", "image"].includes(el.type)) {
+      return String(el.value || "").trim();
+    }
     return (el.getAttribute("placeholder") || el.getAttribute("title") || el.getAttribute("alt") || "").trim();
   };
 
@@ -93,6 +99,21 @@ function forgeSnapshotScript() {
       (el.tagName === "INPUT" &&
         !["submit", "button", "reset", "checkbox", "radio", "image"].includes(el.type))) &&
     !el.readOnly;
+
+  const sensitive = (el, label = "") => classifyField({
+    ...domFieldInfo(el), label,
+  }).sensitive;
+  const formInfo = (el) => {
+    const form = el.form || el.closest("form");
+    if (!form) return { form_action: null, form_method: null };
+    const target = el.getAttribute("formaction") || (form.getAttribute && form.getAttribute("action")) || location.href;
+    const method = (el.getAttribute("formmethod") || (form.getAttribute && form.getAttribute("method")) || "get").toLowerCase();
+    return { form_action: safeUrl(target), form_method: /^(get|post|dialog)$/.test(method) ? method : "unknown" };
+  };
+  const isSubmit = (el) => (el.tagName === "BUTTON" && (el.type === "submit" || !!el.form || !!el.closest("form"))) ||
+    (el.tagName === "INPUT" && (["submit", "image"].includes(el.type) ||
+      (el.type === "button" && (!!el.form || !!el.closest("form"))))) ||
+    (el.getAttribute("role") === "button" && !!el.closest("form"));
 
   // A native <a> with no href is styling, not navigation. ARIA roles on plain
   // <li>/<div> are included because autocomplete menus render that way — without
@@ -120,15 +141,47 @@ function forgeSnapshotScript() {
   const viewportUsable = vw > 0 && vh > 0;
   const inViewport = (x, y) => !viewportUsable || (x >= 0 && y >= 0 && x < vw && y < vh);
 
+  const inventory = domFieldInventory();
+  const leaked = new Set([...inventory.values, ...queryValues(location.href, location.href)]);
+  const collect = (url) => { for (const value of queryValues(url, location.href)) leaked.add(value); };
+  // Collect before rendering any text: values may be repeated in prose, title,
+  // labels or link text, not just in the input where they originated.
+  for (const { el: field, info, classification } of inventory.entries) {
+    const label = [info.associatedLabels, info.ariaLabel, info.ariaLabelledBy].filter(Boolean).join(' ');
+    if (classification.sensitive) {
+      if (label) {
+        leaked.add(label);
+        for (const token of label.split(/\\s+/)) if (token.length >= 8) leaked.add(token);
+      }
+      if (field.options) for (const option of field.options) {
+        if (option.value) leaked.add(String(option.value));
+        if (option.label) leaked.add(String(option.label));
+      }
+    }
+    collect(field.getAttribute("href"));
+    collect(field.getAttribute("formaction"));
+    const form = field.form || field.closest("form");
+    if (form) collect(form.getAttribute && form.getAttribute("action"));
+  }
+  const safeText = (value) => scrubKnownValues(value, leaked);
+  const safeUrl = (value) => value == null ? null : sanitizeUrl(safeText(value));
   const describe = (el, id, label, extra) => Object.assign({
     index: id,
     role: roleOf(el) || "generic",
-    kind: editable(el) ? "fill" : "click",
-    label: label,
-    current_value: "value" in el ? String(el.value) : "",
-    // The raw attribute, not the resolved URL: "#anchor" says same-page and
-    // "/wiki/X" says where a link goes, which a label alone cannot.
-    href: el.tagName === "A" ? el.getAttribute("href") : null,
+    // Keep the control visible for orientation, but never offer an action the
+    // page action gate will necessarily refuse.
+    kind: sensitive(el, label) && (editable(el) || el.tagName === "SELECT")
+      ? "blocked" : editable(el) ? "fill" : "click",
+    label: sensitive(el, label) ? "(sensitive field)" : safeText(label),
+    current_value: sensitive(el, label) ? "" : safeText("value" in el ? String(el.value) : ""),
+    input_type: (el.type || "").toLowerCase(),
+    autocomplete: el.autocomplete || "",
+    field_name: sensitive(el, label) ? "" : safeText(el.name || ""),
+    sensitive: sensitive(el, label),
+    is_submit: isSubmit(el),
+    is_anchor: el.tagName === "A",
+    ...formInfo(el),
+    href: el.tagName === "A" ? safeUrl(el.getAttribute("href")) : null,
   }, extra || {});
 
   for (const el of document.querySelectorAll(selector)) {
@@ -155,10 +208,10 @@ function forgeSnapshotScript() {
         if (bucket.length >= cap) break;
         if (option.disabled) continue;
         bucket.push(describe(el, id, label + " -> " + option.label, {
-          option_value: option.value,
+          option_value: sensitive(el, label + " " + option.label) ? "" : safeText(option.value),
           role: "combobox",
-          kind: "select",
-          current_value: el.selectedOptions[0] ? el.selectedOptions[0].label : "",
+          kind: sensitive(el, label + " " + option.label) ? "blocked" : "select",
+          current_value: sensitive(el, label + " " + option.label) ? "" : safeText(el.selectedOptions[0] ? el.selectedOptions[0].label : ""),
           below_fold: below || undefined,
         }));
       }
@@ -181,10 +234,10 @@ function forgeSnapshotScript() {
     elements.push(describe(el, id, label));
   }
 
-  const bodyText = (document.body ? document.body.innerText : "").slice(0, 4000);
+  const bodyText = safeText((document.body ? document.body.innerText : "").slice(0, 4000));
   return {
-    url: location.href,
-    title: document.title,
+    url: safeUrl(location.href),
+    title: safeText(document.title),
     text: bodyText,
     elements,
     // Real controls that exist out of view: the agent should scroll toward them

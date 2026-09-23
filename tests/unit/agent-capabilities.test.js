@@ -40,7 +40,7 @@ const pageFixture = (over = {}) => ({
   can_scroll_down: false, can_scroll_up: false,
 });
 
-async function boot({ humanAllows = true, page = pageFixture(), observeFails = false } = {}) {
+async function boot({ humanAllows = true, page = pageFixture(), observeFails = false, guard = async () => {} } = {}) {
   const performed = [];
   const approvals = [];
   const api = await startAgentApi({
@@ -51,6 +51,7 @@ async function boot({ humanAllows = true, page = pageFixture(), observeFails = f
     readPage: async () => ({ url: page.url, text: page.text, untrusted: true }),
     navigate: async () => {},
     approveNavigate: async () => true,
+    requireAgentTab: guard,
     observe: async () => (observeFails ? { error: 'no active tab' } : page),
     act: async (action) => { performed.push(action); return { ok: true, detail: 'acted' }; },
     approveAction: async (info) => { approvals.push(info); return humanAllows; },
@@ -67,6 +68,114 @@ async function scoped(t, scope) {
 }
 
 module.exports = [
+  { name: 'agent mutation preflight rejects human tab and down proxy before observation, approval or action', gate: 'C1', fn: async assert => {
+    let guarded = 0;
+    const t = await boot({ guard: async () => { guarded++; throw Error('Open an agent tab with POST /navigate'); } });
+    try {
+      for (const route of ['/act', '/task']) {
+        const result = await req(t.port, 'POST', route, t.token,
+          route === '/act' ? { operation: 'WAIT' } : { goal: 'click next' });
+        assert.strictEqual(result.status, 503);
+        assert.match(JSON.stringify(result.body), /Open an agent tab/);
+      }
+      assert.strictEqual(guarded, 2);
+      assert.strictEqual(t.performed.length, 0);
+      assert.strictEqual(t.approvals.length, 0);
+    } finally { await t.close(); }
+  } },
+  {
+    name: 'GET /snapshot masks sensitive fields in visible and below-fold lists even with raw=1',
+    gate: 'C1',
+    fn: async (assert) => {
+      const entries = [
+        { index: 21, kind: 'fill', role: 'textbox', label: 'Password', input_type: 'password', current_value: 'fixture-password' },
+        { index: 22, kind: 'fill', role: 'textbox', label: 'Payment card', autocomplete: 'cc-number', current_value: 'fixture-card' },
+        { index: 23, kind: 'fill', role: 'textbox', label: 'Code', field_name: 'otp', current_value: 'fixture-otp' },
+      ];
+      const t = await boot({ page: { ...pageFixture(), elements: entries, below_fold: entries } });
+      try {
+        for (const suffix of ['', '?raw=1']) {
+          const r = await req(t.port, 'GET', '/snapshot' + suffix, t.token);
+          assert.strictEqual(r.status, 200);
+          for (const marker of ['fixture-password', 'fixture-card', 'fixture-otp']) {
+            assert.ok(!JSON.stringify(r.body).includes(marker), marker + ' leaked');
+          }
+        }
+      } finally { await t.close(); }
+    },
+  },
+  {
+    name: 'POST /act ignores caller signals and gates a generic submit button',
+    gate: 'C1',
+    fn: async (assert) => {
+      const submit = { index: 31, kind: 'click', role: 'button', label: 'Continue', input_type: 'submit', is_submit: true };
+      const t = await boot({ humanAllows: false, page: { ...pageFixture(), elements: [submit] } });
+      try {
+        const r = await req(t.port, 'POST', '/act', t.token,
+          { operation: 'CLICK', target: 31, value: 'spoof', signal: { isSubmit: false, label: 'harmless' } });
+        assert.strictEqual(r.status, 403);
+        assert.strictEqual(t.performed.length, 0);
+        assert.strictEqual(t.approvals.length, 1);
+      } finally { await t.close(); }
+    },
+  },
+  {
+    name: 'POST /act refuses an internal destination even with a benign label',
+    gate: 'C1',
+    fn: async (assert) => {
+      const t = await boot({ page: { ...pageFixture(), elements: [
+        { index: 35, kind: 'click', role: 'button', label: 'Next', href: 'http://127.0.0.1/private' },
+      ] } });
+      try {
+        const r = await req(t.port, 'POST', '/act', t.token, { operation: 'CLICK', target: 35 });
+        assert.strictEqual(r.status, 403);
+        assert.strictEqual(t.performed.length, 0);
+      } finally { await t.close(); }
+    },
+  },
+  {
+    name: 'POST /task model criteria contain no sensitive values and submit remains gated',
+    gate: 'C1',
+    fn: async (assert) => {
+      const fields = [
+        { index: 41, kind: 'fill', role: 'textbox', label: 'Password', input_type: 'password', current_value: 'fixture-password' },
+        { index: 42, kind: 'fill', role: 'textbox', label: 'Payment card', autocomplete: 'cc-number', current_value: 'fixture-card' },
+        { index: 43, kind: 'fill', role: 'textbox', label: 'OTP', field_name: 'otp', current_value: 'fixture-otp' },
+      ];
+      const page = { ...pageFixture(), text: 'Continue', elements: [
+        ...fields, { index: 31, kind: 'click', role: 'button', label: 'Continue', input_type: 'submit', is_submit: true },
+      ], below_fold: fields };
+      const originalFetch = globalThis.fetch;
+      const keyFile = path.join(tmp, 'forge-inference-key');
+      const captured = [];
+      fs.writeFileSync(keyFile, 'fixture-provider-key'); // synthetic key, temp test directory only
+      globalThis.fetch = async (_url, init) => {
+        captured.push(init.body);
+        return { ok: true, json: async () => ({ answers: {
+          goal_met: { noul: 0 }, operation: { choice: 'CLICK', confidence: 0.99 },
+          click_target: { choice: '31', confidence: 0.99 },
+        } }) };
+      };
+      let t;
+      try {
+        t = await boot({ humanAllows: false, page });
+        const r = await req(t.port, 'POST', '/task', t.token, { goal: 'continue', max_steps: 1 });
+        assert.strictEqual(r.status, 200);
+        assert.strictEqual(r.body.decider.kind, 'typesafe');
+        assert.strictEqual(r.body.status, 'blocked');
+        assert.strictEqual(t.performed.length, 0);
+        assert.strictEqual(t.approvals.length, 1);
+        assert.strictEqual(captured.length, 1);
+        for (const marker of ['fixture-password', 'fixture-card', 'fixture-otp']) {
+          assert.ok(!captured[0].includes(marker), marker + ' reached model criteria');
+        }
+      } finally {
+        if (t) await t.close();
+        globalThis.fetch = originalFetch;
+        fs.rmSync(keyFile, { force: true });
+      }
+    },
+  },
   {
     name: 'GET /snapshot returns the indexed table the agent acts on',
     gate: 'L',
@@ -112,7 +221,7 @@ module.exports = [
     },
   },
   {
-    name: 'POST /act performs a reversible action without a human',
+    name: 'POST /act requires approval for a link with an unknown destination',
     gate: 'L',
     fn: async (assert) => {
       const t = await boot();
@@ -120,11 +229,11 @@ module.exports = [
         const r = await req(t.port, 'POST', '/act', t.token, { operation: 'CLICK', target: 1 });
         assert.strictEqual(r.status, 200);
         assert.strictEqual(r.body.status, 'done');
-        assert.strictEqual(r.body.risk, 'auto');
+        assert.strictEqual(r.body.risk, 'approval');
         assert.strictEqual(t.performed.length, 1);
         assert.strictEqual(t.performed[0].kind, 'click');
         assert.strictEqual(t.performed[0].targetIndex, 1);
-        assert.strictEqual(t.approvals.length, 0, 'no human needed for a link');
+        assert.strictEqual(t.approvals.length, 1, 'the link needs a human decision');
         assert.ok(r.body.fingerprint_before, 'the caller learns which page state it acted on');
       } finally { await t.close(); }
     },
@@ -147,10 +256,13 @@ module.exports = [
       // Approved.
       const allowed = await boot({ humanAllows: true });
       try {
-        const r = await req(allowed.port, 'POST', '/act', allowed.token, { operation: 'CLICK', target: 2 });
+        const r = await req(allowed.port, 'POST', '/act', allowed.token,
+          { operation: 'CLICK', target: 2, value: 'caller-spoofed-approval', signal: { isSubmit: false } });
         assert.strictEqual(r.status, 200);
         assert.strictEqual(r.body.risk, 'approval');
         assert.strictEqual(allowed.performed.length, 1, 'an approved action runs');
+        assert.strictEqual(allowed.performed[0].value, null, 'the API must not mint an approval proof');
+        assert.ok(!String(allowed.performed[0].value).includes('caller-spoofed-approval'));
       } finally { await allowed.close(); }
     },
   },

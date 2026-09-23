@@ -43,7 +43,7 @@ const http = require('http');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { ensureNavigable, UnsafeUrlError } = require('../engine/url-safety');
+const { ensureNavigable, isObviouslyBlocked, UnsafeUrlError } = require('../engine/url-safety');
 const { runGoal, createHeuristicDecider } = require('../engine/agent-loop');
 const { normalizeSnapshot, elementByIndex } = require('../engine/page-snapshot');
 const { classifyAction } = require('../engine/action-policy');
@@ -151,7 +151,7 @@ let activeAgentServer = null;
 
 function startAgentApi({
   port = 8647, getSnapshot, readPage, navigate, approveNavigate,
-  observe, act, approveAction,
+  observe, act, approveAction, requireAgentTab,
   log, baseDir, confirmationNow = Date.now, tokenNow = Date.now,
   rateNow = Date.now, auditNow = Date.now, tokenWriter = writePrivateTokenFile,
 }) {
@@ -305,6 +305,19 @@ function startAgentApi({
       res.end(JSON.stringify({ error: msg }));
     };
 
+    // Do not even extract a page until the active tab is proven agent-owned.
+    // Use a fixed recovery message: guard exceptions may contain tab metadata.
+    const requireReadableAgentTab = async () => {
+      const recovery = 'agent session unavailable; open an agent-owned tab via /navigate';
+      if (typeof requireAgentTab !== 'function') {
+        deny(503, recovery);
+        return false;
+      }
+      try { await requireAgentTab(); }
+      catch { deny(503, recovery); return false; }
+      return true;
+    };
+
     // 1) loopback only
     const addr = req.socket.remoteAddress || '';
     if (!/^127\.0\.0\.1$|^::1$|^::ffff:127\.0\.0\.1$/.test(addr)) return deny(403, 'localhost only');
@@ -402,16 +415,20 @@ function startAgentApi({
               product: 'ForgeOS Browser',
               mode: s.mode,
               activeTabId: s.activeTabId,
-              tabs: s.tabs.map((t) => ({ title: t.title, url: t.url })),
+              // Tab titles and URL paths come from a raw browser snapshot, not
+              // the in-page redaction boundary. Never expose those channels.
+              tabs: s.tabs.map(() => ({ title: '<REDACTED>', url: null })),
               counters: s.session,
               untrusted: true,
             }));
           }
           case 'GET /page': {
+            if (!(await requireReadableAgentTab())) return;
             const view = await readPage();
             return sendJson(sanitize(view));
           }
           case 'GET /links': {
+            if (!(await requireReadableAgentTab())) return;
             const view = await readPage();
             const links = view && view.content && Array.isArray(view.content.links)
               ? view.content.links
@@ -422,6 +439,7 @@ function startAgentApi({
             // One atomic read of the active tab: its text plus the numbered
             // element table an agent can act on. Reading is automatic.
             if (typeof observe !== 'function') return deny(501, 'agent capabilities unavailable');
+            if (!(await requireReadableAgentTab())) return;
             const rawSnap = await observe();
             if (!rawSnap || rawSnap.error) return deny(503, (rawSnap && rawSnap.error) || 'no observation');
             const snap = normalizeSnapshot(rawSnap);
@@ -482,6 +500,9 @@ function startAgentApi({
             if (typeof observe !== 'function' || typeof act !== 'function') {
               return deny(501, 'agent capabilities unavailable');
             }
+            if (typeof requireAgentTab !== 'function') return deny(503, 'agent session unavailable; open an agent-owned tab via /navigate');
+            try { await requireAgentTab(); }
+            catch (error) { return deny(503, String(error.message || error).slice(0, 200)); }
             // Observe first: a target index is only meaningful against the page
             // as it is NOW, and the element's own label is what the risk policy
             // judges — never the caller's description of it.
@@ -520,12 +541,21 @@ function startAgentApi({
               : {
                   kind,
                   targetIndex: element.index,
-                  value: kind === 'select' ? (body.option_value != null ? body.option_value : body.value) : body.value,
+                  value: kind === 'click' ? null : kind === 'select'
+                    ? (body.option_value != null ? body.option_value : body.value) : body.value,
                   label: element.label,
-                  signal: { label: element.label, href: element.href || '', isSubmit: false, type: element.role === 'textbox' ? 'text' : '' },
+                  signal: { label: element.label, href: element.href || '', isSubmit: element.is_submit,
+                    type: element.input_type || (element.role === 'textbox' ? 'text' : '') },
                   fingerprint: current.fingerprint,
                 };
 
+            if (kind === 'click' && action.signal.href && !action.signal.href.startsWith('#')) {
+              let destination;
+              try { destination = new URL(action.signal.href, current.url).href; } catch {
+                return deny(403, 'unsafe link destination');
+              }
+              if (isObviouslyBlocked(destination)) return deny(403, 'unsafe link destination');
+            }
             const policy = classifyAction(action);
             if (policy.risk === 'approval') {
               if (typeof approveAction !== 'function') {
@@ -565,6 +595,9 @@ function startAgentApi({
             if (typeof observe !== 'function' || typeof act !== 'function') {
               return deny(501, 'agent capabilities unavailable');
             }
+            if (typeof requireAgentTab !== 'function') return deny(503, 'agent session unavailable; open an agent-owned tab via /navigate');
+            try { await requireAgentTab(); }
+            catch (error) { return deny(503, String(error.message || error).slice(0, 200)); }
             const goal = String(body.goal || '').trim();
             if (!goal) return deny(400, 'goal is required');
             const maxSteps = Math.max(1, Math.min(Number(body.max_steps) || 12, 30));
@@ -691,7 +724,16 @@ function startAgentApi({
             if (typeof approveNavigate !== 'function') return deny(503, 'human approval unavailable');
             const approved = await approveNavigate(pend.url, { tokenId: v.id });
             if (!approved) return deny(403, 'human approval denied');
-            await navigate(pend.url);
+            // DNS may have changed while the human dialog was open. This still
+            // cannot pin the subsequent browser connection or its redirects.
+            try {
+              await ensureNavigable(pend.url);
+            } catch (err) {
+              if (err instanceof UnsafeUrlError) return deny(403, `destination refused: ${err.message}`);
+              throw err;
+            }
+            try { await navigate(pend.url); }
+            catch (error) { return deny(503, String(error.message || error).slice(0, 200)); }
             return sendJson({ ok: true, navigatingTo: pend.url });
           }
           case 'POST /token/issue': {

@@ -32,6 +32,7 @@ const bh = require('./engine/bookmarks-history');
 const allowlist = require('./engine/site-allowlist');
 const { compileCosmetic, selectorsForHost } = require('./engine/cosmetic-engine');
 const { startAgentApi } = require('./ext/agent-api');
+const { createAgentSession } = require('./engine/agent-network-proxy');
 const { forgeSnapshotScript } = require('./page-snapshot');
 const { forgeActionScript, forgeScrollScript } = require('./page-actions');
 const { normalizeSnapshot } = require('./engine/page-snapshot');
@@ -111,6 +112,8 @@ let tabSeq = 0;
 const tabs = new Map();   // id -> tab
 const sessions = new Map(); // partitionKey -> { session, adapter }
 let activeTabId = null;
+let agentLease = null;
+let agentTabId = null;
 const downloads = [];
 const plugins = new PluginRunner({ log });
 
@@ -225,7 +228,9 @@ async function runPluginJob(kind, pageUrl, label) {
 
 function createTab(url = 'about:blank', opts = {}) {
   const id = ++tabSeq;
-  const plan = sessionPlanFor(url, modeId, !!opts.forgetOnClose);
+  const plan = opts.agentLease
+    ? { partition: opts.agentLease.partition, retainHistory: false, restoreOnRestart: false }
+    : sessionPlanFor(url, modeId, !!opts.forgetOnClose);
   const { session: ses, adapter } = getSessionFor(plan.partition);
   adapter.setMode(modeId);
   adapter.install();
@@ -239,6 +244,7 @@ function createTab(url = 'about:blank', opts = {}) {
 
   const tab = {
     id, view, wc, adapter, partition: plan.partition,
+    agentOwned: !!opts.agentLease,
     url, title: '', history: [], index: -1,
     modeId,
     forgetOnClose: !!opts.forgetOnClose,
@@ -341,6 +347,16 @@ function createTab(url = 'about:blank', opts = {}) {
     return { action: 'deny' };
   });
 
+  if (tab.agentOwned) {
+    // WebRTC's default UDP route does not honor an HTTP session proxy.
+    wc.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
+    const denyNonWeb = (event, target) => {
+      if (!/^https?:\/\//i.test(target)) event.preventDefault();
+    };
+    wc.on('will-navigate', denyNonWeb);
+    wc.on('will-redirect', denyNonWeb);
+  }
+
   if (url !== 'about:blank' && url !== '') {
     wc.loadURL(url).catch(() => {});
   }
@@ -389,6 +405,7 @@ function switchTab(id, { focus = true } = {}) {
   if (prev) chromeWin.contentView.removeChildView(prev.view);
   const tab = tabs.get(id);
   if (!tab) return;
+  agentNavigationEpoch++;
   activeTabId = id;
   chromeWin.contentView.addChildView(tab.view);
   layoutActiveView();
@@ -400,20 +417,39 @@ function switchTab(id, { focus = true } = {}) {
 async function closeTab(id, { notify = true, persist = true } = {}) {
   const tab = tabs.get(id);
   if (!tab) return;
-  if (tab.forgetOnClose || tab.modeId === 'ephemeral' || tab.partition) {
-    try { await clearSessionData(tab.adapter.session); } catch {}
-    log.log('INFO', 'site data cleared on tab close', { url: tab.url.slice(0, 200), partition: tab.partition || 'default' });
+  if (tab.closePromise) return tab.closePromise;
+  // Revoke authority before the first await: an in-flight readiness check
+  // cannot load a tab whose teardown has begun.
+  tab.closing = true;
+  let lease = null;
+  if (agentTabId === id) {
+    agentNavigationEpoch++;
+    agentTabId = null;
+    lease = agentLease;
+    agentLease = null;
   }
-  chromeWin.contentView.removeChildView(tab.view);
-  tab.wc.close();
-  tabs.delete(id);
-  if (activeTabId === id) {
-    activeTabId = null;
-    const next = [...tabs.keys()].pop();
-    if (next != null) switchTab(next, { focus: false });
-  }
-  if (persist) persistOpenTabs();
-  if (notify) sendState();
+  tab.closePromise = (async () => {
+    try {
+      if (lease) await lease.stop();
+    } finally {
+      if (tab.forgetOnClose || tab.modeId === 'ephemeral' || tab.partition) {
+        try { await clearSessionData(tab.adapter.session); } catch {}
+        log.log('INFO', 'site data cleared on tab close', { url: tab.url.slice(0, 200), partition: tab.partition || 'default' });
+      }
+      chromeWin.contentView.removeChildView(tab.view);
+      tab.wc.close();
+      tabs.delete(id);
+      if (lease) sessions.delete(tab.partition);
+      if (activeTabId === id) {
+        activeTabId = null;
+        const next = [...tabs.keys()].pop();
+        if (next != null) switchTab(next, { focus: false });
+      }
+      if (persist) persistOpenTabs();
+      if (notify) sendState();
+    }
+  })();
+  return tab.closePromise;
 }
 
 async function changePrivacyMode(nextModeId) {
@@ -456,6 +492,75 @@ function activeTab() {
   return tabs.get(activeTabId) || null;
 }
 
+const AGENT_RECOVERY = 'Open an agent tab with POST /navigate then POST /navigate/confirm; human tabs cannot be controlled by the agent';
+let agentNavigationBusy = false;
+let agentNavigationEpoch = 0;
+let agentQuitting = false;
+function assertAgentNavigationCurrent(tab, lease, epoch) {
+  if (agentQuitting || agentNavigationEpoch !== epoch || activeTab() !== tab || tab.closing ||
+      tabs.get(tab.id) !== tab || agentTabId !== tab.id || agentLease !== lease ||
+      tab.wc.isDestroyed()) throw new Error(AGENT_RECOVERY);
+}
+async function requireAgentTab() {
+  const t = activeTab();
+  if (!t || !t.agentOwned || t.id !== agentTabId || !agentLease ||
+      t.partition !== agentLease.partition || t.wc.isDestroyed()) throw new Error(AGENT_RECOVERY);
+  await agentLease.assertReady();
+  if (activeTab() !== t || agentTabId !== t.id) throw new Error(AGENT_RECOVERY);
+  if (!/^https?:\/\//i.test(t.wc.getURL())) throw new Error('Agent page must be http(s); ' + AGENT_RECOVERY);
+  return t;
+}
+
+async function navigateAgent(url) {
+  if (!/^https?:\/\//i.test(url)) throw new Error('Agent destination must be http(s)');
+  if (agentNavigationBusy || agentQuitting) throw new Error('Agent navigation in progress or browser quitting');
+  agentNavigationBusy = true;
+  try {
+    if (agentLease && agentTabId && tabs.has(agentTabId)) {
+      const t = tabs.get(agentTabId);
+      if (activeTab() !== t || t.closing) throw new Error(AGENT_RECOVERY);
+      const lease = agentLease, epoch = agentNavigationEpoch;
+      try {
+        await lease.assertReady();
+      } catch (error) {
+        assertAgentNavigationCurrent(t, lease, epoch);
+        // A failed proxy is not reusable, even for a newly approved navigation.
+        await closeTab(t.id);
+      }
+      if (agentLease) {
+        assertAgentNavigationCurrent(t, lease, epoch);
+        await t.wc.loadURL(url);
+        return;
+      }
+    } else if (agentLease || agentTabId || [...tabs.values()].some(t => t.agentOwned)) {
+      // Never create a second lease while an inconsistent/closing agent tab exists.
+      throw new Error(AGENT_RECOVERY);
+    }
+    const selected = activeTab(), epoch = agentNavigationEpoch;
+    const lease = await createAgentSession({ session });
+    let t;
+    try {
+      if (agentQuitting || agentNavigationEpoch !== epoch || activeTab() !== selected || selected?.closing)
+        throw new Error(AGENT_RECOVERY);
+      // The first network load happens only after setProxy and resolveProxy.
+      t = createTab('about:blank', { agentLease: lease });
+      agentLease = lease;
+      agentTabId = t.id;
+      switchTab(t.id, { focus: false });
+      const switchedEpoch = agentNavigationEpoch;
+      await lease.assertReady();
+      assertAgentNavigationCurrent(t, lease, switchedEpoch);
+      await t.wc.loadURL(url);
+    } catch (error) {
+      if (t) await closeTab(t.id);
+      else await lease.stop();
+      throw error;
+    }
+  } finally {
+    agentNavigationBusy = false;
+  }
+}
+
 async function approveAgentNavigation(url) {
   if (!chromeWin || chromeWin.isDestroyed()) {
     log.log('DENY', 'agent navigation approval unavailable', { reason: 'no browser window' });
@@ -464,7 +569,7 @@ async function approveAgentNavigation(url) {
   const result = await dialog.showMessageBox(chromeWin, {
     type: 'warning',
     title: 'ForgeOS Browser — agent navigation request',
-    message: 'An external agent wants to navigate the active tab.',
+    message: 'An external agent wants to navigate an isolated agent-owned tab.',
     detail: `Destination:\n${String(url).slice(0, 1000)}\n\nAllow only if you requested this navigation.`,
     buttons: ['Deny', 'Allow navigation'],
     defaultId: 0,
@@ -595,7 +700,14 @@ function sendState() { sendToChrome('forge:state', buildState()); }
 function registerIpc() {
   ipcMain.handle('forge:navigate', (_e, url) => {
     const t = activeTab();
-    return t ? navigateIn(t, url) : null;
+    if (!t) return null;
+    if (t.agentOwned) {
+      // A human address-bar load never inherits the agent's proxy or authority.
+      const human = createTab('about:blank');
+      switchTab(human.id);
+      return navigateIn(human, url);
+    }
+    return navigateIn(t, url);
   });
   ipcMain.handle('forge:back', () => {
     const t = activeTab();
@@ -1013,15 +1125,11 @@ app.whenReady().then(() => {
     approveNavigate: (url) => approveAgentNavigation(url),
     // v0.11 agent capabilities: the same page the panels read, now indexed and
     // actionable. Reading is automatic; acting goes through the policy gate.
+    requireAgentTab,
     observe: () => readIndexedSnapshot(),
     act: (action) => executeAgentAction(action),
     approveAction: (info) => approveAgentAction(info),
-    navigate: (url) => new Promise((resolve, reject) => {
-      const t = activeTab();
-      if (!t) return reject(new Error('no active tab'));
-      navigateIn(t, url);
-      resolve();
-    }),
+    navigate: navigateAgent,
   }).then((api) => {
     agentApi = api;
     log.log('INFO', 'agent api listening', { url: `http://127.0.0.1:${api.port}`, tokenFile: api.tokenFile });
@@ -1132,26 +1240,33 @@ const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 async function readIndexedSnapshot() {
   const t = activeTab();
   if (!t || !t.wc || t.wc.isDestroyed()) return { error: 'no active tab' };
+  try { await requireAgentTab(); }
+  catch (error) { return { error: String(error.message || error).slice(0, 200) }; }
   try {
     const raw = await t.wc.executeJavaScript(forgeSnapshotScript(), true);
     const snapshot = normalizeSnapshot(raw);
-    const live = t.wc.getURL();
-    if (live) snapshot.url = live;
+    // The renderer has scrubbed sensitive value copies from the URL path.
+    // The live webContents URL is authority for navigation, not observation.
     return snapshot;
   } catch (e) {
     return { error: String((e && e.message) || e).slice(0, 200) };
   }
 }
 
+// Main-process authority: caller-supplied value, signal, and JSON witnesses never
+// grant an effect. WeakMap identity also prevents a copied action from replaying.
+const agentClickApprovals = new WeakMap();
+
 /** Execute one validated action against the active tab. */
 async function executeAgentAction(action) {
   const t = activeTab();
-  if (!t || !t.wc || t.wc.isDestroyed()) return { ok: false, reason: 'no active tab' };
   const kind = action && action.kind;
 
   try {
+    await requireAgentTab();
     if (kind === 'wait') {
       await sleepMs(Number(action.ms) || 600);
+      await requireAgentTab();
       return { ok: true, detail: 'waited' };
     }
     if (kind === 'scroll') {
@@ -1159,27 +1274,33 @@ async function executeAgentAction(action) {
       return { ok: !!(r && r.ok), detail: `scrollY=${r && r.y}` };
     }
 
+    let clickProof = null;
+    if (['click', 'fill', 'select'].includes(kind) && action && typeof action === 'object') {
+      const bound = agentClickApprovals.get(action);
+      agentClickApprovals.delete(action); // consume before any await, including a refusal
+      if (bound) {
+        if (bound.tab !== t || bound.wc !== t.wc || bound.url !== t.wc.getURL() ||
+            bound.index !== action.targetIndex || bound.kind !== kind ||
+            bound.value !== (action.value == null ? null : String(action.value)))
+          return { ok: false, reason: 'approval_required_or_stale' };
+        clickProof = { nonce: bound.nonce, descriptor: bound.descriptor, kind: bound.kind, value: bound.value };
+      }
+    }
     const resolved = await t.wc.executeJavaScript(
-      forgeActionScript(action.targetIndex, kind, action.value == null ? null : String(action.value)),
+      forgeActionScript(action.targetIndex, kind, action.value == null ? null : String(action.value), clickProof),
       true,
     );
+    await requireAgentTab();
     if (!resolved || !resolved.ok) {
       return { ok: false, reason: (resolved && resolved.reason) || 'element not resolvable' };
     }
-    if (resolved.done) return { ok: true, detail: 'option selected' };
+    if (resolved.done) return { ok: true, detail: kind === 'fill' ? 'typed' : kind === 'select' ? 'option selected' : 'clicked' };
 
     if (kind === 'click') {
       const point = { x: resolved.x, y: resolved.y, button: 'left', clickCount: 1 };
       t.wc.sendInputEvent({ type: 'mouseDown', ...point });
       t.wc.sendInputEvent({ type: 'mouseUp', ...point });
       return { ok: true, detail: `clicked ${resolved.x},${resolved.y}` };
-    }
-    if (kind === 'fill') {
-      // The page script already focused the field; typing through the browser
-      // (not by assigning .value) produces the keystroke events frameworks
-      // like React listen for.
-      await t.wc.insertText(String(action.value == null ? '' : action.value));
-      return { ok: true, detail: 'typed' };
     }
     return { ok: false, reason: `unsupported action kind "${kind}"` };
   } catch (e) {
@@ -1194,29 +1315,69 @@ async function executeAgentAction(action) {
  */
 async function approveAgentAction(info) {
   const action = (info && info.action) || {};
-  const policy = (info && info.policy) || { why: 'unclassified' };
   if (!chromeWin || chromeWin.isDestroyed()) {
     log.log('DENY', 'agent action approval unavailable', { reason: 'no browser window' });
     return false;
   }
-  const label = String(action.label || '').slice(0, 120) || '(unlabelled element)';
+  const t = activeTab();
+  if (!t || !t.wc || t.wc.isDestroyed()) return false;
+  try { await requireAgentTab(); } catch { return false; }
+  const wc = t.wc;
+  const url = wc.getURL();
+  const targetIndex = action.targetIndex;
+  const kind = action.kind;
+  if (!['click', 'fill', 'select'].includes(kind) || !Number.isSafeInteger(targetIndex)) return false;
+  if ((kind === 'fill' || kind === 'select') && action.value == null) return false;
+  const value = action.value == null ? null : String(action.value);
+  let nonce, descriptor, display;
+  nonce = require('crypto').randomBytes(24).toString('hex');
+  try {
+    const inspected = await wc.executeJavaScript(forgeActionScript(targetIndex, 'inspect', nonce, { kind }), true);
+    if (!inspected || !inspected.ok || action.targetIndex !== targetIndex || action.kind !== kind ||
+        (action.value == null ? null : String(action.value)) !== value ||
+        activeTab() !== t || wc.isDestroyed() || wc.getURL() !== url) return false;
+    descriptor = inspected.descriptor;
+    display = inspected.display;
+    if (!descriptor || !display) return false;
+  } catch { return false; }
   const result = await dialog.showMessageBox(chromeWin, {
     type: 'warning',
     title: 'ForgeOS Browser — agent action request',
-    message: `An external agent wants to ${action.kind === 'fill' ? 'type into' : 'activate'} an element.`,
-    detail: `Element: [${action.targetIndex}] ${label}\n` +
-      (action.value ? `Value: ${String(action.value).slice(0, 200)}\n` : '') +
-      `\nWhy this needs you: ${policy.why}\n` +
-      (info && info.goal ? `\nAgent goal: ${String(info.goal).slice(0, 300)}` : '') +
-      '\n\nAllow only if you asked for this.',
+    message: `An external agent wants to ${kind === 'fill' ? 'type into' : kind === 'select' ? 'select an option in' : 'activate'} an element.`,
+    detail: `Element: [${action.targetIndex}] ${display.label || '(unlabelled element)'}\n` +
+      `Current page: ${display.pageUrl}\nDestination: ${display.destination}\n` +
+      `Form method: ${display.formMethod || '(not a form)'}\n` +
+      (kind !== 'click' ? `Field: ${descriptor.tag} name=${display.fieldName || '(none)'} id=${display.fieldId || '(none)'}\n` : '') +
+      'JavaScript event handlers may have additional unknown side effects.\n' +
+      (kind !== 'click' ? 'The proposed text is hidden for privacy.\n' : '') +
+      '\nWhy this needs you: this interaction may change the page or submit data.\n' +
+      '\nAllow only if you asked for this.',
     buttons: ['Deny', 'Allow once'],
     defaultId: 0,
     cancelId: 0,
     noLink: true,
   });
-  const allowed = result.response === 1;
+  let allowed = result.response === 1;
+  if (allowed && descriptor) {
+    try {
+      if (action.targetIndex !== targetIndex || action.kind !== kind ||
+          (action.value == null ? null : String(action.value)) !== value ||
+          activeTab() !== t || wc.isDestroyed() || wc.getURL() !== url) allowed = false;
+      else {
+        const current = await wc.executeJavaScript(forgeActionScript(targetIndex, 'recheck', nonce, { kind }), true);
+        if (!current || !current.ok || action.targetIndex !== targetIndex ||
+            action.kind !== kind || (action.value == null ? null : String(action.value)) !== value ||
+            JSON.stringify(current.descriptor) !== JSON.stringify(descriptor) ||
+            activeTab() !== t || wc.isDestroyed() || wc.getURL() !== url) allowed = false;
+      }
+    } catch { allowed = false; }
+    if (allowed) {
+      try { await requireAgentTab(); } catch { allowed = false; }
+      if (allowed) agentClickApprovals.set(action, { tab: t, wc, url, index: targetIndex, kind, value, nonce, descriptor });
+    }
+  }
   log.log(allowed ? 'ALLOW' : 'DENY', 'agent action human decision', {
-    kind: action.kind, label, why: policy.why, decision: allowed ? 'allow' : 'deny',
+    kind: action.kind, label: display.label, why: 'interaction requires approval', decision: allowed ? 'allow' : 'deny',
   });
   return allowed;
 }
@@ -1305,6 +1466,14 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  agentQuitting = true;
+  agentNavigationEpoch++;
+  if (agentTabId != null) closeTab(agentTabId).catch(() => {});
+  else if (agentLease) {
+    const lease = agentLease;
+    agentLease = null;
+    lease.stop().catch(() => {});
+  }
   const api = agentApi;
   agentApi = null;
   if (!api) return;

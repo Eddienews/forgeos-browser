@@ -17,6 +17,7 @@
     "package:portable": "node scripts/make-portable.js"
   },
   "devDependencies": {
+    "@electron/asar": "^4.3.0",
     "@electron/packager": "^20.3.0",
     "electron": "43.5.1"
   }

@@ -22,6 +22,27 @@ const raw = (over = {}) => ({
 
 module.exports = [
   {
+    name: 'sensitive controls are masked in both visible and below-fold catalogues',
+    gate: 'C1',
+    fn: async (assert) => {
+      const sensitive = [
+        { index: 10, kind: 'fill', role: 'textbox', label: 'Password', input_type: 'password', current_value: 'fixture-password' },
+        { index: 11, kind: 'fill', role: 'textbox', label: 'Card number', autocomplete: 'cc-number', current_value: 'fixture-card' },
+        { index: 12, kind: 'fill', role: 'textbox', label: 'One-time code', name: 'verification_code', current_value: 'fixture-otp' },
+        { index: 13, kind: 'fill', role: 'textbox', label: 'Buscar', current_value: 'ordinary-query' },
+      ];
+      const s = normalizeSnapshot(raw({ elements: sensitive, below_fold: sensitive }));
+      for (const list of [s.elements, s.below_fold]) {
+        assert.deepStrictEqual(list.slice(0, 3).map(e => e.current_value), ['', '', '']);
+        assert.strictEqual(list[3].current_value, 'ordinary-query');
+      }
+      for (const fixture of ['fixture-password', 'fixture-card', 'fixture-otp']) {
+        assert.ok(!JSON.stringify(s).includes(fixture));
+        assert.ok(!elementCatalogue(s).join(' ').includes(fixture));
+      }
+    },
+  },
+  {
     name: 'normalises a well-formed payload and computes a fingerprint',
     gate: 'L',
     fn: async (assert) => {

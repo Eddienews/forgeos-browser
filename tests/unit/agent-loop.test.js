@@ -25,6 +25,17 @@ const page = (over = {}) => ({
 
 module.exports = [
   {
+    name: 'default submit button cannot be clicked without human approval',
+    gate: 'C1',
+    fn: async (assert) => {
+      const p = fakePage([page({ elements: [{ index: 8, kind: 'click', role: 'button', label: 'Continue', is_submit: true }] })]);
+      const out = await runGoal({ goal: 'continue', observe: p.observe, act: p.act,
+        decide: async () => ({ operation: 'CLICK', target: 8 }), requestApproval: async () => false }, { settleMs: 0 });
+      assert.strictEqual(out.status, 'blocked');
+      assert.strictEqual(p.acted.length, 0);
+    },
+  },
+  {
     name: 'a decider that refuses explains itself to the caller',
     gate: 'L',
     fn: async (assert) => {
@@ -110,6 +121,7 @@ module.exports = [
         observe: async () => page({ text: `conteúdo ${n}` }),
         act: async () => { n += 1; return { ok: true }; },
         decide: async () => ({ operation: 'CLICK', target: 1 }),
+        requestApproval: async () => true,
       }, { maxSteps: 3, settleMs: 0 });
       assert.strictEqual(out.status, 'stalled');
       assert.ok(/budget/.test(out.note), `expected a budget note, got: ${out.note}`);
@@ -126,6 +138,7 @@ module.exports = [
         observe: p.observe,
         act: async () => ({ ok: true }),
         decide: async () => ({ operation: 'CLICK', target: 1 }),
+        requestApproval: async () => true,
       }, { maxSteps: 10, settleMs: 0 });
       assert.strictEqual(out.status, 'stalled');
       assert.ok(/did not change/.test(out.note), `expected a no-change note, got: ${out.note}`);
@@ -197,6 +210,7 @@ module.exports = [
       }, { settleMs: 0 });
       assert.strictEqual(out.status, 'done');
       assert.strictEqual(p.acted.length, 1);
+      assert.strictEqual(p.acted[0].value, null, 'task loop must not mint a click proof');
       assert.strictEqual(out.evidence[0].risk, 'approval');
       assert.strictEqual(out.evidence[0].outcome, 'ok');
     },

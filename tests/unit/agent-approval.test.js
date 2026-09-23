@@ -8,6 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
+const dns = require('dns');
 const { startAgentApi } = require('../../src/ext/agent-api');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'forge-approval-test-'));
@@ -44,6 +45,29 @@ async function boot(humanAllows = true) {
 }
 
 module.exports = [
+  {
+    name: 'confirmation refuses hostname rebound to private IP after approval', gate: 'C1',
+    fn: async (assert) => {
+      const original = dns.promises.lookup;
+      let calls = 0;
+      dns.promises.lookup = async () => [{ address: ++calls === 1 ? '93.184.215.14' : '10.1.2.3', family: 4 }];
+      let t;
+      try {
+        t = await boot(true);
+        const pending = await req(t.port, 'POST', '/navigate', t.token, { url: 'https://rebind.example/path' });
+        assert.strictEqual(pending.status, 200);
+        const confirm = await req(t.port, 'POST', '/navigate/confirm', t.token, { confirm_id: pending.body.confirm_id });
+        assert.strictEqual(confirm.status, 403);
+        assert.strictEqual(t.asked.length, 1);
+        assert.strictEqual(t.navigated.length, 0);
+        assert.strictEqual((await req(t.port, 'POST', '/navigate/confirm', t.token,
+          { confirm_id: pending.body.confirm_id })).status, 400);
+      } finally {
+        if (t) await t.close();
+        dns.promises.lookup = original;
+      }
+    },
+  },
   {
     name: 'agent navigation stays pending, then runs once after human approval',
     gate: 'A1',
