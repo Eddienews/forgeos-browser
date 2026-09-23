@@ -92,7 +92,9 @@ function approvedMacMember(value, directory) {
   const resource = new Set(['app.asar', 'electron.asar', 'chrome_100_percent.pak',
     'chrome_200_percent.pak', 'resources.pak', 'icudtl.dat', 'snapshot_blob.bin',
     'v8_context_snapshot.bin', 'vk_swiftshader_icd.json', 'electron.icns']);
-  const locale = name => /^[a-z]{2,3}(?:[-_][A-Za-z0-9]+)?\.lproj$/.test(name);
+  // Electron 43's macOS bundle also ships this exact ICU locale variant.
+  const locale = name => name === 'pt_PT_MASCULINE.lproj' ||
+    /^[a-z]{2,3}(?:[-_][A-Za-z0-9]+)?\.lproj$/.test(name);
   // Electron Packager places its exact vendor license filenames beside .app.
   if (['LICENSE', 'LICENSES.chromium.html', 'PORTABLE.md'].includes(value)) return !directory;
   if (['logs', 'downloads', 'results'].includes(p[0])) {

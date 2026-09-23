@@ -61,6 +61,8 @@ module.exports = [
         [p + 'Resources/app.asar', 'asar'],
         [p + 'Resources/en.lproj/locale.pak', 'locale'],
         [p + 'Frameworks/Electron Framework.framework/Versions/A/Electron Framework', 'binary'],
+        [p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/pt_PT_MASCULINE.lproj/', '', 0o40755],
+        [p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/pt_PT_MASCULINE.lproj/locale.pak', 'locale'],
         [p + 'Frameworks/Electron Framework.framework/Versions/A/_CodeSignature/', '', 0o40755],
         [p + 'Frameworks/Electron Framework.framework/Versions/A/_CodeSignature/CodeResources', 'synthetic signature'],
         [p + 'Frameworks/Electron Framework.framework/Versions/Current', 'A', 0o120777],
@@ -71,6 +73,7 @@ module.exports = [
         a.ok(verifyPortableArchive(zip, 'darwin', 'x64'));
         for (const privatePath of ['ForgeBrowserLab-darwin-x64/private-note.txt',
           p + 'Resources/en.lproj/private-key.txt',
+          p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/pt_PT_MASCULINE.lproj/private-key.txt',
           p + 'Frameworks/Electron Framework.framework/Versions/A/_CodeSignature/private-key.txt',
           p + 'Frameworks/Electron Framework.framework/private-key.txt']) {
           syntheticZip(zip, [...entries, [privatePath, 'synthetic secret']]);
