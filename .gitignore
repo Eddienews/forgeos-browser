@@ -17,3 +17,6 @@ forge-fp-level
 forge-allowlist.json.presets
 forge-session.json
 scripts/_*.js
+
+# local working notes (handoffs, scratch) — not part of the product
+.hermes/
