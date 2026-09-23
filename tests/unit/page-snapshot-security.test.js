@@ -3,6 +3,7 @@
 const vm = require('vm');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const http = require('http');
 const { startAgentApi } = require('../../src/ext/agent-api');
 const { forgeSnapshotScript } = require('../../src/page-snapshot');
@@ -55,7 +56,7 @@ module.exports = [
     a.strictEqual(refusal.reason, 'sensitive_field');
   } },
   { name: 'GET /snapshot?raw=1 never exposes synthetic field, label or URL query values', gate: 'C1', fn: async (assert) => {
-    const baseDir = fs.mkdtempSync(path.join(process.env.TMPDIR, 'forge-snapshot-security-'));
+    const baseDir = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'forge-snapshot-security-'));
     const raw = snapshot([node('INPUT', { name: 'api_key', type: 'text', value: 'fixture-value-91',
       attrs: { 'aria-label': 'API key fixture-label-82' } })]);
     let api;

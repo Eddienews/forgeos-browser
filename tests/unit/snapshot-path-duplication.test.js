@@ -3,6 +3,7 @@
 const vm = require('vm');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const http = require('http');
 const { forgeSnapshotScript } = require('../../src/page-snapshot');
 const { normalizeSnapshot } = require('../../src/engine/page-snapshot');
@@ -71,7 +72,7 @@ module.exports = [
     noLeak(assert, normalizeSnapshot(normalized), 're-normalized');
   } },
   { name: 'GET /snapshot default/raw and model decider never receive path duplicates', gate: 'C1', fn: async assert => {
-    const dir = fs.mkdtempSync(path.join(process.env.TMPDIR, 'forge-path-regression-'));
+    const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'forge-path-regression-'));
     let api;
     try {
       api = await startAgentApi({ port: 0, baseDir: dir, observe: async () => extract(),

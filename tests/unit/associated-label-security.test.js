@@ -3,6 +3,7 @@
 const vm = require('vm');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const http = require('http');
 const { IN_PAGE_SCRIPT, analyzeAgentView } = require('../../src/engine/agent-view');
 const { forgeSnapshotScript } = require('../../src/page-snapshot');
@@ -91,7 +92,7 @@ module.exports = [
     a.ok(!JSON.stringify(vm.runInNewContext(IN_PAGE_SCRIPT, context)).includes(secret));
     a.ok(!JSON.stringify(vm.runInNewContext(forgeSnapshotScript(), context)).includes(secret));
     editable.innerText = secret;
-    const dir = fs.mkdtempSync(path.join(process.env.TMPDIR, 'forge-editable-'));
+    const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'forge-editable-'));
     let api;
     try {
       api = await startAgentApi({ port: 0, baseDir: dir, requireAgentTab: async () => {},
@@ -181,7 +182,7 @@ module.exports = [
     const indexed = vm.runInNewContext(forgeSnapshotScript(), fixture().context);
     noLeak(a, indexed, 'indexed extraction');
     noLeak(a, normalizeSnapshot(indexed), 'indexed normalization');
-    const dir = fs.mkdtempSync(path.join(process.env.TMPDIR, 'forge-associated-label-'));
+    const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'forge-associated-label-'));
     let api;
     try {
       api = await startAgentApi({ port: 0, baseDir: dir, requireAgentTab: async () => {},

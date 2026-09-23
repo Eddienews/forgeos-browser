@@ -109,8 +109,11 @@ module.exports = [
       const run = probePortable('linux');
       const zip = run.commands.find(({ command }) => command.startsWith('zip '));
       a.ok(zip, 'zip must be invoked');
-      a.ok(!zip.command.includes(path.join(__dirname, '../..').replace(/\\/g, '/')),
-        'zip must not archive an absolute source path');
+      const exactRelativeZip = /^zip -r "[^"]+" "ForgeBrowserLab-linux-x64"$/;
+      a.match(zip.command, exactRelativeZip,
+        'zip must archive only the relative source directory, with no extra arguments');
+      a.doesNotMatch(`${zip.command} ${path.join(__dirname, '../..')}`, exactRelativeZip,
+        'an extra unquoted absolute source path must fail the assertion');
       a.ok(zip.options.cwd.endsWith('dist'), 'zip cwd must be dist');
     },
   },
