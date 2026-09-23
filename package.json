@@ -19,6 +19,7 @@
   "devDependencies": {
     "@electron/asar": "^4.3.0",
     "@electron/packager": "^20.3.0",
-    "electron": "43.5.1"
+    "electron": "43.5.1",
+    "yaml": "2.9.1"
   }
 }

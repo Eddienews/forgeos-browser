@@ -5,8 +5,8 @@ on:
     tags:
       - 'v*'
   pull_request:
-    # PRs run the unit tests (fast feedback for contributors); packaging
-    # stays tag-only (each release rebuilds all 5 targets).
+    # PRs build and verify 5 target-OS archives (some cross-architecture).
+    # Uploads and releases remain tag-only; PR archives are ephemeral.
     paths-ignore:
       - 'README.md'
       - 'docs/**'
@@ -14,6 +14,8 @@ on:
 
 jobs:
   build:
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -42,9 +44,8 @@ jobs:
       - name: Run unit tests
         run: npm test
 
-      # Test-only Python dependencies stay outside the application and package.
-      - name: Setup Python for loopback QUIC fixture
-        if: matrix.os == 'windows-latest' && matrix.arch == 'x64'
+      # Python checks ZIP CRCs on every target; QUIC deps remain Windows-only.
+      - name: Setup Python for integrity and loopback QUIC fixture
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -75,12 +76,17 @@ jobs:
           esac
 
       - name: Package application
-        if: github.event_name == 'push'  # tag releases package; PRs test only
         run: node scripts/package.js --platform=${{ steps.platform.outputs.plat }} --arch=${{ matrix.arch }}
 
       - name: Create portable archive
-        if: github.event_name == 'push'
         run: node scripts/make-portable.js --platform=${{ steps.platform.outputs.plat }} --arch=${{ matrix.arch }}
+
+      - name: Verify ZIP integrity
+        run: |
+          python -c "import sys, zipfile; archive=sys.argv[1]; z=zipfile.ZipFile(archive); bad=z.testzip(); z.close(); print('ZIP integrity verified' if bad is None else 'Bad ZIP member: ' + bad); sys.exit(1 if bad else 0)" "dist/ForgeBrowserLab-portable-${{ steps.platform.outputs.plat }}-${{ matrix.arch }}.zip"
+
+      - name: Verify target-OS portable archive
+        run: node scripts/make-portable.js --verify-archive=dist/ForgeBrowserLab-portable-${{ steps.platform.outputs.plat }}-${{ matrix.arch }}.zip --platform=${{ steps.platform.outputs.plat }} --arch=${{ matrix.arch }} --verify-source
 
       - name: Upload artifacts
         if: github.event_name == 'push'

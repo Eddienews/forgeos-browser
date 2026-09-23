@@ -6,6 +6,7 @@ const workflow = fs.readFileSync(path.join(__dirname, '../../.github/workflows/b
 const os = require('os');
 const { execFileSync } = require('child_process');
 const asar = require('@electron/asar');
+const YAML = require('yaml');
 const { PACKAGE_FILES, verifyPortableArchive } = require('../../scripts/package-policy');
 
 // Small ZIP writer with valid CRCs and Unix symlink modes; unlike a mocked
@@ -157,6 +158,66 @@ module.exports = [
       a.match(workflow, /unexpected release archive/);
       a.match(workflow, /unzip -t/);
       a.match(workflow, /node \.\.\/scripts\/make-portable\.js.*--verify-archive=/);
+    },
+  },
+  {
+    name: 'PR verifies five target-OS archives without uploading or publishing them',
+    gate: 'J',
+    fn(a) {
+      const document = YAML.parse(workflow);
+      a.deepStrictEqual(Object.keys(document.on).sort(), ['pull_request', 'push']);
+      a.deepStrictEqual(document.on.push.tags, ['v*']);
+      a.deepStrictEqual(Object.keys(document.jobs).sort(), ['build', 'release']);
+      const { build, release } = document.jobs;
+      a.deepStrictEqual(build.permissions, { contents: 'read' });
+      a.strictEqual(build['runs-on'], '${{ matrix.os }}');
+      const matrix = build.strategy.matrix;
+      a.deepStrictEqual(Object.keys(matrix).sort(), ['arch', 'exclude', 'os']);
+      const combinations = matrix.os.flatMap(os => matrix.arch.map(arch => `${os}/${arch}`))
+        .filter(target => !matrix.exclude.some(x => target === `${x.os}/${x.arch}`)).sort();
+      a.deepStrictEqual(combinations, [
+        'windows-latest/x64', 'macos-latest/x64', 'macos-latest/arm64',
+        'ubuntu-latest/x64', 'ubuntu-latest/arm64',
+      ].sort());
+      const step = name => {
+        const matching = build.steps.filter(item => item.name === name);
+        a.strictEqual(matching.length, 1, `${name} must occur exactly once`);
+        return matching[0];
+      };
+      const packageStep = step('Package application');
+      const archiveStep = step('Create portable archive');
+      const integrityStep = step('Verify ZIP integrity');
+      const verifyStep = step('Verify target-OS portable archive');
+      for (const current of [packageStep, archiveStep, integrityStep, verifyStep]) {
+        a.ok(!Object.hasOwn(current, 'if'), `${current.name} must run on PR and tag`);
+      }
+      a.match(packageStep.run, /node scripts\/package\.js --platform=.*--arch=/);
+      a.match(archiveStep.run, /node scripts\/make-portable\.js --platform=.*--arch=/);
+      a.match(integrityStep.run, /zipfile\.ZipFile\(.*\).*testzip\(\)/s);
+      a.match(verifyStep.run, /node scripts\/make-portable\.js --verify-archive=.*--platform=.*--arch=.*--verify-source/);
+      const names = build.steps.map(item => item.name);
+      a.ok(names.indexOf('Run unit tests') < names.indexOf('Package application'));
+      a.ok(names.indexOf('Run isolated Electron transport and approval E2E') < names.indexOf('Package application'));
+      a.ok(names.indexOf('Package application') < names.indexOf('Create portable archive'));
+      a.ok(names.indexOf('Create portable archive') < names.indexOf('Verify ZIP integrity'));
+      a.ok(names.indexOf('Verify ZIP integrity') < names.indexOf('Verify target-OS portable archive'));
+      const uploads = Object.entries(document.jobs).flatMap(([job, value]) =>
+        value.steps.filter(item => /^actions\/upload-artifact@/.test(item.uses || ''))
+          .map(item => ({ job, item })));
+      a.strictEqual(uploads.length, 1, 'only the tag build may upload artifacts');
+      a.strictEqual(uploads[0].job, 'build');
+      a.strictEqual(uploads[0].item.name, 'Upload artifacts');
+      a.strictEqual(uploads[0].item.if, "github.event_name == 'push'");
+      a.deepStrictEqual(release.permissions, { contents: 'write' });
+      a.strictEqual(release.if,
+        "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')");
+      a.strictEqual(release.needs, 'build');
+      const publishers = Object.entries(document.jobs).flatMap(([job, value]) =>
+        value.steps.filter(item => /\bgh release (create|edit|upload)\b/.test(item.run || ''))
+          .map(item => ({ job, item })));
+      a.strictEqual(publishers.length, 1, 'only the tag-gated release job may publish');
+      a.strictEqual(publishers[0].job, 'release');
+      a.strictEqual(publishers[0].item.name, 'Publish GitHub Release');
     },
   },
   {
