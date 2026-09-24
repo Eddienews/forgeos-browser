@@ -71,6 +71,7 @@ module.exports = [
         [p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/MainMenu.nib', 'synthetic vendor menu'],
         [p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/v8_context_snapshot.x86_64.bin', 'snapshot'],
         [p + 'Frameworks/Electron Framework.framework/Versions/A/Libraries/vk_swiftshader_icd.json', 'synthetic vendor manifest'],
+        [p + 'Frameworks/Squirrel.framework/Versions/A/Resources/ShipIt', 'synthetic vendor helper'],
         ...frameworkLocales.flatMap(name => {
           const dir = p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/' + name + '.lproj/';
           return [[dir, '', 0o40755], [dir + 'locale.pak', 'locale']];
@@ -93,6 +94,8 @@ module.exports = [
           p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/v8_context_snapshot.arm64.bin',
           p + 'Frameworks/Mantle.framework/Versions/A/Libraries/vk_swiftshader_icd.json',
           p + 'Frameworks/Electron Framework.framework/Versions/A/Libraries/private-key.json',
+          p + 'Frameworks/Mantle.framework/Versions/A/Resources/ShipIt',
+          p + 'Frameworks/Squirrel.framework/Versions/A/Resources/private-key.txt',
           p + 'Resources/pt_PT_MASCULINE.lproj/locale.pak',
           p + 'Frameworks/Mantle.framework/Versions/A/Resources/zh_CN_FEMININE.lproj/locale.pak',
           p + 'Frameworks/Mantle.framework/Versions/A/Resources/MainMenu.nib',
@@ -158,6 +161,14 @@ module.exports = [
           syntheticZip(zip, mutated);
           a.throws(() => verifyPortableArchive(zip, 'darwin', 'x64'),
             /Invalid macOS library manifest ZIP mode/);
+        }
+        const shipIt = p + 'Frameworks/Squirrel.framework/Versions/A/Resources/ShipIt';
+        for (const mode of [0o120777, 0o40755]) {
+          const mutated = entries.map(([name, content, originalMode]) =>
+            name === shipIt ? [name, 'A', mode] : [name, content, originalMode]);
+          syntheticZip(zip, mutated);
+          a.throws(() => verifyPortableArchive(zip, 'darwin', 'x64'),
+            /Invalid macOS ShipIt ZIP mode/);
         }
       } finally { fs.rmSync(temp, { recursive: true, force: true }); }
     },

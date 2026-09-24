@@ -156,7 +156,8 @@ function approvedMacMember(value, directory, arch) {
       isMacFrameworkLocale(candidate) : locale(candidate);
     if (v.length === 2) return (resource.has(v[1]) || v[1] === 'Info.plist' ||
       name === 'Electron Framework' && (v[1] === 'MainMenu.nib' ||
-        v[1] === `v8_context_snapshot.${arch === 'x64' ? 'x86_64' : 'arm64'}.bin`)) && !directory ||
+        v[1] === `v8_context_snapshot.${arch === 'x64' ? 'x86_64' : 'arm64'}.bin`) ||
+      name === 'Squirrel' && v[1] === 'ShipIt') && !directory ||
       frameworkLocale(v[1]) && directory;
     return v.length === 3 && frameworkLocale(v[1]) &&
       v[2] === 'locale.pak' && !directory;
@@ -270,6 +271,9 @@ function verifyPortableArchive(archive, platform, arch, options = {}) {
     if (platform === 'darwin' && value ===
         'ForgeBrowserLab.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/vk_swiftshader_icd.json' &&
         (mode & 0xf000) !== 0x8000) throw new Error(`Invalid macOS library manifest ZIP mode: ${zipPath}`);
+    if (platform === 'darwin' && value ===
+        'ForgeBrowserLab.app/Contents/Frameworks/Squirrel.framework/Versions/A/Resources/ShipIt' &&
+        (mode & 0xf000) !== 0x8000) throw new Error(`Invalid macOS ShipIt ZIP mode: ${zipPath}`);
     if (platform === 'darwin' ? value === 'ForgeBrowserLab.app/Contents/Resources/app.asar' :
       value === 'resources/app.asar') {
       if (directory || (mode & 0xf000) === 0xa000) throw new Error(`Invalid app.asar ZIP member: ${zipPath}`);

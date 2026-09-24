@@ -84,7 +84,7 @@ jobs:
         if: github.event_name == 'pull_request' && matrix.os == 'macos-latest'
         shell: bash
         run: |
-          node -e 'const fs = require("node:fs"); const base = "dist/ForgeBrowserLab-darwin-${{ matrix.arch }}/ForgeBrowserLab.app/Contents/Frameworks/Electron Framework.framework/Versions/A"; for (const folder of ["Resources", "Libraries", "Helpers"]) { const dir = `${base}/${folder}`; if (!fs.existsSync(dir)) continue; const entries = fs.readdirSync(dir, { withFileTypes: true }).map(entry => [entry.name, entry.isDirectory() ? "directory" : entry.isFile() ? "file" : entry.isSymbolicLink() ? "symlink" : "other"]).sort((a, b) => a[0].localeCompare(b[0])); console.log(`Electron Framework ${folder} entries:`, JSON.stringify(entries)); }'
+          node -e 'const fs = require("node:fs"); const root = "dist/ForgeBrowserLab-darwin-${{ matrix.arch }}/ForgeBrowserLab.app/Contents/Frameworks"; for (const framework of ["Electron Framework", "Mantle", "ReactiveObjC", "Squirrel"]) for (const folder of ["Resources", "Libraries", "Helpers"]) { const dir = `${root}/${framework}.framework/Versions/A/${folder}`; if (!fs.existsSync(dir)) continue; const entries = fs.readdirSync(dir, { withFileTypes: true }).map(entry => [entry.name, entry.isDirectory() ? "directory" : entry.isFile() ? "file" : entry.isSymbolicLink() ? "symlink" : "other"]).sort((a, b) => a[0].localeCompare(b[0])); console.log(`${framework} ${folder} entries:`, JSON.stringify(entries)); }'
 
       - name: Create portable archive
         run: node scripts/make-portable.js --platform=${{ steps.platform.outputs.plat }} --arch=${{ matrix.arch }}
