@@ -86,6 +86,10 @@ function isPackageExcluded(filePath) {
   return PACKAGE_IGNORE_RE.test(`/${normalized}`);
 }
 
+// Exact gendered ICU locales observed in both Electron 43 macOS bundles.
+const MAC_GENDERED_LOCALE = /^(?:en_GB|es_419|pt_BR|pt_PT|zh_CN|zh_TW)_(?:FEMININE|MASCULINE|NEUTER)\.lproj$/;
+const MAC_GENDERED_RESOURCE_PREFIX = 'ForgeBrowserLab.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/';
+
 // Mac bundle containers are traversable, but each leaf is explicitly reviewed.
 function approvedMacMember(value, directory) {
   const p = value.split('/');
@@ -94,8 +98,7 @@ function approvedMacMember(value, directory) {
     'v8_context_snapshot.bin', 'vk_swiftshader_icd.json', 'electron.icns']);
   const locale = name => /^[a-z]{2,3}(?:[-_][A-Za-z0-9]+)?\.lproj$/.test(name);
   // Only these observed Electron Framework ICU variants extend the locale rule.
-  const frameworkLocale = name => ['pt_PT_MASCULINE.lproj', 'zh_CN_FEMININE.lproj',
-    'zh_TW_NEUTER.lproj'].includes(name);
+  const frameworkLocale = name => MAC_GENDERED_LOCALE.test(name);
   // Electron Packager places its exact vendor license filenames beside .app.
   if (['LICENSE', 'LICENSES.chromium.html', 'PORTABLE.md'].includes(value)) return !directory;
   if (['logs', 'downloads', 'results'].includes(p[0])) {
@@ -237,8 +240,11 @@ function verifyPortableArchive(archive, platform, arch, options = {}) {
       const expectedType = value.endsWith('/_CodeSignature') ? 0x4000 : 0x8000;
       if ((mode & 0xf000) !== expectedType) throw new Error(`Invalid code signature ZIP mode: ${zipPath}`);
     }
-    if (platform === 'darwin' && /^ForgeBrowserLab\.app\/Contents\/Frameworks\/Electron Framework\.framework\/Versions\/A\/Resources\/(?:pt_PT_MASCULINE|zh_CN_FEMININE|zh_TW_NEUTER)\.lproj(?:\/locale\.pak)?$/.test(value)) {
-      const expectedType = value.endsWith('/locale.pak') ? 0x8000 : 0x4000;
+    const genderedPath = platform === 'darwin' && value.startsWith(MAC_GENDERED_RESOURCE_PREFIX)
+      ? value.slice(MAC_GENDERED_RESOURCE_PREFIX.length).split('/') : [];
+    if (MAC_GENDERED_LOCALE.test(genderedPath[0] || '') &&
+        (genderedPath.length === 1 || genderedPath.length === 2 && genderedPath[1] === 'locale.pak')) {
+      const expectedType = genderedPath.length === 1 ? 0x4000 : 0x8000;
       if ((mode & 0xf000) !== expectedType) throw new Error(`Invalid gendered locale ZIP mode: ${zipPath}`);
     }
     if (platform === 'darwin' ? value === 'ForgeBrowserLab.app/Contents/Resources/app.asar' :

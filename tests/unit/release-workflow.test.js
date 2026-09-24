@@ -54,6 +54,8 @@ module.exports = [
       const temp = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'forge-mac-zip-'));
       const zip = path.join(temp, 'mac.zip');
       const p = 'ForgeBrowserLab-darwin-x64/ForgeBrowserLab.app/Contents/';
+      const genderedLocales = ['en_GB', 'es_419', 'pt_BR', 'pt_PT', 'zh_CN', 'zh_TW']
+        .flatMap(region => ['FEMININE', 'MASCULINE', 'NEUTER'].map(gender => `${region}_${gender}`));
       const entries = [
         ['ForgeBrowserLab-darwin-x64/LICENSE', 'synthetic vendor license'],
         ['ForgeBrowserLab-darwin-x64/LICENSES.chromium.html', 'synthetic vendor notices'],
@@ -61,12 +63,10 @@ module.exports = [
         [p + 'Resources/app.asar', 'asar'],
         [p + 'Resources/en.lproj/locale.pak', 'locale'],
         [p + 'Frameworks/Electron Framework.framework/Versions/A/Electron Framework', 'binary'],
-        [p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/pt_PT_MASCULINE.lproj/', '', 0o40755],
-        [p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/pt_PT_MASCULINE.lproj/locale.pak', 'locale'],
-        [p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/zh_CN_FEMININE.lproj/', '', 0o40755],
-        [p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/zh_CN_FEMININE.lproj/locale.pak', 'locale'],
-        [p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/zh_TW_NEUTER.lproj/', '', 0o40755],
-        [p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/zh_TW_NEUTER.lproj/locale.pak', 'locale'],
+        ...genderedLocales.flatMap(name => {
+          const dir = p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/' + name + '.lproj/';
+          return [[dir, '', 0o40755], [dir + 'locale.pak', 'locale']];
+        }),
         [p + 'Frameworks/Electron Framework.framework/Versions/A/_CodeSignature/', '', 0o40755],
         [p + 'Frameworks/Electron Framework.framework/Versions/A/_CodeSignature/CodeResources', 'synthetic signature'],
         [p + 'Frameworks/Electron Framework.framework/Versions/Current', 'A', 0o120777],
@@ -79,6 +79,8 @@ module.exports = [
           p + 'Resources/en.lproj/private-key.txt',
           p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/zh_CN_PRIVATE.lproj/locale.pak',
           p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/zh_PRIVATE_FEMININE.lproj/locale.pak',
+          p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/es_999_NEUTER.lproj/locale.pak',
+          p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/fr_FR_FEMININE.lproj/locale.pak',
           p + 'Resources/pt_PT_MASCULINE.lproj/locale.pak',
           p + 'Frameworks/Mantle.framework/Versions/A/Resources/zh_CN_FEMININE.lproj/locale.pak',
           p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/pt_PT_MASCULINE.lproj/private-key.txt',
@@ -100,7 +102,7 @@ module.exports = [
           a.throws(() => verifyPortableArchive(zip, 'darwin', 'x64'),
             /Invalid code signature ZIP mode/, `${target} mode ${mode.toString(8)} must fail`);
         }
-        for (const localeName of ['pt_PT_MASCULINE', 'zh_CN_FEMININE', 'zh_TW_NEUTER']) {
+        for (const localeName of genderedLocales) {
           const localeDir = p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/' + localeName + '.lproj/';
           for (const [target, mode] of [
             [localeDir, 0o120777], [localeDir, 0o100644],
