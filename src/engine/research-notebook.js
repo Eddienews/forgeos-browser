@@ -7,7 +7,9 @@ const MAX_SOURCES = 100;
 const MAX_EXCERPT = 2000;
 const MAX_NOTES = 12000;
 const MAX_FILE = 512000;
-const secret = /(?:\b(?:password|passwd|secret|api[_ -]?key|access[_ -]?token|refresh[_ -]?token|session[_ -]?id|session[_ -]?token|authorization)\s*[:=]\s*\S+|\bBearer\s+\S+|\b(?:sk-|ghp_|github_pat_)\S+)/i;
+// Recognized assignments include JSON/quoted keys and env-style unquoted keys.
+// This is not a generic secret scanner; reject only known credential syntax.
+const secret = /(?:\b(?:password|passwd|secret|api[_ -]?key|access[_ -]?token|refresh[_ -]?token|session[_ -]?id|session[_ -]?token|authorization)["']?\s*[:=]\s*["']?[^\s"'{}\[\],]+|\bBearer\s+(?=[A-Za-z0-9._~+/-]*[0-9._~+/-])[A-Za-z0-9._~+/-]{8,}\b|\b(?:sk-|ghp_|github_pat_)\S+)/i;
 const empty = () => ({ version: 1, sources: [], comparison: [], notes: '' });
 // Executed only on explicit chrome capture. No page preload or agent API path.
 const SELECTION_SCRIPT = `(() => {

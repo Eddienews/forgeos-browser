@@ -55,6 +55,21 @@ async function runNotebookE2E(wc, pageUrl, base, record) {
   record('NOTEBOOK', 'recognized session_id notes rejected without changing state',
     (() => { try { notebook.saveNotes(base, 'session_id=fixture-private-session'); return false; }
       catch { return notebook.load(base).notes === ''; } })(), 'no secret note persisted');
+  await wc.executeJavaScript(`(() => {
+    const p = document.createElement('p'); p.id = 'notebook-structured-secret';
+    p.textContent = '{"access_token":"fixture-private-token"}'; document.body.append(p);
+    const r = document.createRange(); r.selectNodeContents(p);
+    window.getSelection().removeAllRanges(); window.getSelection().addRange(r);
+  })()`);
+  const structuredSelection = await wc.executeJavaScript(notebook.SELECTION_SCRIPT, true);
+  const before = fs.readFileSync(file, 'utf8');
+  let rejected = false;
+  try { notebook.addSource(base, structuredSelection); } catch (e) { rejected = /Invalid excerpt/.test(e.message); }
+  record('NOTEBOOK', 'structured credential selection rejected before persistence and export',
+    structuredSelection?.excerpt === '{"access_token":"fixture-private-token"}' && rejected &&
+    fs.readFileSync(file, 'utf8') === before &&
+    !notebook.exportText(notebook.load(base)).includes('fixture-private-token'),
+    'captured in Chromium but absent from persisted state and export');
   notebook.saveNotes(base, 'Human comparison only.');
   notebook.setComparison(base, [stored.id]);
   const output = path.join(base, 'notebook-export.txt');

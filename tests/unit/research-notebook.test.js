@@ -77,6 +77,46 @@ module.exports = [
     assert(!fs.existsSync(path.join(root, 'forge-research-notebook.key')));
     assert.equal(N.load(root).sources.length, 2);
   }) },
+  { name: 'structured recognized secrets are rejected at note, excerpt, persisted-state and export boundaries', fn: assert => isolated(root => {
+    const input = { url: 'https://example.com/article', title: 'Public article', excerpt: 'Public finding' };
+    const source = N.addSource(root, input).source;
+    N.saveNotes(root, 'Human comparison only.');
+    const file = path.join(root, 'forge-research-notebook.json');
+    const baseline = fs.readFileSync(file, 'utf8');
+    const fixtureCases = [
+      '{"session_id":"fixture-private-session"}',
+      '{"access_token":"fixture-private-token"}',
+      "{'refresh_token': 'fixture-private-refresh'}",
+      'session_id=fixture-private-env',
+      'export ACCESS_TOKEN="fixture-private-env-token"',
+      'Authorization: ' + 'Bearer ' + 'fixture-private-bearer',
+      'Authorization=Bearer fixture-private-assignment',
+      'Bearer ' + 'fixture-private-standalone',
+    ];
+    for (const [i, fixture] of fixtureCases.entries()) {
+      assert.throws(() => N.saveNotes(root, fixture), /Invalid notes/, fixture);
+      assert.throws(() => N.addSource(root, { ...input, excerpt: fixture }), /Invalid excerpt/, fixture);
+      assert.equal(fs.readFileSync(file, 'utf8'), baseline, `rejected fixture ${i} changed disk`);
+      for (const field of ['notes', 'excerpt']) {
+        const injected = N.load(root);
+        if (field === 'notes') injected.notes = fixture;
+        else injected.sources[0].excerpt = fixture;
+        fs.writeFileSync(file, JSON.stringify(injected));
+        assert.throws(() => N.load(root), /Invalid notebook|Invalid excerpt/, `load ${field}: ${fixture}`);
+        assert.throws(() => N.exportText(injected), /Invalid notebook|Invalid excerpt/, `exportText ${field}: ${fixture}`);
+        const output = path.join(root, `rejected-${i}-${field}.txt`);
+        assert.throws(() => N.exportTo(root, output), /Invalid notebook|Invalid excerpt/, `exportTo ${field}: ${fixture}`);
+        assert(!fs.existsSync(output), `export created ${output}`);
+        fs.writeFileSync(file, baseline);
+      }
+    }
+    assert.equal(N.load(root).sources[0].id, source.id);
+    for (const prose of ['The session_id field is optional.', 'Discuss access_token handling without a value.', 'Authorization and Bearer are header terms.']) {
+      N.saveNotes(root, prose);
+      assert.equal(N.load(root).notes, prose);
+      assert(N.exportText(N.load(root)).includes(prose));
+    }
+  }) },
   { name: 'hostile title/excerpt/URL, limits and duplicate comparison rejected', fn: assert => isolated(root => {
     const input = { url: 'https://example.com/', title: '<img src=x onerror=alert(1)>', excerpt: '<script>alert(1)</script>' };
     const source = N.addSource(root, input).source;
