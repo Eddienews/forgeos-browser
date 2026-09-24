@@ -110,7 +110,9 @@ function buildState(goal, snapshot, history) {
     lines.push('', 'INTERACTIVE ELEMENTS (by index):');
     for (const el of elements.slice(0, MAX_CANDIDATES)) {
       const target = el.href ? ` -> ${truncate(el.href, 90)}` : '';
-      lines.push(`[${el.index}] ${el.kind} ${el.role}: ${truncate(el.label, 120)}${target}`);
+      const key = el.kind === 'select' && Number.isSafeInteger(el.option_index)
+        ? `${el.index}:${el.option_index}` : el.index;
+      lines.push(`[${key}] ${el.kind} ${el.role}: ${truncate(el.label, 120)}${target}`);
     }
   }
   const below = (snapshot && snapshot.below_fold) || [];
@@ -121,7 +123,9 @@ function buildState(goal, snapshot, history) {
     lines.push('', 'BELOW THE FOLD — real controls, scroll to reach them:');
     for (const el of below.slice(0, 40)) {
       const target = el.href ? ` -> ${truncate(el.href, 90)}` : '';
-      lines.push(`[${el.index}] ${el.kind} ${el.role}: ${truncate(el.label, 120)}${target}`);
+      const key = el.kind === 'select' && Number.isSafeInteger(el.option_index)
+        ? `${el.index}:${el.option_index}` : el.index;
+      lines.push(`[${key}] ${el.kind} ${el.role}: ${truncate(el.label, 120)}${target}`);
     }
   }
   const covered = snapshot && snapshot.occluded_count;
@@ -151,11 +155,17 @@ function candidatesFor(snapshot, kind) {
   const out = {};
   for (const el of ((snapshot && snapshot.elements) || [])) {
     if (el.kind !== kind) continue;
+    // Several options share one DOM node index. The option ordinal is part of
+    // the choice identity; indexing only by the node silently overwrites East
+    // with West, then resolves the model's choice back to East.
+    const key = kind === 'select' && Number.isSafeInteger(el.option_index)
+      ? `${el.index}:${el.option_index}` : String(el.index);
+    if (Object.hasOwn(out, key)) continue;
     const entry = { label: truncate(el.label, 120), role: el.role };
     if (el.current_value) entry.current_value = truncate(el.current_value, 80);
     if (el.href) entry.href = truncate(el.href, 120);
     if (el.option_value != null) entry.option_value = truncate(el.option_value, 60);
-    out[String(el.index)] = entry;
+    out[key] = entry;
     if (Object.keys(out).length >= MAX_CANDIDATES) break;
   }
   return out;
@@ -263,7 +273,7 @@ function buildQuestions(snapshot, options = {}) {
   if (Object.keys(selectables).length) {
     questions.select_target = {
       type: 'choice',
-      instructions: 'Which single dropdown option should be chosen? Choose a number, or "(none)" when no dropdown needs changing.',
+      instructions: 'Which single dropdown option should be chosen? Choose its index:option key, or "(none)" when no dropdown needs changing.',
       criteria: { ...selectables, [NONE]: 'no dropdown needs changing' },
     };
   }
@@ -359,8 +369,14 @@ function composeDecision(answers, snapshot, options = {}) {
         reasoning: `the model judged no listed element serves the goal ("(none)" for ${operation})`,
       };
     }
-    const index = raw == null ? null : Number(raw);
-    const element = ((snapshot && snapshot.elements) || []).find((e) => e.index === index);
+    // Resolve precisely the candidate the model was OFFERED, not the first
+    // row sharing a select's DOM index. Never accept an unoffered option key.
+    const offered = candidatesFor(snapshot, operation === 'CLICK' ? 'click' : operation === 'TYPE_TEXT' ? 'fill' : 'select');
+    const key = raw == null ? '' : String(raw);
+    const element = Object.hasOwn(offered, key) ? ((snapshot && snapshot.elements) || []).find((e) =>
+      e.kind === (operation === 'CLICK' ? 'click' : operation === 'TYPE_TEXT' ? 'fill' : 'select') &&
+      (operation === 'SELECT' && Number.isSafeInteger(e.option_index)
+        ? `${e.index}:${e.option_index}` : String(e.index)) === key) : null;
     if (!element) {
       return { operation: null, reasoning: `${operation} but the model returned no usable target (got "${raw}")` };
     }
@@ -404,7 +420,10 @@ function composeDecision(answers, snapshot, options = {}) {
         };
       }
     }
-    if (operation === 'SELECT') decision.option_value = element.option_value != null ? element.option_value : null;
+    if (operation === 'SELECT') {
+      decision.option_value = element.option_value != null ? element.option_value : null;
+      decision.option_index = element.option_index == null ? null : element.option_index;
+    }
     return decision;
   }
 

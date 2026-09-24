@@ -1455,10 +1455,12 @@ async function executeAgentAction(action) {
       if (bound) {
         if (bound.tab !== t || bound.wc !== t.wc || bound.url !== t.wc.getURL() ||
             bound.index !== action.targetIndex || bound.kind !== kind ||
+            bound.optionIndex !== action.optionIndex ||
             bound.value !== (action.value == null ? null : String(action.value)))
           return { ok: false, reason: 'approval_required_or_stale' };
         clickProof = { nonce: bound.nonce, descriptor: bound.descriptor, kind: bound.kind,
-          value: bound.value, effectProofHash: bound.effectProofHash };
+          value: bound.value, optionIndex: bound.optionIndex,
+          effectProofHash: bound.effectProofHash };
       }
     }
     const resolved = await t.wc.executeJavaScript(
@@ -1504,6 +1506,7 @@ async function approveAgentAction(info) {
   if (!['click', 'fill', 'select'].includes(kind) || !Number.isSafeInteger(targetIndex)) return false;
   if ((kind === 'fill' || kind === 'select') && action.value == null) return false;
   const value = action.value == null ? null : String(action.value);
+  const optionIndex = action.optionIndex;
   // A model or API client never supplies the target proof. The last indexed
   // observation lives in the main process and must still be the one the agent
   // decided from. Another observation/tab navigation invalidates the proposal.
@@ -1512,7 +1515,8 @@ async function approveAgentAction(info) {
       binding.snapshot.fingerprint !== action.fingerprint ||
       !binding.effectProofHashes || !binding.effectProofHashes.has(targetIndex) ||
       binding.snapshot.elements.filter(el => el.index === targetIndex && el.kind === kind &&
-        (kind !== 'select' || String(el.option_value) === value)).length !== 1)) {
+        (kind !== 'select' || (String(el.option_value) === value &&
+          (action.optionIndex == null || el.option_index === action.optionIndex)))).length !== 1)) {
     log.log('DENY', 'agent action preview invalidated', { reason: 'observation changed' });
     return false;
   }
@@ -1521,6 +1525,7 @@ async function approveAgentAction(info) {
   try {
     const inspected = await wc.executeJavaScript(forgeActionScript(targetIndex, 'inspect', nonce, { kind }), true);
     if (!inspected || !inspected.ok || action.targetIndex !== targetIndex || action.kind !== kind ||
+        action.optionIndex !== optionIndex ||
         (action.value == null ? null : String(action.value)) !== value ||
         activeTab() !== t || wc.isDestroyed() || wc.getURL() !== url) return false;
     descriptor = inspected.descriptor;
@@ -1530,12 +1535,17 @@ async function approveAgentAction(info) {
     if (!inspectedEffectHash) return false;
     previewLabel = display.label;
     if (t.agentOwned) {
-      const observed = binding.snapshot.elements.find(el => el.index === targetIndex);
+      const observed = binding.snapshot.elements.find(el => el.index === targetIndex &&
+        (kind !== 'select' || (String(el.option_value) === value &&
+          (action.optionIndex == null || el.option_index === action.optionIndex))));
       previewLabel = observed.label || previewLabel;
       const changes = compareAgentPreview(observed, inspected, binding.snapshot.url, kind,
         binding.effectProofHashes.get(targetIndex));
       if (kind === 'select' && (!Array.isArray(descriptor.options) ||
-          descriptor.options.filter(option => option[0] === value && !option[1]).length !== 1))
+          descriptor.options.filter(option => option[0] === value && !option[1]).length !== 1 ||
+          (action.optionIndex != null && (!Number.isSafeInteger(action.optionIndex) ||
+            !descriptor.options[action.optionIndex] || descriptor.options[action.optionIndex][0] !== value ||
+            descriptor.options[action.optionIndex][1]))))
         changes.push('proposed option');
       if (changes.length || t.lastAgentObservation !== binding) {
         log.log('DENY', 'agent action preview invalidated', { changed: changes.join(', ') || 'observation changed' });
@@ -1571,13 +1581,14 @@ async function approveAgentAction(info) {
   let allowed = result.response === 1;
   if (allowed && descriptor) {
     try {
-      if (action.targetIndex !== targetIndex || action.kind !== kind ||
+      if (action.targetIndex !== targetIndex || action.kind !== kind || action.optionIndex !== optionIndex ||
           (action.value == null ? null : String(action.value)) !== value ||
           activeTab() !== t || wc.isDestroyed() || wc.getURL() !== url ||
           (t.agentOwned && t.lastAgentObservation !== binding)) allowed = false;
       else {
         const current = await wc.executeJavaScript(forgeActionScript(targetIndex, 'recheck', nonce, { kind }), true);
         if (!current || !current.ok || action.targetIndex !== targetIndex ||
+            action.optionIndex !== optionIndex ||
             action.kind !== kind || (action.value == null ? null : String(action.value)) !== value ||
             JSON.stringify(current.descriptor) !== JSON.stringify(descriptor) ||
             hashEffectProof(current.effectProof) !== inspectedEffectHash ||
@@ -1588,7 +1599,7 @@ async function approveAgentAction(info) {
     if (allowed) {
       try { await requireAgentTab(); } catch { allowed = false; }
       if (allowed) agentClickApprovals.set(action, { tab: t, wc, url, index: targetIndex,
-        kind, value, nonce, descriptor, effectProofHash: inspectedEffectHash });
+        kind, value, optionIndex, nonce, descriptor, effectProofHash: inspectedEffectHash });
     }
   }
   log.log(allowed ? 'ALLOW' : 'DENY', 'agent action human decision', {

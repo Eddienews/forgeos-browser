@@ -25,7 +25,8 @@ const { forgeSnapshotScript } = require('../../src/page-snapshot');
 const { forgeActionScript } = require('../../src/page-actions');
 const { normalizeSnapshot } = require('../../src/engine/page-snapshot');
 const { compareAgentPreview, hashEffectProof } = require('../../src/engine/action-policy');
-const { candidatesFor } = require('../../src/engine/typesafe-decider');
+const { candidatesFor, composeDecision, buildQuestions } = require('../../src/engine/typesafe-decider');
+const { runGoal } = require('../../src/engine/agent-loop');
 const { createPageWebPreferences } = require('../../src/page-web-preferences');
 const sessionStore = require('../../src/engine/session-store');
 const { containerPartition, sessionPlanFor } = require('../../src/engine/storage-manager');
@@ -459,6 +460,52 @@ async function main() {
   record('C1', 'real Chromium final click atomically refuses changed private effect after inspection',
     changedEffect && !changedEffect.ok && changedEffect.reason === 'approval_required_or_stale' && effectClicks === 0,
     JSON.stringify({ reason: changedEffect && changedEffect.reason, effectClicks }));
+
+  /* Same DOM select produces multiple choice candidates but one node index.
+   * An approved West decision must never silently become East. */
+  await wc.executeJavaScript(`document.body.innerHTML = '<label for="region">Region</label>' +
+    '<select id="region"><option value="east">East</option><option value="west">West</option></select>'`);
+  const selectRaw = await wc.executeJavaScript(forgeSnapshotScript(true), true);
+  const selectHashes = new Map(selectRaw._privateEffectProofs.map(([id, proof]) => [id, hashEffectProof(proof)]));
+  delete selectRaw._privateEffectProofs;
+  const selectSnapshot = normalizeSnapshot(selectRaw);
+  const region = selectSnapshot.elements.filter(el => el.kind === 'select');
+  const selectCriteria = buildQuestions(selectSnapshot).select_target.criteria;
+  const westKey = Object.keys(selectCriteria).find(key => selectCriteria[key].option_value === 'west');
+  const chosenWest = composeDecision({ goal_met: { noul: 0 }, operation: { choice: 'SELECT' },
+    select_target: { choice: westKey } }, selectSnapshot);
+  record('C1', 'real select exposes each option independently and decides West',
+    region.length === 2 && region[0].index === region[1].index &&
+    Object.keys(selectCriteria).filter(key => key !== '(none)').length === 2 &&
+    chosenWest.option_value === 'west' && chosenWest.option_index === 1,
+    JSON.stringify({ region, selectCriteria, chosenWest }));
+  let approvedValue = null;
+  let inspectionIsPrivate = false;
+  const selectRun = await runGoal({ goal: 'Choose West', observe: async () => selectRaw,
+    decide: async () => chosenWest,
+    requestApproval: async ({ action }) => {
+      approvedValue = action.value;
+      const script = forgeActionScript(action.targetIndex, 'inspect', 'west-e2e-proof', { kind: 'select' });
+      inspectionIsPrivate = !script.includes('Choose West') && !script.includes('"west"');
+      const inspection = await wc.executeJavaScript(script, true);
+      return inspection.ok && compareAgentPreview(region[1], inspection, selectSnapshot.url,
+        'select', selectHashes.get(action.targetIndex)).length === 0 &&
+        inspection.descriptor.options[action.optionIndex]?.[0] === action.value;
+    },
+    act: async action => {
+      const inspection = await wc.executeJavaScript(
+        forgeActionScript(action.targetIndex, 'recheck', 'west-e2e-proof', { kind: 'select' }), true);
+      return wc.executeJavaScript(forgeActionScript(action.targetIndex, 'select', action.value,
+        { kind: 'select', value: action.value, optionIndex: action.optionIndex,
+          nonce: 'west-e2e-proof', descriptor: inspection.descriptor,
+          effectProofHash: selectHashes.get(action.targetIndex) }), true);
+    },
+  }, { maxSteps: 1, settleMs: 0 });
+  const selectedRegion = await wc.executeJavaScript('document.getElementById("region").value');
+  record('C1', 'observed West equals approved value and executed DOM selection',
+    approvedValue === 'west' && inspectionIsPrivate && selectRun.history[0]?.value === 'west' &&
+    selectRun.history[0]?.outcome === 'ok' && selectedRegion === 'west',
+    JSON.stringify({ approvedValue, inspectionIsPrivate, history: selectRun.history, selectedRegion }));
 
   /* ---------- Test E (Gate G): prompt injection ---------- */
   await loadAndWait(wc, `http://127.0.0.1:${p}/prompt_injection.html`);

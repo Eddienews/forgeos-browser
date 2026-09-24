@@ -142,15 +142,25 @@ module.exports = [
       contains: other => other === field, closest: () => null, getAttribute: () => null,
       dispatchEvent: () => { events++; } };
     h.installTarget(field);
-    const target = { kind: 'select', targetIndex: 1, value: 'blue', label: 'Color -> Blue' };
+    const target = { kind: 'select', targetIndex: 1, optionIndex: 1, value: 'blue', label: 'Color -> Blue' };
     bindObserved(h, target);
     Object.assign(h.tab.lastAgentObservation.snapshot.elements[0], {
-      kind: 'select', label: 'Color -> Blue', option_value: 'blue',
+      kind: 'select', label: 'Color -> Blue', option_value: 'blue', option_index: 1,
       is_submit: false, input_type: 'select-one', form_action: null, form_method: null,
     });
+    h.tab.lastAgentObservation.snapshot.elements.unshift({ index: 1, kind: 'select',
+      label: 'Color -> Red', option_value: 'red', option_index: 0 });
     a.strictEqual(await h.approve(info(target)), true);
     a.ok(h.dialogs[0].detail.includes('Element: [1] Color -> Blue'));
+    a.ok(!h.scripts[0].includes('"blue"'), 'proposed option must not reach page before native approval');
     a.strictEqual((await h.act(target)).ok, true);
+    a.strictEqual(field.value, 'blue');
+    a.strictEqual(events, 2);
+    a.strictEqual(await h.approve(info(target)), true);
+    target.optionIndex = 0;
+    a.strictEqual((await h.act(target)).ok, false, 'approval cannot be transferred to another option');
+    target.optionIndex = 1;
+    a.strictEqual((await h.act(target)).ok, false, 'a refused approval is consumed');
     a.strictEqual(field.value, 'blue');
     a.strictEqual(events, 2);
   } },

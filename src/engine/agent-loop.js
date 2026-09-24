@@ -226,7 +226,10 @@ function toAction(operation, decision, snapshot) {
 
   if (needsElement) {
     if (!Number.isFinite(index)) return { error: `${operation} needs a target index` };
-    const el = (snapshot.elements || []).find((e) => e.index === index);
+    const el = (snapshot.elements || []).find((e) => e.index === index &&
+      (operation !== 'SELECT' || (e.kind === 'select' &&
+        e.option_value === (decision.option_value != null ? decision.option_value : decision.value) &&
+        (decision.option_index == null || e.option_index === decision.option_index))));
     if (!el) return { error: `target [${index}] is not in this observation` };
     if (operation === 'CLICK' && el.kind !== 'click') return { error: `[${index}] is not clickable (${el.kind})` };
     if (operation === 'TYPE_TEXT' && el.kind !== 'fill') return { error: `[${index}] is not fillable (${el.kind})` };
@@ -234,6 +237,7 @@ function toAction(operation, decision, snapshot) {
     return {
       kind: operation === 'CLICK' ? 'click' : operation === 'TYPE_TEXT' ? 'fill' : 'select',
       targetIndex: index,
+      optionIndex: operation === 'SELECT' ? el.option_index : null,
       value: operation === 'CLICK' ? null : operation === 'SELECT'
         ? (decision.option_value != null ? decision.option_value : decision.value) : decision.value,
       label: el.label,

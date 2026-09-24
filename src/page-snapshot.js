@@ -219,10 +219,11 @@ function forgeSnapshotScript(includePrivateEffectProofs = false) {
     if (el.tagName === "SELECT") {
       const bucket = below ? belowFold : elements;
       const cap = below ? MAX_BELOW_FOLD : MAX_ELEMENTS;
-      for (const option of el.options) {
+      for (const [optionIndex, option] of [...el.options].entries()) {
         if (bucket.length >= cap) break;
         if (option.disabled) continue;
         bucket.push(describe(el, id, label + " -> " + option.label, {
+          option_index: optionIndex,
           option_value: sensitive(el, label + " " + option.label) ? "" : safeText(option.value),
           role: "combobox",
           kind: sensitive(el, label + " " + option.label) ? "blocked" : "select",

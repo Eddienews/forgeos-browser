@@ -262,8 +262,10 @@ function forgeActionScript(index, kind, value, approval = null) {
     if (!proof.descriptor || Object.keys(descriptor).some(k =>
         JSON.stringify(descriptor[k]) !== JSON.stringify(proof.descriptor[k])))
       return { ok: false, reason: "approval_required_or_stale" };
-    const hasOption = [...el.options].some((o) => o.value === wanted && !o.disabled);
-    if (!hasOption) return { ok: false, reason: "option_missing" };
+    const matches = [...el.options].filter((o) => o.value === wanted && !o.disabled);
+    if (matches.length !== 1 || (proof.optionIndex != null &&
+        (el.options[proof.optionIndex] !== matches[0] || !Number.isSafeInteger(proof.optionIndex))))
+      return { ok: false, reason: "option_missing" };
     el.value = wanted;
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
