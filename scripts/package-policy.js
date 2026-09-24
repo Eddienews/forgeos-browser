@@ -162,7 +162,8 @@ function approvedMacMember(value, directory, arch) {
       v[2] === 'locale.pak' && !directory;
   }
   if (v[0] === 'Libraries') return v.length === 2 && !directory &&
-    /^lib(?:EGL|GLESv2|ffmpeg|vk_swiftshader|swiftshader)\.dylib$/.test(v[1]);
+    (/^lib(?:EGL|GLESv2|ffmpeg|vk_swiftshader|swiftshader)\.dylib$/.test(v[1]) ||
+      name === 'Electron Framework' && v[1] === 'vk_swiftshader_icd.json');
   return v[0] === 'Helpers' && v.length === 2 && v[1] === 'chrome_crashpad_handler' && !directory;
 }
 
@@ -266,6 +267,9 @@ function verifyPortableArchive(archive, platform, arch, options = {}) {
     if (platform === 'darwin' && frameworkResource ===
         `v8_context_snapshot.${arch === 'x64' ? 'x86_64' : 'arm64'}.bin` &&
         (mode & 0xf000) !== 0x8000) throw new Error(`Invalid macOS snapshot ZIP mode: ${zipPath}`);
+    if (platform === 'darwin' && value ===
+        'ForgeBrowserLab.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/vk_swiftshader_icd.json' &&
+        (mode & 0xf000) !== 0x8000) throw new Error(`Invalid macOS library manifest ZIP mode: ${zipPath}`);
     if (platform === 'darwin' ? value === 'ForgeBrowserLab.app/Contents/Resources/app.asar' :
       value === 'resources/app.asar') {
       if (directory || (mode & 0xf000) === 0xa000) throw new Error(`Invalid app.asar ZIP member: ${zipPath}`);

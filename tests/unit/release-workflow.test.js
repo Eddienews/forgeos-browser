@@ -70,6 +70,7 @@ module.exports = [
         [p + 'Frameworks/Electron Framework.framework/Versions/A/Electron Framework', 'binary'],
         [p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/MainMenu.nib', 'synthetic vendor menu'],
         [p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/v8_context_snapshot.x86_64.bin', 'snapshot'],
+        [p + 'Frameworks/Electron Framework.framework/Versions/A/Libraries/vk_swiftshader_icd.json', 'synthetic vendor manifest'],
         ...frameworkLocales.flatMap(name => {
           const dir = p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/' + name + '.lproj/';
           return [[dir, '', 0o40755], [dir + 'locale.pak', 'locale']];
@@ -90,6 +91,8 @@ module.exports = [
           p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/fr_FR_FEMININE.lproj/locale.pak',
           p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/af_PRIVATE.lproj/locale.pak',
           p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/v8_context_snapshot.arm64.bin',
+          p + 'Frameworks/Mantle.framework/Versions/A/Libraries/vk_swiftshader_icd.json',
+          p + 'Frameworks/Electron Framework.framework/Versions/A/Libraries/private-key.json',
           p + 'Resources/pt_PT_MASCULINE.lproj/locale.pak',
           p + 'Frameworks/Mantle.framework/Versions/A/Resources/zh_CN_FEMININE.lproj/locale.pak',
           p + 'Frameworks/Mantle.framework/Versions/A/Resources/MainMenu.nib',
@@ -148,6 +151,14 @@ module.exports = [
             .replace('v8_context_snapshot.x86_64.bin', 'v8_context_snapshot.arm64.bin'), content, mode]);
         syntheticZip(zip, armEntries);
         a.ok(verifyPortableArchive(zip, 'darwin', 'arm64'));
+        const vendorManifest = p + 'Frameworks/Electron Framework.framework/Versions/A/Libraries/vk_swiftshader_icd.json';
+        for (const mode of [0o120777, 0o40755]) {
+          const mutated = entries.map(([name, content, originalMode]) =>
+            name === vendorManifest ? [name, 'A', mode] : [name, content, originalMode]);
+          syntheticZip(zip, mutated);
+          a.throws(() => verifyPortableArchive(zip, 'darwin', 'x64'),
+            /Invalid macOS library manifest ZIP mode/);
+        }
       } finally { fs.rmSync(temp, { recursive: true, force: true }); }
     },
   },

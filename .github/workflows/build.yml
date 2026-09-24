@@ -78,13 +78,13 @@ jobs:
       - name: Package application
         run: node scripts/package.js --platform=${{ steps.platform.outputs.plat }} --arch=${{ matrix.arch }}
 
-      # Print only immediate vendor framework Resource names and entry types on
-      # macOS PRs, never their contents or packaged bytes. Uploads stay tag-only.
-      - name: Inventory macOS framework resource names and types
+      # Print only immediate vendor framework entry names and types on macOS
+      # PRs, never their contents or packaged bytes. Uploads stay tag-only.
+      - name: Inventory macOS framework names and types
         if: github.event_name == 'pull_request' && matrix.os == 'macos-latest'
         shell: bash
         run: |
-          node -e 'const fs = require("node:fs"); const dir = "dist/ForgeBrowserLab-darwin-${{ matrix.arch }}/ForgeBrowserLab.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources"; const entries = fs.readdirSync(dir, { withFileTypes: true }).map(entry => [entry.name, entry.isDirectory() ? "directory" : entry.isFile() ? "file" : entry.isSymbolicLink() ? "symlink" : "other"]).sort((a, b) => a[0].localeCompare(b[0])); console.log("Electron Framework Resources entries:", JSON.stringify(entries));'
+          node -e 'const fs = require("node:fs"); const base = "dist/ForgeBrowserLab-darwin-${{ matrix.arch }}/ForgeBrowserLab.app/Contents/Frameworks/Electron Framework.framework/Versions/A"; for (const folder of ["Resources", "Libraries", "Helpers"]) { const dir = `${base}/${folder}`; if (!fs.existsSync(dir)) continue; const entries = fs.readdirSync(dir, { withFileTypes: true }).map(entry => [entry.name, entry.isDirectory() ? "directory" : entry.isFile() ? "file" : entry.isSymbolicLink() ? "symlink" : "other"]).sort((a, b) => a[0].localeCompare(b[0])); console.log(`Electron Framework ${folder} entries:`, JSON.stringify(entries)); }'
 
       - name: Create portable archive
         run: node scripts/make-portable.js --platform=${{ steps.platform.outputs.plat }} --arch=${{ matrix.arch }}
