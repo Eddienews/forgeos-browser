@@ -54,8 +54,13 @@ module.exports = [
       const temp = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'forge-mac-zip-'));
       const zip = path.join(temp, 'mac.zip');
       const p = 'ForgeBrowserLab-darwin-x64/ForgeBrowserLab.app/Contents/';
-      const genderedLocales = ['en_GB', 'es_419', 'pt_BR', 'pt_PT', 'zh_CN', 'zh_TW']
-        .flatMap(region => ['FEMININE', 'MASCULINE', 'NEUTER'].map(gender => `${region}_${gender}`));
+      const localeStems = ['af', 'am', 'ar', 'bg', 'bn', 'ca', 'cs', 'da', 'de', 'el',
+        'en', 'en_GB', 'es', 'es_419', 'et', 'fa', 'fi', 'fil', 'fr', 'gu', 'he',
+        'hi', 'hr', 'hu', 'id', 'it', 'ja', 'kn', 'ko', 'lt', 'lv', 'ml', 'mr',
+        'ms', 'nb', 'nl', 'pl', 'pt_BR', 'pt_PT', 'ro', 'ru', 'sk', 'sl',
+        'sr', 'sv', 'sw', 'ta', 'te', 'th', 'tr', 'uk', 'ur', 'vi', 'zh_CN', 'zh_TW'];
+      const frameworkLocales = localeStems.flatMap(stem =>
+        [stem, ...['FEMININE', 'MASCULINE', 'NEUTER'].map(gender => `${stem}_${gender}`)]);
       const entries = [
         ['ForgeBrowserLab-darwin-x64/LICENSE', 'synthetic vendor license'],
         ['ForgeBrowserLab-darwin-x64/LICENSES.chromium.html', 'synthetic vendor notices'],
@@ -64,7 +69,8 @@ module.exports = [
         [p + 'Resources/en.lproj/locale.pak', 'locale'],
         [p + 'Frameworks/Electron Framework.framework/Versions/A/Electron Framework', 'binary'],
         [p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/MainMenu.nib', 'synthetic vendor menu'],
-        ...genderedLocales.flatMap(name => {
+        [p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/v8_context_snapshot.x86_64.bin', 'snapshot'],
+        ...frameworkLocales.flatMap(name => {
           const dir = p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/' + name + '.lproj/';
           return [[dir, '', 0o40755], [dir + 'locale.pak', 'locale']];
         }),
@@ -82,6 +88,8 @@ module.exports = [
           p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/zh_PRIVATE_FEMININE.lproj/locale.pak',
           p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/es_999_NEUTER.lproj/locale.pak',
           p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/fr_FR_FEMININE.lproj/locale.pak',
+          p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/af_PRIVATE.lproj/locale.pak',
+          p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/v8_context_snapshot.arm64.bin',
           p + 'Resources/pt_PT_MASCULINE.lproj/locale.pak',
           p + 'Frameworks/Mantle.framework/Versions/A/Resources/zh_CN_FEMININE.lproj/locale.pak',
           p + 'Frameworks/Mantle.framework/Versions/A/Resources/MainMenu.nib',
@@ -105,7 +113,8 @@ module.exports = [
           a.throws(() => verifyPortableArchive(zip, 'darwin', 'x64'),
             /Invalid code signature ZIP mode/, `${target} mode ${mode.toString(8)} must fail`);
         }
-        for (const localeName of genderedLocales) {
+        for (const localeName of ['af', 'af_FEMININE', 'en_GB', 'en_GB_NEUTER',
+          'es_419', 'es_419_NEUTER', 'zh_TW_NEUTER']) {
           const localeDir = p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/' + localeName + '.lproj/';
           for (const [target, mode] of [
             [localeDir, 0o120777], [localeDir, 0o100644],
@@ -115,7 +124,7 @@ module.exports = [
               name === target ? [name, 'A', mode] : [name, content, originalMode]);
             syntheticZip(zip, mutated);
             a.throws(() => verifyPortableArchive(zip, 'darwin', 'x64'),
-              /Invalid gendered locale ZIP mode/, `${target} mode ${mode.toString(8)} must fail`);
+              /Invalid macOS locale ZIP mode/, `${target} mode ${mode.toString(8)} must fail`);
           }
         }
         const menuFile = p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/MainMenu.nib';
@@ -126,6 +135,19 @@ module.exports = [
           a.throws(() => verifyPortableArchive(zip, 'darwin', 'x64'),
             /Invalid macOS menu ZIP mode/, `MainMenu.nib mode ${mode.toString(8)} must fail`);
         }
+        const snapshot = p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/v8_context_snapshot.x86_64.bin';
+        for (const mode of [0o120777, 0o40755]) {
+          const mutated = entries.map(([name, content, originalMode]) =>
+            name === snapshot ? [name, 'A', mode] : [name, content, originalMode]);
+          syntheticZip(zip, mutated);
+          a.throws(() => verifyPortableArchive(zip, 'darwin', 'x64'),
+            /Invalid macOS snapshot ZIP mode/, `snapshot mode ${mode.toString(8)} must fail`);
+        }
+        const armEntries = entries.map(([name, content, mode]) =>
+          [name.replaceAll('ForgeBrowserLab-darwin-x64/', 'ForgeBrowserLab-darwin-arm64/')
+            .replace('v8_context_snapshot.x86_64.bin', 'v8_context_snapshot.arm64.bin'), content, mode]);
+        syntheticZip(zip, armEntries);
+        a.ok(verifyPortableArchive(zip, 'darwin', 'arm64'));
       } finally { fs.rmSync(temp, { recursive: true, force: true }); }
     },
   },

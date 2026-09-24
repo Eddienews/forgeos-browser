@@ -86,19 +86,28 @@ function isPackageExcluded(filePath) {
   return PACKAGE_IGNORE_RE.test(`/${normalized}`);
 }
 
-// Exact gendered ICU locales observed in both Electron 43 macOS bundles.
-const MAC_GENDERED_LOCALE = /^(?:en_GB|es_419|pt_BR|pt_PT|zh_CN|zh_TW)_(?:FEMININE|MASCULINE|NEUTER)\.lproj$/;
-const MAC_GENDERED_RESOURCE_PREFIX = 'ForgeBrowserLab.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/';
+// Exact locale stems observed in both Electron 43 macOS framework bundles.
+const MAC_FRAMEWORK_LOCALE_STEMS = new Set([
+  'af', 'am', 'ar', 'bg', 'bn', 'ca', 'cs', 'da', 'de', 'el',
+  'en', 'en_GB', 'es', 'es_419', 'et', 'fa', 'fi', 'fil', 'fr', 'gu', 'he',
+  'hi', 'hr', 'hu', 'id', 'it', 'ja', 'kn', 'ko', 'lt', 'lv', 'ml', 'mr',
+  'ms', 'nb', 'nl', 'pl', 'pt_BR', 'pt_PT', 'ro', 'ru', 'sk', 'sl',
+  'sr', 'sv', 'sw', 'ta', 'te', 'th', 'tr', 'uk', 'ur', 'vi', 'zh_CN', 'zh_TW',
+]);
+const MAC_FRAMEWORK_RESOURCE_PREFIX = 'ForgeBrowserLab.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/';
+function isMacFrameworkLocale(name) {
+  const match = /^([a-z]{2,3}(?:_(?:[A-Z]{2}|419))?)(?:_(?:FEMININE|MASCULINE|NEUTER))?\.lproj$/.exec(name);
+  return !!match && MAC_FRAMEWORK_LOCALE_STEMS.has(match[1]);
+}
 
 // Mac bundle containers are traversable, but each leaf is explicitly reviewed.
-function approvedMacMember(value, directory) {
+function approvedMacMember(value, directory, arch) {
   const p = value.split('/');
   const resource = new Set(['app.asar', 'electron.asar', 'chrome_100_percent.pak',
     'chrome_200_percent.pak', 'resources.pak', 'icudtl.dat', 'snapshot_blob.bin',
     'v8_context_snapshot.bin', 'vk_swiftshader_icd.json', 'electron.icns']);
   const locale = name => /^[a-z]{2,3}(?:[-_][A-Za-z0-9]+)?\.lproj$/.test(name);
-  // Only these observed Electron Framework ICU variants extend the locale rule.
-  const frameworkLocale = name => MAC_GENDERED_LOCALE.test(name);
+
   // Electron Packager places its exact vendor license filenames beside .app.
   if (['LICENSE', 'LICENSES.chromium.html', 'PORTABLE.md'].includes(value)) return !directory;
   if (['logs', 'downloads', 'results'].includes(p[0])) {
@@ -143,10 +152,13 @@ function approvedMacMember(value, directory) {
     ['Resources', 'Libraries', 'Helpers', '_CodeSignature'].includes(v[0]) && directory;
   if (v[0] === '_CodeSignature') return v.length === 2 && v[1] === 'CodeResources' && !directory;
   if (v[0] === 'Resources') {
+    const frameworkLocale = candidate => name === 'Electron Framework' ?
+      isMacFrameworkLocale(candidate) : locale(candidate);
     if (v.length === 2) return (resource.has(v[1]) || v[1] === 'Info.plist' ||
-      name === 'Electron Framework' && v[1] === 'MainMenu.nib') && !directory ||
-      (locale(v[1]) || name === 'Electron Framework' && frameworkLocale(v[1])) && directory;
-    return v.length === 3 && (locale(v[1]) || name === 'Electron Framework' && frameworkLocale(v[1])) &&
+      name === 'Electron Framework' && (v[1] === 'MainMenu.nib' ||
+        v[1] === `v8_context_snapshot.${arch === 'x64' ? 'x86_64' : 'arm64'}.bin`)) && !directory ||
+      frameworkLocale(v[1]) && directory;
+    return v.length === 3 && frameworkLocale(v[1]) &&
       v[2] === 'locale.pak' && !directory;
   }
   if (v[0] === 'Libraries') return v.length === 2 && !directory &&
@@ -213,7 +225,7 @@ function verifyPortableArchive(archive, platform, arch, options = {}) {
     const parts = value.split('/');
     let approved = false;
     if (platform === 'darwin') {
-      approved = approvedMacMember(value, directory);
+      approved = approvedMacMember(value, directory, arch);
       if (value === 'ForgeBrowserLab.app/Contents/MacOS/ForgeBrowserLab') hasExecutable = true;
       if (value === 'ForgeBrowserLab.app/Contents/Resources/app.asar') hasAsar = true;
     } else {
@@ -241,15 +253,19 @@ function verifyPortableArchive(archive, platform, arch, options = {}) {
       const expectedType = value.endsWith('/_CodeSignature') ? 0x4000 : 0x8000;
       if ((mode & 0xf000) !== expectedType) throw new Error(`Invalid code signature ZIP mode: ${zipPath}`);
     }
-    const genderedPath = platform === 'darwin' && value.startsWith(MAC_GENDERED_RESOURCE_PREFIX)
-      ? value.slice(MAC_GENDERED_RESOURCE_PREFIX.length).split('/') : [];
-    if (MAC_GENDERED_LOCALE.test(genderedPath[0] || '') &&
-        (genderedPath.length === 1 || genderedPath.length === 2 && genderedPath[1] === 'locale.pak')) {
-      const expectedType = genderedPath.length === 1 ? 0x4000 : 0x8000;
-      if ((mode & 0xf000) !== expectedType) throw new Error(`Invalid gendered locale ZIP mode: ${zipPath}`);
+    const frameworkResource = platform === 'darwin' && value.startsWith(MAC_FRAMEWORK_RESOURCE_PREFIX)
+      ? value.slice(MAC_FRAMEWORK_RESOURCE_PREFIX.length) : '';
+    const localePath = frameworkResource.split('/');
+    if (isMacFrameworkLocale(localePath[0]) &&
+        (localePath.length === 1 || localePath.length === 2 && localePath[1] === 'locale.pak')) {
+      const expectedType = localePath.length === 1 ? 0x4000 : 0x8000;
+      if ((mode & 0xf000) !== expectedType) throw new Error(`Invalid macOS locale ZIP mode: ${zipPath}`);
     }
-    if (platform === 'darwin' && value === MAC_GENDERED_RESOURCE_PREFIX + 'MainMenu.nib' &&
+    if (platform === 'darwin' && value === MAC_FRAMEWORK_RESOURCE_PREFIX + 'MainMenu.nib' &&
         (mode & 0xf000) !== 0x8000) throw new Error(`Invalid macOS menu ZIP mode: ${zipPath}`);
+    if (platform === 'darwin' && frameworkResource ===
+        `v8_context_snapshot.${arch === 'x64' ? 'x86_64' : 'arm64'}.bin` &&
+        (mode & 0xf000) !== 0x8000) throw new Error(`Invalid macOS snapshot ZIP mode: ${zipPath}`);
     if (platform === 'darwin' ? value === 'ForgeBrowserLab.app/Contents/Resources/app.asar' :
       value === 'resources/app.asar') {
       if (directory || (mode & 0xf000) === 0xa000) throw new Error(`Invalid app.asar ZIP member: ${zipPath}`);
