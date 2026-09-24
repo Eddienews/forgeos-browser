@@ -26,7 +26,7 @@ module.exports = [
   { name: 'atomic persistence, restart, multi-source comparison and exact references', fn: assert => isolated(root => {
     const a = N.addSource(root, { url: 'https://example.com/p?q=secret#top', title: 'A', excerpt: 'One finding' }).source;
     const b = N.addSource(root, { url: 'https://other.test/b', title: 'B', excerpt: 'Other finding' }).source;
-    assert.equal(N.addSource(root, { url: 'https://example.com/p?different', title: 'A', excerpt: 'One finding' }).duplicate, true);
+    assert.equal(N.addSource(root, { url: 'https://example.com/p?q=secret#top', title: 'A', excerpt: 'One finding' }).duplicate, true);
     N.saveNotes(root, 'Compare sources directly.');
     N.setComparison(root, [a.id, b.id]);
     delete require.cache[require.resolve('../../src/engine/research-notebook')];
@@ -39,12 +39,43 @@ module.exports = [
     const result = restart.exportTo(root, output);
     assert.equal(result.bytes, Buffer.byteLength(fs.readFileSync(output)));
     const exported = fs.readFileSync(output, 'utf8');
-    assert(exported.includes('[1] A\nURL: https://example.com/p\nCaptured: '));
-    assert(exported.includes('[2] B — https://other.test/b ('));
+    assert(exported.includes(`[1] A\nSource ID: ${a.id}\nBase URL (query/fragment not recorded): https://example.com/p\nSource fingerprint: ${a.sourceFingerprint}\nCaptured: `));
+    assert(exported.includes(`[2] B — https://other.test/b [source ${b.id}; query/fragment not recorded] (`));
     assert(exported.includes('Compare sources directly.'));
     assert.throws(() => restart.exportTo(root, output), /EEXIST/);
     restart.removeSource(root, a.id);
     assert.deepEqual(restart.load(root).comparison, [b.id]);
+  }) },
+  { name: 'query-only document identity survives restart and export without leaking query', fn: assert => isolated(root => {
+    const common = { title: 'Annual report', excerpt: 'Identical excerpt' };
+    const firstUrl = 'https://example.com/report?id=2025&opaque=fixture-private-2025';
+    const secondUrl = 'https://example.com/report?id=2026&opaque=fixture-private-2026';
+    const a = N.addSource(root, { ...common, url: firstUrl }).source;
+    const b = N.addSource(root, { ...common, url: secondUrl }).source;
+    assert.notEqual(a.id, b.id);
+    assert.notEqual(a.sourceFingerprint, b.sourceFingerprint);
+    assert.match(a.sourceFingerprint, /^[a-f0-9]{64}$/);
+    assert.equal(N.addSource(root, { ...common, url: firstUrl }).duplicate, true);
+    N.setComparison(root, [a.id, b.id]);
+    const state = N.load(root);
+    assert.equal(state.sources.length, 2);
+    assert.deepEqual(state.comparison, [a.id, b.id]);
+    const exported = N.exportText(state);
+    for (const source of [a, b]) {
+      assert(exported.includes(`Source ID: ${source.id}\nBase URL (query/fragment not recorded): https://example.com/report\nSource fingerprint: ${source.sourceFingerprint}`));
+      assert(exported.includes(`[${source === a ? 1 : 2}] Annual report — https://example.com/report [source ${source.id}; query/fragment omitted; fingerprint ${source.sourceFingerprint}]`));
+    }
+    const persisted = fs.readFileSync(path.join(root, 'forge-research-notebook.json'), 'utf8');
+    for (const raw of [firstUrl, secondUrl, 'fixture-private-2025', 'fixture-private-2026']) {
+      assert(!persisted.includes(raw)); assert(!exported.includes(raw));
+    }
+    assert.throws(() => N.saveNotes(root, 'session_id=fixture-private-session'), /Invalid notes/);
+    assert.throws(() => N.addSource(root, { ...common, excerpt: 'session_id=fixture-private-session', url: 'https://example.com/third' }), /Invalid excerpt/);
+    assert.equal(N.load(root).notes, '');
+    fs.rmSync(path.join(root, 'forge-research-notebook.key'));
+    assert.throws(() => N.addSource(root, { ...common, url: firstUrl }), /identity key missing/);
+    assert(!fs.existsSync(path.join(root, 'forge-research-notebook.key')));
+    assert.equal(N.load(root).sources.length, 2);
   }) },
   { name: 'hostile title/excerpt/URL, limits and duplicate comparison rejected', fn: assert => isolated(root => {
     const input = { url: 'https://example.com/', title: '<img src=x onerror=alert(1)>', excerpt: '<script>alert(1)</script>' };
@@ -57,6 +88,7 @@ module.exports = [
     assert.throws(() => N.addSource(root, { ...input, title: 'Authorization=Bearer abc' }), /Invalid title/);
     assert.throws(() => N.addSource(root, { ...input, excerpt: 'x'.repeat(N.MAX_EXCERPT + 1) }), /Invalid excerpt/);
     assert.throws(() => N.saveNotes(root, 'x'.repeat(12001)), /Invalid notes/);
+    assert.throws(() => N.saveNotes(root, 'Authorization=Bearer fixture-private'), /Invalid notes/);
     assert.throws(() => N.setComparison(root, [source.id, source.id]), /Invalid comparison/);
     assert.throws(() => N.setComparison(root, ['unknown']), /Invalid comparison/);
     assert.equal(N.load(root).sources.length, 1);

@@ -55,7 +55,9 @@
         });
         label.append(check, document.createTextNode(' Compare'));
         const title = document.createElement('strong'); title.textContent = source.title;
-        const url = document.createElement('div'); url.textContent = source.url;
+        const url = document.createElement('div'); url.textContent = source.sourceFingerprint
+          ? `${source.url} (query/fragment omitted; fingerprint ${source.sourceFingerprint}; source ${source.id})`
+          : `${source.url} (base URL; query/fragment not recorded; source ${source.id})`;
         const time = document.createElement('div'); time.textContent = source.capturedAt;
         const quote = document.createElement('pre'); quote.textContent = source.excerpt;
         quote.style.whiteSpace = 'pre-wrap'; quote.style.overflowWrap = 'anywhere';
@@ -74,7 +76,7 @@
           const s = notebookState.sources.find(source => source.id === id);
           if (!s) continue;
           const item = document.createElement('li');
-          item.textContent = `${s.title} — ${s.url} — ${s.capturedAt} — “${s.excerpt}”`;
+          item.textContent = `${s.title} — ${s.url}${s.sourceFingerprint ? ` (query/fragment omitted; fingerprint ${s.sourceFingerprint})` : ' (base URL; query/fragment not recorded)'} — source ${s.id} — ${s.capturedAt} — “${s.excerpt}”`;
           compared.append(item);
         }
       }

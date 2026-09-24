@@ -36,13 +36,32 @@ async function runNotebookE2E(wc, pageUrl, base, record) {
   })()`);
   record('NOTEBOOK', 'password input selection rejected by real renderer',
     await wc.executeJavaScript(notebook.SELECTION_SCRIPT, true) === null, 'no capture');
+  const querySources = [];
+  for (const year of ['2025', '2026']) {
+    await wc.loadURL(`${pageUrl}?id=${year}&opaque=fixture-private-${year}`);
+    await wc.executeJavaScript(`(() => {
+      document.title = 'Report';
+      const p = document.createElement('p'); p.textContent = 'Same finding'; document.body.append(p);
+      const r = document.createRange(); r.selectNodeContents(p);
+      window.getSelection().removeAllRanges(); window.getSelection().addRange(r);
+    })()`);
+    querySources.push(notebook.addSource(base, await wc.executeJavaScript(notebook.SELECTION_SCRIPT, true)).source);
+  }
+  const queryExport = notebook.exportText(notebook.load(base));
+  record('NOTEBOOK', 'real Chromium query-distinct documents retain separate redacted export citations',
+    querySources[0].id !== querySources[1].id && querySources[0].sourceFingerprint !== querySources[1].sourceFingerprint &&
+    querySources.every(s => queryExport.includes(`Source ID: ${s.id}\nBase URL (query/fragment not recorded): ${pageUrl}\nSource fingerprint: ${s.sourceFingerprint}`)) &&
+    !queryExport.includes('fixture-private-'), 'distinct fingerprints and source IDs without query values');
+  record('NOTEBOOK', 'recognized session_id notes rejected without changing state',
+    (() => { try { notebook.saveNotes(base, 'session_id=fixture-private-session'); return false; }
+      catch { return notebook.load(base).notes === ''; } })(), 'no secret note persisted');
   notebook.saveNotes(base, 'Human comparison only.');
   notebook.setComparison(base, [stored.id]);
   const output = path.join(base, 'notebook-export.txt');
   notebook.exportTo(base, output);
   const exported = fs.readFileSync(output, 'utf8');
   record('NOTEBOOK', 'export references persistent source without executing hostile markup',
-    exported.includes(`URL: ${pageUrl}\nCaptured: ${stored.capturedAt}`) &&
+    exported.includes(`Base URL (query/fragment not recorded): ${pageUrl}\nCaptured: ${stored.capturedAt}`) &&
     exported.includes('> <script>alert(1)</script> human finding') &&
     notebook.load(base).comparison[0] === stored.id, 'exact URL/timestamp and quoted excerpt on disk');
 }
