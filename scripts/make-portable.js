@@ -12,9 +12,10 @@
  */
 'use strict';
 
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { verifyPortableArchive } = require('./package-policy');
 
 const ROOT = path.join(__dirname, '..');
 const DIST = path.join(ROOT, 'dist');
@@ -33,23 +34,19 @@ const PLATFORM = platArg
 const ARCH = archArg
   ? archArg.split('=')[1].trim()
   : hostArch;
+if (!['win32', 'darwin', 'linux'].includes(PLATFORM) || !['x64', 'arm64'].includes(ARCH) ||
+    PLATFORM === 'win32' && ARCH === 'arm64') {
+  throw new Error('Unsupported portable archive target');
+}
 
 const APP_DIR = path.join(DIST, `ForgeBrowserLab-${PLATFORM}-${ARCH}`);
 const OUT_ZIP = path.join(DIST, `ForgeBrowserLab-portable-${PLATFORM}-${ARCH}.zip`);
 
 function ensureAppPackaged() {
-  let exeName;
-  if (PLATFORM === 'win32') {
-    exeName = 'ForgeBrowserLab.exe';
-  } else if (PLATFORM === 'darwin') {
-    exeName = 'ForgeBrowserLab.app/Contents/MacOS/Electron';
-  } else {
-    exeName = 'ForgeBrowserLab';
-  }
-  if (!fs.existsSync(path.join(APP_DIR, exeName))) {
-    console.log('Packaged app not found; running electron-packager first...');
-    execSync('npm run package', { cwd: ROOT, stdio: 'inherit' });
-  }
+  // Never zip an output directory left by a previous build or an app run.
+  fs.rmSync(APP_DIR, { recursive: true, force: true });
+  execFileSync(process.execPath, [path.join(ROOT, 'scripts/package.js'),
+    `--platform=${PLATFORM}`, `--arch=${ARCH}`], { cwd: ROOT, stdio: 'inherit' });
 }
 
 /** Copy runtime-writable dirs so first launch works out of the box. */
@@ -70,8 +67,8 @@ ${PLATFORM === 'win32' ? '- Double-click **ForgeBrowserLab.exe**' : PLATFORM ===
 
 - No installation needed. The Electron runtime is bundled.
 - Keep this folder writable: logs/, downloads/ and results/ live next to the executable.
-- Filter lists (lists/) can be refreshed on any machine with:
-    node scripts/update-lists.js   (requires Node) — or just copy lists/*.txt from another install.
+- Filter lists are bundled inside the app archive. To update them, build a new package from a trusted source checkout.
+
 - v${manifest.version} — laboratory prototype. Not hardened for hostile use.
 `;
   fs.writeFileSync(path.join(APP_DIR, 'PORTABLE.md'), md);
@@ -85,16 +82,24 @@ function zip() {
     execSync(`powershell -NoProfile -Command "${ps}"`, { cwd: ROOT, stdio: 'inherit' });
   } else if (PLATFORM === 'darwin') {
     // ditto preserves symlinks and metadata for .app bundles.
-    execSync(`ditto -c -k --sequesterRsrc --keepParent "${APP_DIR}" "${OUT_ZIP}"`, { cwd: ROOT, stdio: 'inherit' });
+    execSync(`ditto -c -k --keepParent "${APP_DIR}" "${OUT_ZIP}"`, { cwd: ROOT, stdio: 'inherit' });
   } else {
-    // Linux: zip (no ditto available, no symlink issues for ELF binaries)
-    execSync(`zip -r "${OUT_ZIP}" "${APP_DIR}"`, { cwd: ROOT, stdio: 'inherit' });
+    // Archive relative to dist so extracted members never encode a checkout path.
+    execSync(`zip -r "${OUT_ZIP}" "${path.basename(APP_DIR)}"`, { cwd: DIST, stdio: 'inherit' });
   }
   const mb = (fs.statSync(OUT_ZIP).size / 1024 / 1024).toFixed(1);
   console.log(`\nOK: ${OUT_ZIP} (${mb} MB)`);
+  verifyPortableArchive(OUT_ZIP, PLATFORM, ARCH);
 }
 
+const verification = process.argv.find(arg => arg.startsWith('--verify-archive='));
+if (verification) {
+  const sourceRoot = process.argv.includes('--verify-source') ? ROOT : undefined;
+  console.log(`Verified ${verifyPortableArchive(verification.slice('--verify-archive='.length), PLATFORM, ARCH,
+    { sourceRoot })} ZIP members${sourceRoot ? ' and app.asar source bytes' : ''}`);
+} else {
 ensureAppPackaged();
 seedRuntimeDirs();
 writePortableReadme();
 zip();
+}

@@ -21,6 +21,7 @@
 const { normalizeSnapshot, describeSnapshot } = require('./page-snapshot');
 const { classifyAction } = require('./action-policy');
 const { filterObservation, filterSummary } = require('./snapshot-filter');
+const { isObviouslyBlocked } = require('./url-safety');
 
 const OPERATIONS = ['CLICK', 'TYPE_TEXT', 'SELECT', 'SCROLL_UP', 'SCROLL_DOWN', 'WAIT', 'DONE', 'BLOCKED'];
 
@@ -156,6 +157,13 @@ async function runGoal(deps, options = {}) {
     // ---- ACT --------------------------------------------------------------
     const action = toAction(operation, decision, snapshot);
     if (action.error) return finish('stalled', lastResultValue(), action.error);
+    if (action.kind === 'click' && action.signal.href && !action.signal.href.startsWith('#')) {
+      let destination;
+      try { destination = new URL(action.signal.href, snapshot.url).href; } catch {
+        return finish('blocked', null, 'unsafe link destination');
+      }
+      if (isObviouslyBlocked(destination)) return finish('blocked', null, 'unsafe link destination');
+    }
 
     // Policy gate: consequence, not mechanism, decides what needs a human.
     const policy = classifyAction(action);
@@ -180,7 +188,7 @@ async function runGoal(deps, options = {}) {
 
     const entry = {
       step, operation, target: action.targetIndex == null ? null : action.targetIndex,
-      value: action.value == null ? null : String(action.value).slice(0, 120),
+      value: action.kind === 'click' || action.value == null ? null : String(action.value).slice(0, 120),
       risk: policy.risk, why: policy.why,
       outcome: outcome && outcome.ok ? 'ok' : 'refused',
       detail: outcome && outcome.ok ? (outcome.detail || null) : (outcome && outcome.reason) || 'no reason given',
@@ -226,10 +234,12 @@ function toAction(operation, decision, snapshot) {
     return {
       kind: operation === 'CLICK' ? 'click' : operation === 'TYPE_TEXT' ? 'fill' : 'select',
       targetIndex: index,
-      value: operation === 'SELECT' ? (decision.option_value != null ? decision.option_value : decision.value) : decision.value,
+      value: operation === 'CLICK' ? null : operation === 'SELECT'
+        ? (decision.option_value != null ? decision.option_value : decision.value) : decision.value,
       label: el.label,
       // Risk signals come from the live element, not the model's own claim.
-      signal: { label: el.label, href: el.href || '', isForm: el.kind === 'fill', isSubmit: false, type: el.role === 'textbox' ? 'text' : '' },
+      signal: { label: el.label, href: el.href || '', isForm: el.kind === 'fill',
+        isSubmit: el.is_submit, type: el.input_type || (el.role === 'textbox' ? 'text' : '') },
     };
   }
 

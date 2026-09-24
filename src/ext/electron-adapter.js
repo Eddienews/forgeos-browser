@@ -245,10 +245,58 @@ class SessionAdapter {
       let origin = '';
       try { origin = new URL(url).hostname; } catch {}
       const filename = safeFileName(item.getFilename());
-      const savePath = path.join(self.downloadsDir, filename);
+      // A page (including one clicked by an agent) may initiate a download.
+      // Never infer consent from the click or Chromium's default save path.
+      let approved = false;
+      try {
+        const win = self.getChromeWindow();
+        if (win && !win.isDestroyed?.()) {
+          approved = dialog.showMessageBoxSync(win, {
+            type: 'question',
+            title: 'ForgeOS Browser — download approval',
+            message: `Download “${filename}” from ${origin || 'an unknown source'}?`,
+            detail: 'A website requested this file. Save it only if you trust its source. Files are never opened automatically.',
+            buttons: ['Cancel', 'Download'],
+            defaultId: 0,
+            cancelId: 0,
+            noLink: true,
+          }) === 1;
+        }
+      } catch { /* No usable approval UI: deny. */ }
+      if (!approved) {
+        item.cancel();
+        log.log('DENY', 'website download denied', { filename, source: origin });
+        return;
+      }
+
+      // Chromium's setSavePath overwrites existing files without asking. A
+      // freshly created, private directory per download avoids both existing
+      // same-name files and concurrent same-name downloads. Refuse a symlinked
+      // download root instead of silently following it outside our directory.
+      let privateDir;
+      let savePath;
+      try {
+        fs.mkdirSync(self.downloadsDir, { recursive: true });
+        if (!fs.lstatSync(self.downloadsDir).isDirectory() ||
+            fs.lstatSync(self.downloadsDir).isSymbolicLink()) {
+          throw new Error('download root is not a regular directory');
+        }
+        privateDir = fs.mkdtempSync(path.join(self.downloadsDir, 'browser-'));
+        savePath = path.join(privateDir, filename);
+        let destinationExists = false;
+        try { fs.lstatSync(savePath); destinationExists = true; }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+        if (!fs.lstatSync(privateDir).isDirectory() || destinationExists) {
+          throw new Error('download destination is not new');
+        }
+        item.setSavePath(savePath);
+      } catch (error) {
+        item.cancel();
+        if (privateDir) { try { fs.rmdirSync(privateDir); } catch {} }
+        log.log('ERROR', 'download destination unavailable', { filename, source: origin, error: String(error) });
+        return;
+      }
       const id = `browser-${Date.now()}-${++self.downloadSeq}`;
-      fs.mkdirSync(self.downloadsDir, { recursive: true });
-      item.setSavePath(savePath);
       self.downloadItems.set(id, item);
 
       const emitRecord = (state) => {

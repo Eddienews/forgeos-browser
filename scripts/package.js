@@ -14,8 +14,10 @@
 'use strict';
 
 const { execFileSync } = require('child_process');
+const fs = require('fs');
 const path = require('path');
-const { PACKAGE_IGNORE_SOURCE } = require('./package-policy');
+const asar = require('@electron/asar');
+const { PACKAGE_FILES, PACKAGE_IGNORE_SOURCE } = require('./package-policy');
 
 const ROOT = path.join(__dirname, '..');
 const manifest = require(path.join(ROOT, 'package.json'));
@@ -58,6 +60,38 @@ function printableArgument(value) {
   return /^[A-Za-z0-9_./:=,-]+$/.test(value) ? value : JSON.stringify(value);
 }
 
+function verifyPackageArchive(archivePath, sourceRoot = ROOT) {
+  if (!fs.existsSync(archivePath)) throw new Error(`Missing app.asar: ${archivePath}`);
+  // Inspect the *written* archive; a path filter alone does not prove what
+  // packager emitted. listPackage includes directories, so check every leaf.
+  const members = asar.listPackage(archivePath);
+  const normalizeMember = member => member.replace(/\\/g, '/').replace(/^\/+/, '');
+  const leaves = members.filter(member => !asar.statFile(archivePath, member.replace(/^[\\/]+/, ''), false).files)
+    .map(normalizeMember).sort();
+  const approved = new Set(PACKAGE_FILES);
+  const unexpected = leaves.filter(member => !approved.has(member));
+  const missing = PACKAGE_FILES.filter(member => !leaves.includes(member));
+  if (unexpected.length || missing.length || leaves.length !== new Set(leaves).size) {
+    throw new Error(`Unapproved app.asar inventory: unexpected=${JSON.stringify(unexpected)} missing=${JSON.stringify(missing)}`);
+  }
+  for (const member of leaves) {
+    const actual = asar.extractFile(archivePath, path.join(...member.split('/')));
+    let expected;
+    if (member === 'package.json') {
+      // electron-packager's prune step removes exactly these development-only
+      // top-level fields and serializes the remaining manifest with two spaces.
+      const source = JSON.parse(fs.readFileSync(path.join(sourceRoot, member), 'utf8'));
+      for (const field of ['private', 'scripts', 'devDependencies']) delete source[field];
+      expected = Buffer.from(JSON.stringify(source, null, 2) + '\n');
+    } else {
+      expected = fs.readFileSync(path.join(sourceRoot, member));
+    }
+    if (!actual.equals(expected)) throw new Error(`app.asar content mismatch: ${member}`);
+  }
+  return leaves;
+}
+
+function main() {
 for (const plat of requestedPlatforms) {
   // Cross-build guard: darwin requires a darwin host
   if (plat === 'darwin' && hostPlatform !== 'darwin') {
@@ -83,9 +117,17 @@ for (const plat of requestedPlatforms) {
     ];
     console.log(`> ${nodeCommand} ${packagerScript} ${args.map(printableArgument).join(' ')}`);
     execFileSync(nodeCommand, [packagerScript, ...args], { cwd: ROOT, stdio: 'inherit' });
+    const archivePath = path.join(ROOT, 'dist', outName,
+      plat === 'darwin' ? 'ForgeBrowserLab.app/Contents/Resources/app.asar' : 'resources/app.asar');
+    const members = verifyPackageArchive(archivePath);
+    console.log(`Verified app.asar: ${members.length} approved runtime files`);
     console.log(`OK: dist/${outName}`);
   }
 }
 
 console.log('\nNext (optional): npm run package:portable to zip the result.');
 console.log('NOTE: macOS bundles cannot be produced from Windows or Linux.');
+}
+
+if (require.main === module) main();
+module.exports = { verifyPackageArchive };

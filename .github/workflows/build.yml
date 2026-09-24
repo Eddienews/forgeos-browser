@@ -5,8 +5,8 @@ on:
     tags:
       - 'v*'
   pull_request:
-    # PRs run the unit tests (fast feedback for contributors); packaging
-    # stays tag-only (each release rebuilds all 5 targets).
+    # PRs build and verify 5 target-OS archives (some cross-architecture).
+    # Uploads and releases remain tag-only; PR archives are ephemeral.
     paths-ignore:
       - 'README.md'
       - 'docs/**'
@@ -14,6 +14,8 @@ on:
 
 jobs:
   build:
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -42,6 +44,27 @@ jobs:
       - name: Run unit tests
         run: npm test
 
+      # Python checks ZIP CRCs on every target; QUIC deps remain Windows-only.
+      - name: Setup Python for integrity and loopback QUIC fixture
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install test-only QUIC fixture dependency
+        if: matrix.os == 'windows-latest' && matrix.arch == 'x64'
+        shell: pwsh
+        run: python -m pip install --target "$env:RUNNER_TEMP/forge-quic-site" aioquic==1.3.0
+
+      # A source-only unit pass cannot establish renderer network confinement.
+      # A failed Windows transport fixture blocks the entire release matrix.
+      - name: Run isolated Electron transport and approval E2E
+        if: matrix.os == 'windows-latest' && matrix.arch == 'x64'
+        env:
+          FORGE_FIXTURE_PYTHON: python
+          FORGE_QUIC_SITE: ${{ runner.temp }}/forge-quic-site
+          PYTHONPATH: ${{ runner.temp }}/forge-quic-site
+        run: npm run test:e2e
+
       - name: Map platform
         id: platform
         shell: bash
@@ -53,12 +76,25 @@ jobs:
           esac
 
       - name: Package application
-        if: github.event_name == 'push'  # tag releases package; PRs test only
         run: node scripts/package.js --platform=${{ steps.platform.outputs.plat }} --arch=${{ matrix.arch }}
 
+      # Print only immediate bundle and vendor framework names/types on macOS
+      # PRs, never their contents or packaged bytes. Uploads stay tag-only.
+      - name: Inventory macOS framework names and types
+        if: github.event_name == 'pull_request' && matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          node -e 'const fs = require("node:fs"); const bundle = "dist/ForgeBrowserLab-darwin-${{ matrix.arch }}"; const root = `${bundle}/ForgeBrowserLab.app/Contents/Frameworks`; const inventory = (dir, label) => { if (!fs.existsSync(dir)) return; const entries = fs.readdirSync(dir, { withFileTypes: true }).map(entry => [entry.name, entry.isDirectory() ? "directory" : entry.isFile() ? "file" : entry.isSymbolicLink() ? "symlink" : "other"]).sort((a, b) => a[0].localeCompare(b[0])); console.log(`${label} entries:`, JSON.stringify(entries)); }; inventory(bundle, "Bundle root"); for (const framework of ["Electron Framework", "Mantle", "ReactiveObjC", "Squirrel"]) for (const folder of ["Resources", "Libraries", "Helpers"]) inventory(`${root}/${framework}.framework/Versions/A/${folder}`, `${framework} ${folder}`);'
+
       - name: Create portable archive
-        if: github.event_name == 'push'
         run: node scripts/make-portable.js --platform=${{ steps.platform.outputs.plat }} --arch=${{ matrix.arch }}
+
+      - name: Verify ZIP integrity
+        run: |
+          python -c "import sys, zipfile; archive=sys.argv[1]; z=zipfile.ZipFile(archive); bad=z.testzip(); z.close(); print('ZIP integrity verified' if bad is None else 'Bad ZIP member: ' + bad); sys.exit(1 if bad else 0)" "dist/ForgeBrowserLab-portable-${{ steps.platform.outputs.plat }}-${{ matrix.arch }}.zip"
+
+      - name: Verify target-OS portable archive
+        run: node scripts/make-portable.js --verify-archive=dist/ForgeBrowserLab-portable-${{ steps.platform.outputs.plat }}-${{ matrix.arch }}.zip --platform=${{ steps.platform.outputs.plat }} --arch=${{ matrix.arch }} --verify-source
 
       - name: Upload artifacts
         if: github.event_name == 'push'
@@ -66,7 +102,7 @@ jobs:
         with:
           name: ForgeBrowserLab-${{ steps.platform.outputs.plat }}-${{ matrix.arch }}
           path: dist/ForgeBrowserLab-portable-${{ steps.platform.outputs.plat }}-${{ matrix.arch }}.zip
-          if-no-files-found: warn
+          if-no-files-found: error
 
   release:
     name: Publish release downloads
@@ -76,6 +112,17 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout portable archive policy
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js for portable archive policy
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install archive inspector for release validation
+        run: npm ci --ignore-scripts
+
       - name: Download packaged archives
         uses: actions/download-artifact@v4
         with:
@@ -83,24 +130,59 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: Validate release completeness and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          expected=(
+            ForgeBrowserLab-portable-win32-x64.zip
+            ForgeBrowserLab-portable-darwin-x64.zip
+            ForgeBrowserLab-portable-darwin-arm64.zip
+            ForgeBrowserLab-portable-linux-x64.zip
+            ForgeBrowserLab-portable-linux-arm64.zip
+          )
+          shopt -s nullglob
+          actual=(ForgeBrowserLab-portable-*.zip)
+          if [ "${#actual[@]}" -ne "${#expected[@]}" ]; then
+            echo "Missing or unexpected release archive: expected ${#expected[@]}, got ${#actual[@]}" >&2
+            exit 1
+          fi
+          for archive in "${expected[@]}"; do
+            if [ ! -s "$archive" ]; then
+              echo "Missing or empty release archive: $archive" >&2
+              exit 1
+            fi
+            unzip -t "$archive" >/dev/null
+            target="${archive#ForgeBrowserLab-portable-}"
+            target="${target%.zip}"
+            platform="${target%-*}"
+            arch="${target##*-}"
+            node ../scripts/make-portable.js "--verify-archive=$archive" "--platform=$platform" "--arch=$arch" --verify-source
+
+          done
+          # Completeness and accidental-corruption checks, not a digital signature.
+          sha256sum "${expected[@]}" > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ github.ref_name }}
         shell: bash
         run: |
+          set -euo pipefail
           shopt -s nullglob
           assets=(release-assets/*.zip)
-          if [ "${#assets[@]}" -eq 0 ]; then
-            echo "No packaged archives were produced."
+          if gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG_NAME already exists; refusing to replace its assets." >&2
             exit 1
           fi
-          if ! gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$TAG_NAME" \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "ForgeOS Browser $TAG_NAME" \
-              --generate-notes
-          fi
-          gh release upload "$TAG_NAME" "${assets[@]}" \
+          # Keep a failed upload in draft rather than publishing a partial release.
+          gh release create "$TAG_NAME" "${assets[@]}" release-assets/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
-            --clobber
+            --title "ForgeOS Browser $TAG_NAME" \
+            --generate-notes \
+            --verify-tag \
+            --draft
+          gh release edit "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --draft=false

@@ -107,4 +107,61 @@ module.exports = [
       }
     },
   },
+  {
+    name: 'IPv4-mapped IPv6 literals and DNS answers inherit IPv4 safety rules',
+    gate: 'A2',
+    fn: async (assert) => {
+      const mapped = [
+        ['::ffff:127.0.0.1', false, true],
+        ['::ffff:7f00:1', false, true],
+        ['::ffff:169.254.169.254', false, false],
+        ['::ffff:a9fe:a9fe', false, false],
+        ['::ffff:10.1.2.3', false, true],
+        ['::ffff:93.184.216.34', true, true],
+      ];
+      for (const [address, defaultAllowed, privateAllowed] of mapped) {
+        const literal = `http://[${address}]/`;
+        const dnsUrl = 'http://mapped.example/';
+        const resolver = fakeDns({ 'mapped.example': [address] });
+        assert.strictEqual(await allows(literal, { resolver: fakeDns({}) }), defaultAllowed, literal);
+        assert.strictEqual(await allows(literal, { allowPrivate: true, resolver: fakeDns({}) }), privateAllowed, literal);
+        assert.strictEqual(await allows(dnsUrl, { resolver }), defaultAllowed, `DNS ${address}`);
+        assert.strictEqual(await allows(dnsUrl, { allowPrivate: true, resolver }), privateAllowed, `DNS private ${address}`);
+      }
+      assert.strictEqual(await allows('http://mixed.example/', {
+        resolver: fakeDns({ 'mixed.example': ['93.184.216.34', '::ffff:127.0.0.1'] }),
+      }), false);
+      assert.strictEqual(safety.isObviouslyBlocked('http://[::ffff:127.0.0.1]/'), true);
+      assert.strictEqual(safety.isObviouslyBlocked('http://[::ffff:93.184.216.34]/'), false);
+    },
+  },
+  {
+    name: 'canonical IPv6 loopback, ULA, link-local and multicast are classified',
+    gate: 'A2',
+    fn: async (assert) => {
+      for (const [address, defaultAllowed, privateAllowed] of [
+        ['0:0:0:0:0:0:0:1', false, false],
+        ['fd12:3456::1', false, true],
+        ['fe90::1', false, false],
+        ['febf::1', false, false],
+        ['ff02::1', false, false],
+        ['2001:4860:4860::8888', true, true],
+      ]) {
+        const url = `http://[${address}]/`;
+        assert.strictEqual(await allows(url, { resolver: fakeDns({}) }), defaultAllowed, url);
+        assert.strictEqual(await allows(url, { allowPrivate: true, resolver: fakeDns({}) }), privateAllowed, `private ${url}`);
+      }
+    },
+  },
+  {
+    name: 'unknown and malformed resolver answers fail closed even alongside public IPs',
+    gate: 'A2',
+    fn: async (assert) => {
+      for (const answer of ['not-an-ip', '127.0.0.999', 'fe80::zz', '', null, undefined]) {
+        const resolver = async () => [{ address: '93.184.216.34' }, { address: answer }];
+        assert.strictEqual(await allows('https://mixed.example/', { resolver, allowPrivate: true }), false, String(answer));
+      }
+      assert.strictEqual(await allows('http://[fe80::zz]/', { resolver: fakeDns({}) }), false);
+    },
+  },
 ];

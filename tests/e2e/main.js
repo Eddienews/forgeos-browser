@@ -21,8 +21,20 @@ const { FilterEngine } = require('../../src/engine/filter-engine');
 const { EventLog } = require('../../src/engine/event-log');
 const { SessionAdapter } = require('../../src/ext/electron-adapter');
 const { analyzeAgentView, IN_PAGE_SCRIPT } = require('../../src/engine/agent-view');
+const { forgeSnapshotScript } = require('../../src/page-snapshot');
+const { forgeActionScript } = require('../../src/page-actions');
+const { normalizeSnapshot } = require('../../src/engine/page-snapshot');
+const { candidatesFor } = require('../../src/engine/typesafe-decider');
 const { createPageWebPreferences } = require('../../src/page-web-preferences');
 const sessionStore = require('../../src/engine/session-store');
+const { runAgentProxyE2E } = require('./agent-proxy');
+const { runQuicE2E } = require('./quic');
+
+// The Electron integration process must not reuse the user's browser profile.
+const scratchRoot = process.env.BH_AGENT_WORKSPACE || path.join(os.homedir(), 'AppData', 'Local', 'hermes', 'cache', 'scratch');
+fs.mkdirSync(scratchRoot, { recursive: true });
+const scratchProfile = fs.mkdtempSync(path.join(scratchRoot, 'forge-agent-e2e-'));
+app.setPath('userData', scratchProfile);
 
 const PAGES = path.join(__dirname, '..', 'pages');
 const PNG1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
@@ -55,6 +67,38 @@ function record(test, name, pass, detail) {
 
 function serve() {
   server = http.createServer((req, res) => {
+    if (req.url.startsWith('/approval-display/')) {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(`<!doctype html><input type="password" value="fixtureDialogPath93">
+        <button type="button" id="approve">fixtureDialogPath93</button>`);
+      return;
+    }
+    if (req.url.startsWith('/editable-sensitive/')) {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(`<!doctype html><title>Article fixtureEditable74</title>
+        <span id="editable-label">Password</span>
+        <div contenteditable="true" aria-labelledby="editable-label">fixtureEditable74</div>
+        <p>Ordinary prose and fixtureEditable74</p>
+        <a href="/next/fixtureEditable74/%66%69%78%74%75%72%65%45%64%69%74%61%62%6c%65%37%34">Read fixtureEditable74</a>`);
+      return;
+    }
+    if (req.url.startsWith('/associated-label/')) {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(`<!doctype html><title>Article fixtureOnlyLabel76</title>
+        <label for="ordinary">Password</label><input type="text" id="ordinary" name="ordinary" value="fixtureOnlyLabel76">
+        <span id="other-label">Password</span><input type="text" name="ordinary2" aria-labelledby="other-label" value="fixtureOnlyLabel76">
+        <p>Article fixtureOnlyLabel76</p>
+        <a href="/next/fixtureOnlyLabel76/%66%69%78%74%75%72%65%4f%6e%6c%79%4c%61%62%65%6c%37%36">Read fixtureOnlyLabel76</a>`);
+      return;
+    }
+    if (req.url.startsWith('/snapshot-duplication/')) {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(`<!doctype html><title>Article fixturePathValue78</title>
+        <input type="password" name="password" value="fixturePathValue78">
+        <a href="/next/fixturePathValue78/%66%69%78%74%75%72%65%50%61%74%68%56%61%6c%75%65%37%38">Read fixturePathValue78</a>
+        <a style="position:absolute;top:1400px" href="/later/fixturePathValue78">Later fixturePathValue78</a>`);
+      return;
+    }
     // Third-party endpoint: sets a cookie on a DIFFERENT host (Test C).
     if (req.url.startsWith('/3p.gif')) {
       res.writeHead(200, { 'content-type': 'image/gif', 'set-cookie': 'partner=123; Path=/; Max-Age=3600' });
@@ -216,6 +260,55 @@ async function main() {
   record('D', 'page observed the cleaned URL',
     !/utm_source|fbclid/.test(inPage || ''), `inPage=${inPage}`);
 
+  /* ---------- Sensitive value repeated in literal/encoded URL paths ---------- */
+  await loadAndWait(wc, `http://127.0.0.1:${p}/snapshot-duplication/fixturePathValue78/%66%69%78%74%75%72%65%50%61%74%68%56%61%6c%75%65%37%38`);
+  const indexedRaw = await wc.executeJavaScript(forgeSnapshotScript(), true);
+  const indexedSafe = normalizeSnapshot(indexedRaw);
+  const serialized = JSON.stringify({ indexedRaw, indexedSafe });
+  record('C1', 'real renderer scrubs sensitive literal/encoded URL and href paths',
+    !serialized.includes('fixturePathValue78') &&
+      !serialized.toLowerCase().includes('%66%69%78%74%75%72%65%50%61%74%68%56%61%6c%75%65%37%38') &&
+      indexedSafe.elements.some(el => el.href && el.href.includes('<REDACTED>')) &&
+      indexedSafe.below_fold.some(el => el.href && el.href.includes('<REDACTED>')),
+    JSON.stringify({ url: indexedSafe.url, elements: indexedSafe.elements.length, below: indexedSafe.below_fold.length }));
+
+  /* ---------- Associated HTML label and aria-labelledby ---------- */
+  await loadAndWait(wc, `http://127.0.0.1:${p}/associated-label/fixtureOnlyLabel76/%66%69%78%74%75%72%65%4f%6e%6c%79%4c%61%62%65%6c%37%36`);
+  const associatedRaw = await wc.executeJavaScript(IN_PAGE_SCRIPT, true);
+  const associatedView = analyzeAgentView(associatedRaw);
+  const associatedSnapshot = normalizeSnapshot(await wc.executeJavaScript(forgeSnapshotScript(), true));
+  const associatedBytes = JSON.stringify({ associatedRaw, associatedView, associatedSnapshot });
+  record('C1', 'real renderer associated labels redact both ordinary inputs and literal/encoded duplicates',
+    associatedRaw.inputs.length === 2 && associatedRaw.inputs.every(input => input.sensitive && input.value === '<REDACTED>') &&
+      !associatedBytes.includes('fixtureOnlyLabel76') &&
+      !associatedBytes.toLowerCase().includes('%66%69%78%74%75%72%65%4f%6e%6c%79%4c%61%62%65%6c%37%36'),
+    JSON.stringify({ inputs: associatedRaw.inputs.map(input => ({ sensitive: input.sensitive, value: input.value })),
+      url: associatedView.url }));
+
+  await loadAndWait(wc, `http://127.0.0.1:${p}/editable-sensitive/fixtureEditable74/%66%69%78%74%75%72%65%45%64%69%74%61%62%6c%65%37%34`);
+  const editableRaw = await wc.executeJavaScript(IN_PAGE_SCRIPT, true);
+  const editableIndexed = normalizeSnapshot(await wc.executeJavaScript(forgeSnapshotScript(), true));
+  const editablePayload = JSON.stringify({ editableRaw, editableIndexed, view: analyzeAgentView(editableRaw) });
+  record('C1', 'real contenteditable password value redacted across view and indexed snapshot',
+    editableRaw.inputs.some(input => input.type === 'contenteditable' && input.sensitive && input.value === '<REDACTED>') &&
+    editableRaw.bodyText.includes('Ordinary prose') && !editablePayload.includes('fixtureEditable74') &&
+    !editablePayload.toLowerCase().includes('%66%69%78%74%75%72%65%45%64%69%74%61%62%6c%65%37%34'.toLowerCase()),
+    JSON.stringify({ inputs: editableRaw.inputs, url: editableIndexed.url }));
+
+  await loadAndWait(wc, `http://127.0.0.1:${p}/approval-display/fixtureDialogPath93?item=fixtureDialogPath93`);
+  const displaySnapshot = normalizeSnapshot(await wc.executeJavaScript(forgeSnapshotScript(), true));
+  const displayButton = displaySnapshot.elements.find(el => el.role === 'button');
+  const inspected = displayButton && await wc.executeJavaScript(
+    forgeActionScript(displayButton.index, 'inspect', 'synthetic-e2e-nonce', { kind: 'click' }), true);
+  record('C1', 'real renderer excludes sensitive fill candidate and sanitizes approval display, retaining raw proof',
+    displaySnapshot.elements.some(el => el.sensitive && el.kind === 'blocked') &&
+    Object.keys(candidatesFor(displaySnapshot, 'fill')).length === 0 &&
+    inspected && inspected.ok && inspected.descriptor.pageUrl.includes('fixtureDialogPath93') &&
+    inspected.descriptor.label.includes('fixtureDialogPath93') &&
+    !JSON.stringify(inspected.display).includes('fixtureDialogPath93') &&
+    inspected.display.label.includes('<REDACTED>') && inspected.display.pageUrl.includes('<REDACTED>'),
+    JSON.stringify({ safeUrl: displaySnapshot.url, display: inspected && inspected.display }));
+
   /* ---------- Test E (Gate G): prompt injection ---------- */
   await loadAndWait(wc, `http://127.0.0.1:${p}/prompt_injection.html`);
   const raw = await wc.executeJavaScript(IN_PAGE_SCRIPT, true);
@@ -270,6 +363,9 @@ async function main() {
     JSON.stringify(boundary));
   boundaryWin.destroy();
 
+  await runAgentProxyE2E(record);
+  await runQuicE2E(record);
+
   const payload = {
     results,
     adapterCounters: adapter.counters,
@@ -283,6 +379,8 @@ async function main() {
   console.log(failed === 0 ? '\nE2E: ALL PASS' : `\nE2E: ${failed} FAILURES`);
   win.destroy();
   server.close();
+  // Chromium may still hold the profile on Windows until the Electron process
+  // exits; the test runner cleans its scratch profile after process exit.
   app.exit(failed === 0 ? 0 : 1);
 }
 

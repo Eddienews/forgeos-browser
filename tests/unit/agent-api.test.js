@@ -4,6 +4,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
+const vm = require('vm');
+const { IN_PAGE_SCRIPT, analyzeAgentView } = require('../../src/engine/agent-view');
 const {
   MAX_BODY_BYTES, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS,
   isAllowedHostHeader, normalizedAuditMethod, normalizedAuditRoute,
@@ -25,6 +27,7 @@ async function withApi(check, {
       confirmationNow: () => time,
       getSnapshot: () => ({ tabs: [], session: {} }),
       readPage: async () => pageView,
+      requireAgentTab: async () => {},
       approveNavigate: async (url, context) => {
         approvalRequests.push({ url, context });
         return approveNavigation(url, context);
@@ -70,6 +73,187 @@ async function withApi(check, {
 
 const url = 'https://example.com/navigation-test';
 module.exports = [
+  {
+    name: 'read routes deny a human tab before extraction',
+    gate: 'C1',
+    fn: (assert) => {
+      const marker = 'synthetic-human-tab-private-content';
+      let guardCalls = 0;
+      let pageReads = 0;
+      let observations = 0;
+      return withApi(async ({ api, get }) => {
+        for (const route of ['/page', '/links', '/snapshot', '/snapshot?raw=1']) {
+          const response = await get(route, api.issueToken('read'));
+          assert.strictEqual(response.status, 503, route);
+          assert.match(response.body.error, /\/navigate/, route);
+          assert.ok(!JSON.stringify(response.body).includes(marker), `${route} exposed human-tab content`);
+        }
+        assert.strictEqual(guardCalls, 4);
+        assert.strictEqual(pageReads, 0, 'denial must not invoke readPage');
+        assert.strictEqual(observations, 0, 'denial must not invoke observe');
+      }, { apiOptions: {
+        requireAgentTab: async () => { guardCalls++; throw Error(`Open an agent-owned tab via /navigate; ${marker}`); },
+        readPage: async () => { pageReads++; return { url: 'https://example.com/private', content: { links: [{ text: marker }] }, text: marker }; },
+        observe: async () => { observations++; return { url: 'https://example.com/private', text: marker, elements: [] }; },
+      } });
+    },
+  },
+  {
+    name: 'read routes fail closed without an agent-tab guard',
+    gate: 'C1',
+    fn: (assert) => {
+      let pageReads = 0;
+      let observations = 0;
+      return withApi(async ({ api, get }) => {
+        for (const route of ['/page', '/links', '/snapshot']) {
+          const response = await get(route, api.bootstrapToken);
+          assert.strictEqual(response.status, 503, route);
+          assert.match(response.body.error, /\/navigate/, route);
+        }
+        assert.strictEqual(pageReads, 0);
+        assert.strictEqual(observations, 0);
+      }, { apiOptions: {
+        requireAgentTab: undefined,
+        readPage: async () => { pageReads++; return { text: 'synthetic human page' }; },
+        observe: async () => { observations++; return { text: 'synthetic human page' }; },
+      } });
+    },
+  },
+  {
+    name: 'owned-tab reads preserve read and full scopes, but not navigate or control',
+    gate: 'C1',
+    fn: (assert) => {
+      let guardCalls = 0;
+      let pageReads = 0;
+      let observations = 0;
+      const pageView = { url: 'https://example.com/agent', content: { links: [{ text: 'Agent link', href: 'https://example.com/next' }] } };
+      return withApi(async ({ api, get }) => {
+        for (const token of [api.issueToken('read'), api.bootstrapToken]) {
+          assert.strictEqual((await get('/page', token)).body.url, pageView.url);
+          assert.strictEqual((await get('/links', token)).body.links[0].text, 'Agent link');
+          assert.strictEqual((await get('/snapshot', token)).body.text, 'Agent-owned text');
+        }
+        assert.strictEqual(guardCalls, 6);
+        assert.strictEqual(pageReads, 4);
+        assert.strictEqual(observations, 2);
+        for (const scope of ['navigate', 'control']) {
+          const token = api.issueToken(scope);
+          for (const route of ['/page', '/links', '/snapshot']) {
+            const response = await get(route, token);
+            assert.strictEqual(response.status, 403, `${scope} ${route}`);
+            assert.match(response.body.error, /lacks 'read'/);
+          }
+        }
+        assert.strictEqual(guardCalls, 6, 'scope denials must precede guard');
+        assert.strictEqual(pageReads, 4);
+        assert.strictEqual(observations, 2);
+      }, { pageView, apiOptions: {
+        requireAgentTab: async () => { guardCalls++; },
+        readPage: async () => { pageReads++; return pageView; },
+        observe: async () => { observations++; return { url: pageView.url, text: 'Agent-owned text', elements: [] }; },
+      } });
+    },
+  },
+  {
+    name: 'failed in-page extraction does not re-expose raw fallback tab title or URL',
+    gate: 'H',
+    fn(assert) {
+      const marker = 'fixtureFallbackPrivate96'; // synthetic fixture only
+      // main.js uses this exact shape if executeJavaScript fails; it has no
+      // fields from which to learn which tab metadata duplicates a secret.
+      const fallback = analyzeAgentView({ url: `https://example.com/${marker}`,
+        title: `Article ${marker}` });
+      assert.ok(!JSON.stringify(fallback).includes(marker), 'model view leaked fallback metadata');
+      return withApi(async ({ api, get }) => {
+        for (const route of ['/page', '/links']) {
+          const response = await get(route, api.bootstrapToken);
+          assert.strictEqual(response.status, 200);
+          assert.ok(!JSON.stringify(response.body).includes(marker), `${route} leaked fallback metadata`);
+        }
+      }, { pageView: fallback });
+    },
+  },
+  {
+    name: 'read boundary hides short, encoded and placeholder-only sensitive duplicates including status',
+    gate: 'H',
+    fn(assert) {
+      const short = 'X7'; // synthetic marker, not a credential
+      const one = 'Q'; // synthetic single-character marker
+      const long = 'fixtureMarkerAB72'; // synthetic marker, not a credential
+      const encoded = [...long].map((c) => '%' + c.charCodeAt(0).toString(16)).join('');
+      const mixed = '%66' + long.slice(1);
+      const field = (attrs, value) => ({ tagName: 'INPUT', value,
+        getAttribute: (key) => attrs[key] || '' });
+      const fields = [field({ type: 'password' }, short), field({ type: 'text', placeholder: 'SSN' }, long),
+        field({ type: 'password' }, one)];
+      const link = { textContent: `Read ${short} ${one} ${encoded} ${mixed}`,
+        getAttribute: (key) => key === 'href' ? `https://example.com/next/${short}/${one}/${encoded}/${mixed}` : '' };
+      const nodes = { 'input, select, textarea': fields, 'a[href]': [link],
+        p: [{ textContent: `Safe article ${short} ${one} ${encoded} ${mixed} continues` }] };
+      const doc = { title: `Safe title ${short} ${one} ${encoded} ${mixed}`,
+        body: { innerText: `Article ${short} ${one} ${encoded} ${mixed}` },
+        querySelectorAll: (selector) => nodes[selector] || [], querySelector: () => null };
+      const pathWithMarkers = `https://example.com/story/${short}/${one}/${encoded}/${mixed}`;
+      const extracted = vm.runInNewContext(IN_PAGE_SCRIPT, {
+        document: doc, window: { location: { href: pathWithMarkers } }, URL,
+      });
+      for (const marker of [short, one, long, encoded, mixed]) {
+        assert.ok(!JSON.stringify(extracted).includes(marker), `in-page extraction leaked ${marker}`);
+      }
+      assert.strictEqual(extracted.inputs[1].sensitive, true, 'placeholder alone identifies SSN');
+      assert.strictEqual(extracted.inputs[1].value, '<REDACTED>');
+      const view = analyzeAgentView(extracted);
+      assert.ok(view.content.paragraphs[0].includes('Safe article'), 'safe text is still readable');
+      const raw = analyzeAgentView({ url: pathWithMarkers, title: `Safe ${short} ${one} ${encoded} ${mixed}`,
+        paragraphs: [`Safe article ${short} ${one} ${encoded} ${mixed} continues`],
+        links: [{ href: pathWithMarkers, text: `Next ${short} ${one} ${encoded} ${mixed}` }],
+        inputs: [{ type: 'password', value: short }, { placeholder: 'SSN', value: long },
+          { type: 'password', value: one }] });
+      return withApi(async ({ api, get }) => {
+        for (const route of ['/page', '/links']) {
+          const response = await get(route, api.bootstrapToken);
+          assert.strictEqual(response.status, 200);
+          for (const marker of [short, one, long, encoded, mixed]) {
+            assert.ok(!JSON.stringify(response.body).includes(marker), `${route} leaked ${marker}`);
+          }
+        }
+        const status = await get('/status', api.bootstrapToken);
+        assert.strictEqual(status.status, 200);
+        for (const marker of [short, one, long, encoded, mixed]) {
+          assert.ok(!JSON.stringify(status.body).includes(marker), `/status leaked ${marker}`);
+        }
+        assert.strictEqual(status.body.tabs.length, 1);
+      }, { pageView: raw, apiOptions: {
+        getSnapshot: () => ({ mode: 'standard', activeTabId: 1, session: {}, tabs: [
+          { title: `Safe ${short} ${one} ${encoded} ${mixed}`, url: pathWithMarkers },
+        ] }),
+      } });
+    },
+  },
+  {
+    name: 'GET /page and /links redact sensitive-field duplicates without dropping public content',
+    gate: 'H',
+    fn: (assert) => {
+      const marker = 'fixtureHttpPrivateValue64832'; // synthetic fixture only
+      const view = analyzeAgentView({
+        url: `https://example.com/${marker}?key=${marker}`,
+        title: `Public article ${marker}`,
+        paragraphs: [`Public prose ${marker} remains`],
+        links: [{ href: `https://example.com/next/${marker}?key=${marker}`, text: `Read more ${marker}` }],
+        inputs: [{ type: 'password', name: 'password', value: marker }],
+      });
+      return withApi(async ({ api, get }) => {
+        for (const route of ['/page', '/links']) {
+          const res = await get(route, api.bootstrapToken);
+          assert.strictEqual(res.status, 200);
+          assert.ok(!JSON.stringify(res.body).includes(marker), `${route} must not expose fixture value`);
+          assert.ok(res.body.url.includes('example.com'));
+          if (route === '/page') assert.ok(res.body.content.paragraphs[0].includes('Public prose'));
+          else assert.ok(res.body.links[0].text.includes('Read more'));
+        }
+      }, { pageView: view });
+    },
+  },
   {
     name: 'bootstrap token is atomically stored with private permissions',
     gate: 'H',
