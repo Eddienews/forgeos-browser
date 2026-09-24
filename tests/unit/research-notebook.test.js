@@ -92,6 +92,10 @@ module.exports = [
       'Authorization: ' + 'Bearer ' + 'fixture-private-bearer',
       'Authorization=Bearer fixture-private-assignment',
       'Bearer ' + 'fixture-private-standalone',
+      'OPENAI_API_KEY=fixture-private-openai',
+      'AWS_SECRET_ACCESS_KEY="fixture-private-aws"',
+      'GITHUB_TOKEN=fixture-private-github',
+      '{"client_secret":"fixture-private-client"}',
     ];
     for (const [i, fixture] of fixtureCases.entries()) {
       assert.throws(() => N.saveNotes(root, fixture), /Invalid notes/, fixture);
