@@ -63,6 +63,7 @@ module.exports = [
         [p + 'Resources/app.asar', 'asar'],
         [p + 'Resources/en.lproj/locale.pak', 'locale'],
         [p + 'Frameworks/Electron Framework.framework/Versions/A/Electron Framework', 'binary'],
+        [p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/MainMenu.nib', 'synthetic vendor menu'],
         ...genderedLocales.flatMap(name => {
           const dir = p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/' + name + '.lproj/';
           return [[dir, '', 0o40755], [dir + 'locale.pak', 'locale']];
@@ -83,6 +84,8 @@ module.exports = [
           p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/fr_FR_FEMININE.lproj/locale.pak',
           p + 'Resources/pt_PT_MASCULINE.lproj/locale.pak',
           p + 'Frameworks/Mantle.framework/Versions/A/Resources/zh_CN_FEMININE.lproj/locale.pak',
+          p + 'Frameworks/Mantle.framework/Versions/A/Resources/MainMenu.nib',
+          p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/MainMenu.nib/private-key.txt',
           p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/pt_PT_MASCULINE.lproj/private-key.txt',
           p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/zh_TW_NEUTER.lproj/private-key.txt',
           p + 'Frameworks/Electron Framework.framework/Versions/A/_CodeSignature/private-key.txt',
@@ -114,6 +117,14 @@ module.exports = [
             a.throws(() => verifyPortableArchive(zip, 'darwin', 'x64'),
               /Invalid gendered locale ZIP mode/, `${target} mode ${mode.toString(8)} must fail`);
           }
+        }
+        const menuFile = p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/MainMenu.nib';
+        for (const mode of [0o120777, 0o40755]) {
+          const mutated = entries.map(([name, content, originalMode]) =>
+            name === menuFile ? [name, 'A', mode] : [name, content, originalMode]);
+          syntheticZip(zip, mutated);
+          a.throws(() => verifyPortableArchive(zip, 'darwin', 'x64'),
+            /Invalid macOS menu ZIP mode/, `MainMenu.nib mode ${mode.toString(8)} must fail`);
         }
       } finally { fs.rmSync(temp, { recursive: true, force: true }); }
     },

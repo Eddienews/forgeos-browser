@@ -143,7 +143,8 @@ function approvedMacMember(value, directory) {
     ['Resources', 'Libraries', 'Helpers', '_CodeSignature'].includes(v[0]) && directory;
   if (v[0] === '_CodeSignature') return v.length === 2 && v[1] === 'CodeResources' && !directory;
   if (v[0] === 'Resources') {
-    if (v.length === 2) return (resource.has(v[1]) || v[1] === 'Info.plist') && !directory ||
+    if (v.length === 2) return (resource.has(v[1]) || v[1] === 'Info.plist' ||
+      name === 'Electron Framework' && v[1] === 'MainMenu.nib') && !directory ||
       (locale(v[1]) || name === 'Electron Framework' && frameworkLocale(v[1])) && directory;
     return v.length === 3 && (locale(v[1]) || name === 'Electron Framework' && frameworkLocale(v[1])) &&
       v[2] === 'locale.pak' && !directory;
@@ -247,6 +248,8 @@ function verifyPortableArchive(archive, platform, arch, options = {}) {
       const expectedType = genderedPath.length === 1 ? 0x4000 : 0x8000;
       if ((mode & 0xf000) !== expectedType) throw new Error(`Invalid gendered locale ZIP mode: ${zipPath}`);
     }
+    if (platform === 'darwin' && value === MAC_GENDERED_RESOURCE_PREFIX + 'MainMenu.nib' &&
+        (mode & 0xf000) !== 0x8000) throw new Error(`Invalid macOS menu ZIP mode: ${zipPath}`);
     if (platform === 'darwin' ? value === 'ForgeBrowserLab.app/Contents/Resources/app.asar' :
       value === 'resources/app.asar') {
       if (directory || (mode & 0xf000) === 0xa000) throw new Error(`Invalid app.asar ZIP member: ${zipPath}`);
