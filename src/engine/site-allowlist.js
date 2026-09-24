@@ -58,20 +58,46 @@ function loadPresets() {
   return presetsCache;
 }
 
-function persist() {
+function writeAtomic(file, text) {
+  const tmp = file + '.tmp';
   try {
-    const tmp = FILE + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify([...load()], null, 2), 'utf8');
-    fs.renameSync(tmp, FILE);
-  } catch {}
+    fs.writeFileSync(tmp, text, 'utf8');
+    fs.renameSync(tmp, file);
+  } catch (error) {
+    try { fs.unlinkSync(tmp); } catch {}
+    throw error;
+  }
 }
 
-function persistPresets() {
+// Stage changes off-cache. Write preset metadata first: if the authoritative
+// host list fails to save, no new grant is present on disk or in memory.
+function change(mutator) {
+  const hosts = new Set(load());
+  const presets = JSON.parse(JSON.stringify(loadPresets()));
+  const result = mutator(hosts, presets);
+  const metaFile = FILE + '.presets';
+  let previousMeta = null;
+  try { previousMeta = fs.readFileSync(metaFile, 'utf8'); }
+  catch (error) {
+    if (error.code !== 'ENOENT') return { ok: false, reason: `Unable to read site exceptions: ${error.message || error}` };
+  }
+  let wroteMeta = false;
   try {
-    const tmp = FILE + '.presets.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(loadPresets(), null, 2), 'utf8');
-    fs.renameSync(tmp, FILE + '.presets');
-  } catch {}
+    writeAtomic(metaFile, JSON.stringify(presets, null, 2));
+    wroteMeta = true;
+    writeAtomic(FILE, JSON.stringify([...hosts], null, 2));
+    cache = hosts;
+    presetsCache = presets;
+    return { ok: true, ...result };
+  } catch (error) {
+    if (wroteMeta) {
+      try {
+        if (previousMeta === null) fs.unlinkSync(metaFile);
+        else writeAtomic(metaFile, previousMeta);
+      } catch { /* Metadata may differ; the authoritative host list did not change. */ }
+    }
+    return { ok: false, reason: `Unable to save site exception: ${error.message || error}` };
+  }
 }
 
 /** Exact-host match (no wildcard subtrees: allowing a site is deliberate). */
@@ -82,21 +108,16 @@ function isAllowed(hostname) {
 function add(hostname) {
   const h = String(hostname || '').toLowerCase().replace(/^www\./, '');
   if (!h || !h.includes('.')) return { ok: false };
-  load().add(h);
-  persist();
-  return { ok: true, host: h };
+  return change(hosts => { hosts.add(h); return { host: h }; });
 }
 
 function remove(hostname) {
   const h = String(hostname || '').toLowerCase().replace(/^www\./, '');
-  load().delete(h);
-  // Also drop the host from any preset record so re-trust works cleanly.
-  for (const [name, hosts] of Object.entries(loadPresets())) {
-    loadPresets()[name] = hosts.filter((x) => x !== h);
-  }
-  persistPresets();
-  persist();
-  return { ok: true };
+  return change((hosts, presets) => {
+    hosts.delete(h);
+    for (const [name, members] of Object.entries(presets)) presets[name] = members.filter(x => x !== h);
+    return {};
+  });
 }
 
 /**
@@ -106,27 +127,23 @@ function remove(hostname) {
 function applyPreset(name) {
   const hosts = TRUST_PRESETS[name];
   if (!hosts) return { ok: false, error: `unknown preset '${name}'` };
-  const added = [];
-  for (const h of hosts) {
-    if (!load().has(h)) { load().add(h); added.push(h); }
-  }
-  if (added.length) {
-    loadPresets()[name] = [...new Set([...(loadPresets()[name] || []), ...added])];
-    persistPresets();
-    persist();
-  }
-  return { ok: true, preset: name, addedCount: added.length, added };
+  return change((current, presets) => {
+    const added = [];
+    for (const h of hosts) if (!current.has(h)) { current.add(h); added.push(h); }
+    if (added.length) presets[name] = [...new Set([...(presets[name] || []), ...added])];
+    return { preset: name, addedCount: added.length, added };
+  });
 }
 
 /** Revoke a whole preset: removes exactly the hosts it had added. */
 function revokePreset(name) {
   const applied = loadPresets()[name];
   if (!applied || !applied.length) return { ok: false, error: `preset '${name}' not active` };
-  for (const h of applied) load().delete(h);
-  delete loadPresets()[name];
-  persistPresets();
-  persist();
-  return { ok: true, revokedCount: applied.length };
+  return change((hosts, presets) => {
+    for (const h of applied) hosts.delete(h);
+    delete presets[name];
+    return { revokedCount: applied.length };
+  });
 }
 
 /** Which presets are currently active (partially or fully)? */
@@ -143,18 +160,16 @@ function list() { return [...load()].sort(); }
 function addExact(hostname) {
   const h = String(hostname || '').toLowerCase();
   if (!/^[a-z0-9.-]+$/.test(h) || !h || h.startsWith('.') || h.endsWith('.')) return { ok: false };
-  load().add(h);
-  persist();
-  return { ok: true, host: h };
+  return change(hosts => { hosts.add(h); return { host: h }; });
 }
 function removeExact(hostname) {
   const h = String(hostname || '').toLowerCase();
   if (!/^[a-z0-9.-]+$/.test(h) || !h) return { ok: false };
-  load().delete(h);
-  for (const [name, hosts] of Object.entries(loadPresets())) loadPresets()[name] = hosts.filter(x => x !== h);
-  persistPresets();
-  persist();
-  return { ok: true, host: h };
+  return change((hosts, presets) => {
+    hosts.delete(h);
+    for (const [name, members] of Object.entries(presets)) presets[name] = members.filter(x => x !== h);
+    return { host: h };
+  });
 }
 
 module.exports = {

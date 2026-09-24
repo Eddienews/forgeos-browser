@@ -30,6 +30,7 @@ const { createPageWebPreferences } = require('../../src/page-web-preferences');
 const sessionStore = require('../../src/engine/session-store');
 const { containerPartition, sessionPlanFor } = require('../../src/engine/storage-manager');
 const { clearOriginData } = require('../../src/engine/site-privacy');
+const allowlist = require('../../src/engine/site-allowlist');
 const { runAgentProxyE2E } = require('./agent-proxy');
 const { runQuicE2E } = require('./quic');
 const { runNotebookE2E } = require('./research-notebook');
@@ -101,6 +102,16 @@ function serve() {
         <input type="password" name="password" value="fixturePathValue78">
         <a href="/next/fixturePathValue78/%66%69%78%74%75%72%65%50%61%74%68%56%61%6c%75%65%37%38">Read fixturePathValue78</a>
         <a style="position:absolute;top:1400px" href="/later/fixturePathValue78">Later fixturePathValue78</a>`);
+      return;
+    }
+    if (req.url.startsWith('/privacy-script.js')) {
+      res.writeHead(200, { 'content-type': 'application/javascript' });
+      res.end('window.__privacyLoaded = true');
+      return;
+    }
+    if (req.url.startsWith('/privacy-subrequest')) {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(`<!doctype html><script referrerpolicy="no-referrer" src="http://127.0.0.1:${port}/privacy-script.js"></script>`);
       return;
     }
     // Third-party endpoint: sets a cookie on a DIFFERENT host (Test C).
@@ -273,6 +284,34 @@ async function main() {
     ad.okLoaded === true && ad.adLoaded === false && ad.gaLoaded === false, JSON.stringify(ad));
   record('SITE-PRIVACY', 'blocked requests attributed to the owning WebContents',
     siteHits.some(x => x.id === wc.id && x.category === 'ADVERTISING'), JSON.stringify(siteHits));
+
+  // Exercise the adapter in real Chromium with a synthetic allowlist and
+  // classifier. No site exception is written to the checkout/user profile.
+  const privacyPart = PART + '-privacy';
+  const privacySession = session.fromPartition(privacyPart);
+  const privacyHits = [];
+  const privacyAdapter = new SessionAdapter({ session: privacySession,
+    engine: { classifyRequest: () => ({ category: 'ADVERTISING', filterDecision: 'block',
+      matchedKind: 'hostname', matchedRule: 'fixture', firstParty: false }) },
+    log: eventLog, modeId: 'standard', onSiteBlocked: id => privacyHits.push(id) });
+  privacyAdapter.install();
+  const privacyWin = new BrowserWindow({ show: false, webPreferences: createPageWebPreferences({ partition: privacyPart }) });
+  const previousAllowed = allowlist.isAllowed;
+  allowlist.isAllowed = host => host === 'localhost';
+  try {
+    await loadAndWait(privacyWin.webContents, `http://localhost:${p}/privacy-subrequest`);
+    const loaded = await privacyWin.webContents.executeJavaScript('window.__privacyLoaded === true');
+    record('SITE-PRIVACY', 'referrerless third-party script inherits owning allowlisted page',
+      loaded && !privacyHits.includes(privacyWin.webContents.id), JSON.stringify({ loaded, hits: privacyHits }));
+    let denied = false;
+    try { await privacyWin.webContents.loadURL(`http://127.0.0.1:${p}/clean.html`); }
+    catch { denied = true; }
+    record('SITE-PRIVACY', 'main-frame destination outside allowlist is blocked after allowed page',
+      denied && privacyHits.includes(privacyWin.webContents.id), JSON.stringify({ denied, hits: privacyHits }));
+  } finally {
+    allowlist.isAllowed = previousAllowed;
+    privacyWin.destroy();
+  }
 
   /* ---------- Tests B & C (Gate D): cookies ---------- */
   await loadAndWait(wc, `http://localhost:${p}/cookies.html`);

@@ -86,8 +86,7 @@
     if (!gearMenu.contains(e.target)) closeMenu();
     const sm = document.getElementById('site-menu');
     if (sm && !sm.classList.contains('hidden') && !sm.contains(e.target) && e.target.id !== 'sec-badge') {
-      sm.classList.add('hidden');
-      F.setMenuOpen(false);
+      closeSiteMenu();
     }
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
@@ -260,10 +259,29 @@
   const siteMenu = $('site-menu');
   const badgeEl = document.querySelector('.badge') || document.getElementById('security-badge');
   let siteMenuOrigin = '';
-  function closeSiteMenu() { siteMenu.classList.add('hidden'); siteMenuOrigin = ''; }
+  let siteContext = '';
+  let siteRequest = 0;
+  function currentSiteContext() {
+    const t = state && state.tabs.find(x => x.id === state.activeTabId);
+    return t ? `${t.id}:${t.url}` : '';
+  }
+  function closeSiteMenu() {
+    siteRequest++;
+    const wasOpen = !siteMenu.classList.contains('hidden');
+    siteMenu.classList.add('hidden');
+    siteMenuOrigin = '';
+    if (wasOpen) F.setMenuOpen(false);
+  }
   async function openSiteMenu() {
-    const info = await F.sitePrivacy();
-    if (!info) { closeSiteMenu(); return; }
+    const context = currentSiteContext(), request = ++siteRequest;
+    let info;
+    try { info = await F.sitePrivacy(); } catch { info = null; }
+    if (request !== siteRequest || context !== currentSiteContext()) return;
+    let shownOrigin = '';
+    try { shownOrigin = new URL(context.slice(context.indexOf(':') + 1)).origin; } catch {}
+    if (!info || !info.origin || info.tabId !== state?.activeTabId || shownOrigin !== info.origin) {
+      closeSiteMenu(); return;
+    }
     siteMenuOrigin = info.origin;
     $('site-menu-host').textContent = info.host;
     $('site-origin').textContent = info.origin;
@@ -286,16 +304,20 @@
   }
   async function changeSiteException(kind, checked, control) {
     control.disabled = true;
+    const context = currentSiteContext(), origin = siteMenuOrigin;
     try {
       const info = await F.sitePrivacy();
-      if (!info || info.origin !== siteMenuOrigin) throw new Error('Active site changed.');
+      if (!info || info.origin !== origin || context !== currentSiteContext() || siteMenu.classList.contains('hidden'))
+        throw new Error('Active site changed.');
       const r = await F.siteException(kind, checked);
       if (!r.ok) throw new Error(r.reason || 'Exception not changed.');
-      await openSiteMenu();
+      if (context === currentSiteContext() && origin === siteMenuOrigin) await openSiteMenu();
       refreshBadge();
     } catch (error) {
-      control.checked = !checked;
-      $('site-result').textContent = String(error.message || error);
+      if (context === currentSiteContext() && origin === siteMenuOrigin) {
+        control.checked = !checked;
+        $('site-result').textContent = String(error.message || error);
+      }
     } finally { control.disabled = false; }
   }
   $('site-allow-check').addEventListener('change', (e) => changeSiteException('blocking', e.target.checked, e.target));
@@ -333,10 +355,22 @@
           cb.type = 'checkbox';
           cb.checked = isActive;
           cb.addEventListener('change', async () => {
-            if (cb.checked) await F.presetApply(p.name);
-            else await F.presetRevoke(p.name);
-            refreshBadge();
-            renderPresets();
+            cb.disabled = true;
+            try {
+              const result = cb.checked ? await F.presetApply(p.name) : await F.presetRevoke(p.name);
+              if (!result?.ok) {
+                cb.checked = isActive;
+                showToast(result?.reason || result?.error || 'Unable to save trust preset.');
+              } else {
+                refreshBadge();
+              }
+            } catch (error) {
+              cb.checked = isActive;
+              showToast('Unable to save trust preset.');
+            } finally {
+              cb.disabled = false;
+              renderPresets();
+            }
           });
           const span = document.createElement('span');
           span.textContent = `${PRESET_LABELS[p.name] || p.name} (${p.hosts})`;
@@ -347,9 +381,13 @@
     }
   }
   renderPresets();
+  let badgeRequest = 0;
   async function refreshBadge() {
     if (!badgeEl) return;
-    const info = await F.sitePrivacy();
+    const context = currentSiteContext(), request = ++badgeRequest;
+    let info;
+    try { info = await F.sitePrivacy(); } catch { info = null; }
+    if (request !== badgeRequest || context !== currentSiteContext()) return;
     const allowed = !!info?.allowed;
     badgeEl.classList.toggle('friendly', allowed);
     badgeEl.textContent = allowed ? 'FRIENDLY' : (badgeEl.dataset.secure || 'HTTPS');
@@ -577,7 +615,13 @@
   };
 
   let applyState = function (s) {
+    const previousContext = siteContext;
     state = s;
+    siteContext = currentSiteContext();
+    if (previousContext !== siteContext) {
+      closeSiteMenu();
+      $('sec-badge').classList.remove('friendly');
+    }
     renderTabs();
     const t = s.tabs.find((x) => x.id === s.activeTabId);
     if (t) {
