@@ -49,6 +49,7 @@ const { DARK_SCROLLBAR_CSS, supportsPageAppearance } = require('./engine/page-ap
 const { isExistingPathInside, upsertDownload } = require('./engine/download-center');
 const { pageProcessingPolicy } = require('./engine/page-processing-policy');
 const { FindInPage } = require('./engine/find-in-page');
+const { siteSnapshot, clearOriginData } = require('./engine/site-privacy');
 
 const TOOLBAR_H = 42; // must match renderer CSS --bar-h
 const FIND_H = 42; // must match renderer CSS --find-h
@@ -128,12 +129,19 @@ function persistOpenTabs() {
   catch { return 0; }
 }
 
+function noteSiteBlock(webContentsId, category) {
+  const tab = [...tabs.values()].find(t => t.wc.id === webContentsId);
+  if (!tab || !tab.siteCounts) return;
+  const key = { ADVERTISING: 'ads', TRACKING: 'trackers', ANALYTICS: 'analytics', THIRD_PARTY: 'thirdParty' }[category];
+  if (key) tab.siteCounts[key]++;
+}
+
 function getSessionFor(partitionKey) {
   if (partitionKey == null) {
     let e = sessions.get('__default__');
     if (!e) {
       const s = session.defaultSession;
-      e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, downloadsDir: DL_DIR(), getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r) }) };
+      e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, downloadsDir: DL_DIR(), getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r), onSiteBlocked: noteSiteBlock }) };
       sessions.set('__default__', e);
     }
     return e;
@@ -141,7 +149,7 @@ function getSessionFor(partitionKey) {
   let e = sessions.get(partitionKey);
   if (!e) {
     const s = session.fromPartition(partitionKey);
-    e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, downloadsDir: DL_DIR(), getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r) }) };
+    e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, downloadsDir: DL_DIR(), getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r), onSiteBlocked: noteSiteBlock }) };
     sessions.set(partitionKey, e);
   }
   return e;
@@ -259,6 +267,9 @@ function createTab(url = 'about:blank', opts = {}) {
     restoreOnRestart: plan.restoreOnRestart,
     certError: false,
     pageCounts: { ads: 0, trackers: 0, analytics: 0, thirdParty: 0, params: 0, cookies: 0 },
+    siteCounts: { ads: 0, trackers: 0, analytics: 0, thirdParty: 0 },
+    blockedCredentialUrl: null,
+    blockedCredentialNoticeUrl: null,
     lastAgentView: null,
   };
   tabs.set(id, tab);
@@ -269,7 +280,10 @@ function createTab(url = 'about:blank', opts = {}) {
   });
 
   wc.on('did-start-navigation', (_e, url, isInPlace, isMainFrame) => {
-    if (isMainFrame && !isInPlace) tab.certError = false;
+    if (isMainFrame && !isInPlace) {
+      tab.certError = false;
+      tab.siteCounts = { ads: 0, trackers: 0, analytics: 0, thirdParty: 0 };
+    }
     if (isMainFrame && pageFind.tab === tab) pageFind.close();
   });
   wc.on('found-in-page', (_e, result) => pageFind.result(tab, result));
@@ -284,19 +298,29 @@ function createTab(url = 'about:blank', opts = {}) {
     if (activeTabId === tab.id) {
       if (close) pageFind.close();
       else sendToChrome('forge:find-shortcut', find ? 'open' : (input.shift ? 'previous' : 'next'));
+
     }
   });
 
   wc.on('did-navigate', (_e, url, httpCode) => {
+    if (url === tab.blockedCredentialNoticeUrl && tab.blockedCredentialUrl) {
+      tab.url = tab.blockedCredentialUrl;
+      sendState();
+      return;
+    }
+    tab.blockedCredentialUrl = null;
+    tab.blockedCredentialNoticeUrl = null;
     // NO-CREDENTIALS policy: intercept identity-provider sign-in pages and
     // show a clear notice instead of Google's misleading "may not be secure".
     if (credentialPolicy.matchesCredentialHost(url) && !settings.all().allowCredentials) {
       // Per-site opt-in? (user accepted the risk in the badge menu)
       let optedIn = false;
-      try { optedIn = settings.all().credentialOptIn?.[new URL(url).hostname.toLowerCase().replace(/^www\./, '')] === true; } catch {}
+      try { optedIn = settings.all().credentialOptIn?.[new URL(url).hostname.toLowerCase()] === true; } catch {}
       if (!optedIn) {
         const notice = credentialPolicy.NOTICE_HTML(new URL(url).hostname);
-        wc.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(notice));
+        tab.blockedCredentialUrl = url;
+        tab.blockedCredentialNoticeUrl = 'data:text/html;charset=utf-8,' + encodeURIComponent(notice);
+        wc.loadURL(tab.blockedCredentialNoticeUrl);
         tab.url = url; // keep the intended URL in history/state
         log.log('INFO', 'sign-in blocked by no-credentials policy', { host: new URL(url).hostname });
         sendState();
@@ -832,6 +856,67 @@ function registerIpc() {
     const t = activeTab();
     return t ? { url: t.url, security: securityFor(t), counts: t.pageCounts, injection: t.lastAgentView?.security || null, mode: modeId } : null;
   });
+  const humanSite = (event) => {
+    if (!chromeWin || chromeWin.isDestroyed() || event.sender !== chromeWin.webContents) return null;
+    const tab = activeTab();
+    return tab && siteSnapshot(tab, () => false, () => false, {}) ? tab : null;
+  };
+  const siteStatus = (event) => {
+    const tab = humanSite(event);
+    if (!tab) return null;
+    const info = siteSnapshot(tab, allowlist.isAllowed,
+      h => settings.all().credentialOptIn?.[h] === true, tab.adapter.counters);
+    return info && { ...info, credentialsGloballyAllowed: settings.all().allowCredentials === true };
+  };
+  ipcMain.handle('forge:site-privacy', siteStatus);
+  ipcMain.handle('forge:site-exception', async (event, kind, enabled) => {
+    const tab = humanSite(event), status = siteStatus(event);
+    if (!tab || !status || typeof enabled !== 'boolean' || !['blocking', 'credentials'].includes(kind))
+      return { ok: false, reason: 'No active human HTTP(S) site or invalid action.' };
+    if (enabled) {
+      const response = await dialog.showMessageBox(chromeWin, { type: 'warning',
+        title: 'Site privacy exception', message: `Allow ${kind === 'blocking' ? 'unfiltered requests' : 'sign-in'} on ${status.host}?`,
+        detail: `${status.origin}\nThis weakens protection and can be reversed from this badge.`,
+        buttons: ['Cancel', 'Allow on this host'], defaultId: 0, cancelId: 0, noLink: true });
+      if (response.response !== 1) return { ok: false, reason: 'Cancelled.' };
+    }
+    if (humanSite(event) !== tab || siteStatus(event)?.origin !== status.origin)
+      return { ok: false, reason: 'Active human site changed.' };
+    const host = status.host;
+    if (kind === 'blocking') {
+      const result = enabled ? allowlist.addExact(host) : allowlist.removeExact(host);
+      if (!result.ok) return result;
+    } else {
+      const map = { ...(settings.all().credentialOptIn || {}) };
+      if (enabled) map[host] = true;
+      else delete map[host];
+      const saved = settings.save({ credentialOptIn: map });
+      if (!saved.ok) return { ok: false, reason: 'Unable to save credential exception.' };
+    }
+    log.log('INFO', 'site exception changed', { host, kind, enabled });
+    if (kind === 'credentials' && enabled && tab.blockedCredentialNoticeUrl &&
+        tab.wc.getURL() === tab.blockedCredentialNoticeUrl && tab.blockedCredentialUrl) {
+      tab.wc.loadURL(tab.blockedCredentialUrl).catch(() => {});
+    }
+    sendState();
+    return { ok: true, site: siteStatus(event) };
+  });
+  ipcMain.handle('forge:site-clear', async (event) => {
+    const tab = humanSite(event), status = siteStatus(event);
+    if (!tab || !status) return { ok: false, reason: 'No active human HTTP(S) site.' };
+    const result = await clearOriginData({ tab, current: activeTab, tabs: [...tabs.values()],
+      session: tab.wc.session, dedicated: tab.partition != null,
+      confirm: async origin => {
+        if (!chromeWin || chromeWin.isDestroyed()) return false;
+        const response = await dialog.showMessageBox(chromeWin, { type: 'warning',
+          title: 'Clear data for this origin?', message: `Clear site data for ${origin}?`,
+          detail: 'This cannot be undone. In the shared session, cookies and cache are preserved because deleting them may affect other origins. Domain cookies are always preserved.',
+          buttons: ['Cancel', 'Clear this origin'], defaultId: 0, cancelId: 0, noLink: true });
+        return response.response === 1;
+      } });
+    log.log(result.ok ? 'INFO' : 'DENY', 'site origin clear', { origin: status.origin, ok: result.ok });
+    return result;
+  });
   ipcMain.handle('forge:get-state', () => buildState());
   ipcMain.handle('forge:click', async (_e, selector) => {
     const t = activeTab();
@@ -899,7 +984,11 @@ function registerIpc() {
   // Settings: load all / patch subset; the adapter reads them live per request.
   ipcMain.handle('forge:settings-get', () => settings.all());
   ipcMain.handle('forge:settings-set', (_e, patch) => {
-    const res = settings.save(patch || {});
+    // Credential exceptions are only changed by the active-human-site IPC.
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch) ||
+        Object.hasOwn(patch, 'credentialOptIn') || Object.hasOwn(patch, 'allowCredentials'))
+      return { ok: false, error: 'Credential policy requires the site approval flow.' };
+    const res = settings.save(patch);
     if (res.ok) log.log('INFO', 'settings updated', { keys: Object.keys(patch || {}).join(',') });
     return res;
   });
@@ -929,7 +1018,6 @@ function registerIpc() {
   });
 
   /* ---- per-site allowlist + zoom (v0.3) ---- */
-  ipcMain.handle('forge:allow-is', (_e, host) => ({ allowed: allowlist.isAllowed(host) }));
   ipcMain.handle('forge:presets-list', () => ({
     available: Object.entries(allowlist.TRUST_PRESETS).map(([name, hosts]) => ({ name, hosts: hosts.length })),
     active: allowlist.activePresets(),
@@ -942,29 +1030,6 @@ function registerIpc() {
   ipcMain.handle('forge:preset-revoke', (_e, name) => {
     const r = allowlist.revokePreset(String(name || ''));
     if (r.ok) { sendState(); log.log('INFO', 'trust preset revoked', { preset: name, revoked: r.revokedCount }); }
-    return r;
-  });
-  ipcMain.handle('forge:allow-add', (_e, host) => {
-    const r = allowlist.add(host);
-    if (r.ok) log.log('INFO', 'site allowlisted (blocking disabled)', { host: r.host });
-    return r;
-  });
-  ipcMain.handle('forge:cred-allow', (_e, host) => {
-    // Per-site opt-in to the no-credentials policy ("Allow sign-in here").
-    const s = settings.all();
-    const map = s.credentialOptIn || {};
-    map[String(host || '').toLowerCase().replace(/^www\./, '')] = true;
-    settings.set({ credentialOptIn: map });
-    log.log('INFO', 'sign-in allowed per-site opt-in', { host });
-    return { ok: true };
-  });
-  ipcMain.handle('forge:cred-allowed', (_e, host) => {
-    const map = settings.all().credentialOptIn || {};
-    return { allowed: !!map[String(host || '').toLowerCase().replace(/^www\./, '')] };
-  });
-  ipcMain.handle('forge:allow-remove', (_e, host) => {
-    const r = allowlist.remove(host);
-    if (r.ok) log.log('INFO', 'site allowlist removed', { host });
     return r;
   });
   ipcMain.handle('forge:set-zoom', (_e, pct) => {

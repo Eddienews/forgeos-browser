@@ -67,6 +67,7 @@ class SessionAdapter {
     this.modeId = opts.modeId;
     this.getChromeWindow = opts.getChromeWindow || (() => null);
     this.onDownloadRecord = opts.onDownloadRecord || (() => {});
+    this.onSiteBlocked = opts.onSiteBlocked || (() => {});
     this.downloadsDir = opts.downloadsDir || DOWNLOADS_DIR;
     this.downloadItems = new Map();
     this.downloadSeq = 0;
@@ -154,6 +155,7 @@ class SessionAdapter {
         else if (cat === 'TRACKING') self.counters.trackers++;
         else if (cat === 'ANALYTICS') self.counters.analytics++;
         else if (cat === 'THIRD_PARTY') self.counters.thirdParty++;
+        self.onSiteBlocked(details.webContentsId, cat);
         log.log('BLOCK', `${decision.reason} request blocked`, {
           url, category: cat, tab: tabUrl.slice(0, 200), type: resourceType,
         });

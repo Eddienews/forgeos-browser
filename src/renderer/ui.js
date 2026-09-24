@@ -246,22 +246,21 @@
   /* ---------------- site menu (badge click) ---------------- */
   const siteMenu = $('site-menu');
   const badgeEl = document.querySelector('.badge') || document.getElementById('security-badge');
-  let siteMenuHost = '';
-  function closeSiteMenu() { siteMenu.classList.add('hidden'); }
+  let siteMenuOrigin = '';
+  function closeSiteMenu() { siteMenu.classList.add('hidden'); siteMenuOrigin = ''; }
   async function openSiteMenu() {
-    const t = state && state.tabs.find((x) => x.id === state.activeTabId);
-    if (!t || !/^https?:/i.test(t.url || '')) return;
-    try { siteMenuHost = new URL(t.url).hostname.replace(/^www\./, ''); } catch { return; }
-    $('site-menu-host').textContent = siteMenuHost;
-    const { allowed } = await F.allowIs(siteMenuHost);
-    $('site-allow-check').checked = allowed;
-    try {
-      const { allowed: credOk } = await F.credAllowed(siteMenuHost);
-      $('site-cred-check').checked = credOk;
-    } catch { $('site-cred-check').checked = false; }
+    const info = await F.sitePrivacy();
+    if (!info) { closeSiteMenu(); return; }
+    siteMenuOrigin = info.origin;
+    $('site-menu-host').textContent = info.host;
+    $('site-origin').textContent = info.origin;
+    $('site-counts').textContent = `This page: ${info.counts.ads} ads · ${info.counts.trackers} trackers · ${info.counts.analytics} analytics`;
+    $('site-session-counts').textContent = `Session: ${info.sessionCounts.ads} ads · ${info.sessionCounts.trackers} trackers · ${info.sessionCounts.allowed} passed`;
+    $('site-allow-check').checked = info.allowed;
+    $('site-cred-check').checked = info.credentialAllowed;
+    $('site-result').textContent = info.credentialsGloballyAllowed ? 'Global credential policy is already disabled; this site switch cannot restore it.' : '';
     siteMenu.classList.remove('hidden');
     reserveSpaceFor(siteMenu);
-    // keep page shrunk until both menus closed
     setTimeout(() => { if (siteMenu.classList.contains('hidden')) F.setMenuOpen(false); }, 0);
   }
   if (badgeEl) {
@@ -272,19 +271,31 @@
       openSiteMenu();
     });
   }
-  $('site-allow-check').addEventListener('change', async (e) => {
-    if (e.target.checked) await F.allowAdd(siteMenuHost);
-    else await F.allowRemove(siteMenuHost);
-    refreshBadge();
-  });
-  $('site-cred-check').addEventListener('change', async (e) => {
-    if (e.target.checked) {
-      await F.credAllow(siteMenuHost);
-      // reload so the intercepted sign-in page loads for real
-      const t = state && state.tabs.find((x) => x.id === state.activeTabId);
-      const intended = t && t.url;
-      if (intended && /^https?:/i.test(intended)) window.forge.navigate(intended);
-    }
+  async function changeSiteException(kind, checked, control) {
+    control.disabled = true;
+    try {
+      const info = await F.sitePrivacy();
+      if (!info || info.origin !== siteMenuOrigin) throw new Error('Active site changed.');
+      const r = await F.siteException(kind, checked);
+      if (!r.ok) throw new Error(r.reason || 'Exception not changed.');
+      await openSiteMenu();
+      refreshBadge();
+    } catch (error) {
+      control.checked = !checked;
+      $('site-result').textContent = String(error.message || error);
+    } finally { control.disabled = false; }
+  }
+  $('site-allow-check').addEventListener('change', (e) => changeSiteException('blocking', e.target.checked, e.target));
+  $('site-cred-check').addEventListener('change', (e) => changeSiteException('credentials', e.target.checked, e.target));
+  $('site-clear').addEventListener('click', async () => {
+    const button = $('site-clear'); button.disabled = true;
+    try {
+      const info = await F.sitePrivacy();
+      if (!info || info.origin !== siteMenuOrigin) throw new Error('Active site changed.');
+      const result = await F.siteClear();
+      $('site-result').textContent = result.ok ? result.note : result.reason;
+    } catch (error) { $('site-result').textContent = String(error.message || error); }
+    finally { button.disabled = false; }
   });
 
   /* Trust presets: one decision releases a whole provider ecosystem. */
@@ -325,11 +336,8 @@
   renderPresets();
   async function refreshBadge() {
     if (!badgeEl) return;
-    const t = state && state.tabs.find((x) => x.id === state.activeTabId);
-    if (!t) return;
-    let host = '';
-    try { host = new URL(t.url).hostname.replace(/^www\./, ''); } catch {}
-    const { allowed } = host ? await F.allowIs(host) : { allowed: false };
+    const info = await F.sitePrivacy();
+    const allowed = !!info?.allowed;
     badgeEl.classList.toggle('friendly', allowed);
     badgeEl.textContent = allowed ? 'FRIENDLY' : (badgeEl.dataset.secure || 'HTTPS');
   }

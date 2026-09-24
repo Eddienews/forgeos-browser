@@ -44,6 +44,7 @@ const PACKAGE_FILES = Object.freeze([
   'src/engine/session-store.js',
   'src/engine/settings.js',
   'src/engine/site-allowlist.js',
+  'src/engine/site-privacy.js',
   'src/engine/snapshot-filter.js',
   'src/engine/storage-manager.js',
   'src/engine/typesafe-decider.js',

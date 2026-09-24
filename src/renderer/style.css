@@ -386,4 +386,8 @@ code { color: var(--amber); font-family: var(--mono); }
   left: 8px;
   right: auto;
 }
+#site-origin { overflow-wrap: anywhere; user-select: text; }
+#site-menu .site-clear { background: var(--bg3); color: var(--fg); border: 1px solid var(--line); border-radius: 5px; padding: 6px 9px; cursor: pointer; font-size: 11px; margin: 7px 0; }
+#site-menu .site-clear:hover { border-color: var(--amber-dim); }
+#site-menu .site-clear:disabled { opacity: .55; cursor: wait; }
 

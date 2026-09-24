@@ -32,11 +32,17 @@
       <div id="site-menu" class="menu hidden">
         <div class="menu-sec">
           <div class="menu-title" id="site-menu-host">site</div>
+          <div class="menu-hint" id="site-origin">—</div>
+          <div class="menu-hint" id="site-counts">This page: —</div>
+          <div class="menu-hint" id="site-session-counts">Session: —</div>
           <label class="menu-row check"><input type="checkbox" id="site-allow-check" />
             <span>Disable blocking on this site</span></label>
           <label class="menu-row check"><input type="checkbox" id="site-cred-check" />
             <span>Allow sign-in here (risky)</span></label>
-          <div class="menu-hint">Requests from an allowlisted site pass unfiltered. The badge turns amber so you never forget.</div>
+          <div class="menu-hint">Requests from an allowlisted host pass unfiltered. Sign-in exceptions weaken the credential warning and can be reversed here.</div>
+          <button id="site-clear" type="button" class="site-clear">Clear this origin's data…</button>
+          <div class="menu-hint">Shared session: origin storage only; cookies and cache stay to protect other origins. Dedicated session: host-only cookies and cache also clear. Domain cookies stay.</div>
+          <div class="menu-hint" id="site-result" role="status"></div>
         </div>
         <div class="menu-sep"></div>
         <div class="menu-sec">

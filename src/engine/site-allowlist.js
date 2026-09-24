@@ -140,8 +140,25 @@ function activePresets() {
 
 function list() { return [...load()].sort(); }
 
+function addExact(hostname) {
+  const h = String(hostname || '').toLowerCase();
+  if (!/^[a-z0-9.-]+$/.test(h) || !h || h.startsWith('.') || h.endsWith('.')) return { ok: false };
+  load().add(h);
+  persist();
+  return { ok: true, host: h };
+}
+function removeExact(hostname) {
+  const h = String(hostname || '').toLowerCase();
+  if (!/^[a-z0-9.-]+$/.test(h) || !h) return { ok: false };
+  load().delete(h);
+  for (const [name, hosts] of Object.entries(loadPresets())) loadPresets()[name] = hosts.filter(x => x !== h);
+  persistPresets();
+  persist();
+  return { ok: true, host: h };
+}
+
 module.exports = {
-  isAllowed, add, remove, list, FILE,
+  isAllowed, add, remove, addExact, removeExact, list, FILE,
   applyPreset, revokePreset, activePresets,
   TRUST_PRESETS,
 };

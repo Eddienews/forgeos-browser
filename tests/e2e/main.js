@@ -28,6 +28,7 @@ const { candidatesFor } = require('../../src/engine/typesafe-decider');
 const { createPageWebPreferences } = require('../../src/page-web-preferences');
 const sessionStore = require('../../src/engine/session-store');
 const { containerPartition, sessionPlanFor } = require('../../src/engine/storage-manager');
+const { clearOriginData } = require('../../src/engine/site-privacy');
 const { runAgentProxyE2E } = require('./agent-proxy');
 const { runQuicE2E } = require('./quic');
 
@@ -217,7 +218,8 @@ async function main() {
   const ses = session.fromPartition(PART);
   const eventLog = new EventLog(null, 5000);
   const engine = new FilterEngine({});
-  const adapter = new SessionAdapter({ session: ses, engine, log: eventLog, modeId: 'standard', getChromeWindow: () => null, onDownloadRecord: () => {} });
+  const siteHits = [];
+  const adapter = new SessionAdapter({ session: ses, engine, log: eventLog, modeId: 'standard', getChromeWindow: () => null, onDownloadRecord: () => {}, onSiteBlocked: (id, category) => siteHits.push({ id, category }) });
   adapter.install();
 
   const win = new BrowserWindow({
@@ -267,6 +269,8 @@ async function main() {
   const ad = await wc.executeJavaScript('({ adLoaded: !!window.__adLoaded, gaLoaded: !!window.__gaLoaded, okLoaded: !!window.__okLoaded })');
   record('BLOCKING', 'advertising request blocked (Test A)',
     ad.okLoaded === true && ad.adLoaded === false && ad.gaLoaded === false, JSON.stringify(ad));
+  record('SITE-PRIVACY', 'blocked requests attributed to the owning WebContents',
+    siteHits.some(x => x.id === wc.id && x.category === 'ADVERTISING'), JSON.stringify(siteHits));
 
   /* ---------- Tests B & C (Gate D): cookies ---------- */
   await loadAndWait(wc, `http://localhost:${p}/cookies.html`);
@@ -275,6 +279,41 @@ async function main() {
     names.includes('forge_1p') && names.includes('session_js'), 'jar=' + names.join(','));
   record('C', 'third-party cookie blocked',
     !names.includes('partner'), 'jar=' + names.join(','));
+
+  /* ---------- Origin-only clear in a real shared Chromium session ---------- */
+  const otherWin = new BrowserWindow({ show: false, webPreferences: createPageWebPreferences({ partition: PART }) });
+  await loadAndWait(otherWin.webContents, `http://127.0.0.1:${p}/clean.html`);
+  await wc.executeJavaScript("localStorage.setItem('site-private','alpha')");
+  await otherWin.webContents.executeJavaScript("localStorage.setItem('site-private','beta')");
+  const live = { wc, id: 1, agentOwned: false };
+  const neighbor = { wc: otherWin.webContents, id: 2, agentOwned: false };
+  const clearResult = await clearOriginData({ tab: live, current: () => live, tabs: [live, neighbor],
+    session: ses, dedicated: false, confirm: async origin => origin === `http://localhost:${p}` });
+  await loadAndWait(wc, `http://localhost:${p}/cookies.html`);
+  const alphaAfter = await wc.executeJavaScript("localStorage.getItem('site-private')");
+  const betaAfter = await otherWin.webContents.executeJavaScript("localStorage.getItem('site-private')");
+  const cookieAfter = (await ses.cookies.get({ url: `http://localhost:${p}/` })).some(c => c.name === 'forge_1p');
+  record('SITE-PRIVACY', 'real shared session clears only selected origin storage; other origin and cookies survive',
+    clearResult.ok && !clearResult.cacheCleared && alphaAfter === null && betaAfter === 'beta' && cookieAfter,
+    JSON.stringify({ clearResult, alphaAfter, betaAfter, cookieAfter }));
+  otherWin.destroy();
+
+  const dedicatedPart = PART + '-origin-clear';
+  const dedicatedSession = session.fromPartition(dedicatedPart);
+  const dedicatedWin = new BrowserWindow({ show: false, webPreferences: createPageWebPreferences({ partition: dedicatedPart }) });
+  await loadAndWait(dedicatedWin.webContents, `http://localhost:${p}/clean.html`);
+  await dedicatedWin.webContents.executeJavaScript("localStorage.setItem('site-private','dedicated'); document.cookie='dedicated_cookie=1; Path=/'");
+  const dedicatedTab = { wc: dedicatedWin.webContents, id: 3, agentOwned: false };
+  const dedicatedResult = await clearOriginData({ tab: dedicatedTab, current: () => dedicatedTab, tabs: [dedicatedTab],
+    session: dedicatedSession, dedicated: true, confirm: async () => true });
+  await loadAndWait(dedicatedWin.webContents, `http://localhost:${p}/clean.html`);
+  const dedicatedStorage = await dedicatedWin.webContents.executeJavaScript("localStorage.getItem('site-private')");
+  const dedicatedCookies = (await dedicatedSession.cookies.get({ url: `http://localhost:${p}/` })).filter(c => c.name === 'dedicated_cookie');
+  record('SITE-PRIVACY', 'real dedicated session clears host-only cookie, origin storage and cache',
+    dedicatedResult.ok && dedicatedResult.cacheCleared && dedicatedResult.cookiesRemoved === 1 &&
+    dedicatedStorage === null && dedicatedCookies.length === 0,
+    JSON.stringify({ dedicatedResult, dedicatedStorage, dedicatedCookies: dedicatedCookies.length }));
+  dedicatedWin.destroy();
 
   /* ---------- Test D (Gate E): tracking URL cleanup ---------- */
   await loadAndWait(wc, `http://127.0.0.1:${p}/clean.html?utm_source=test&utm_campaign=e2e&id=10&fbclid=x`);
