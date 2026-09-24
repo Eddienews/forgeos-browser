@@ -95,6 +95,31 @@ async function main() {
   await until(() => ui(win, "document.querySelector('#find-bar').classList.contains('hidden')"));
   check('tab switch closes find and clears query', await ui(win, "document.querySelector('#find-query').value === ''"));
   check('agent-readable state excludes find query', !JSON.stringify(await ui(win, 'window.forge.getState()')).includes('amber'));
+
+  // Production toolbar IPC -> named persistent Electron partitions -> page cookies.
+  await ui(win, "document.querySelector('[data-container=work]').click()");
+  const workState = await until(() => ui(win, "window.forge.getState().then(s => s.tabs.find(t => t.containerId === 'work') || null)"));
+  await ui(win, `window.forge.navigate(${JSON.stringify(url)})`);
+  await until(() => page(win)?.getURL() === url && !page(win).isLoading());
+  await page(win).executeJavaScript("document.cookie='container_fixture=work; Path=/'");
+  check('Work container created by UI has persistent isolated partition',
+    page(win).session.getStoragePath() != null && page(win).session !== require('electron').session.defaultSession);
+  await ui(win, "document.querySelector('[data-container=personal]').click()");
+  await until(() => ui(win, "window.forge.getState().then(s => s.tabs.some(t => t.containerId === 'personal'))"));
+  await ui(win, `window.forge.navigate(${JSON.stringify(url)})`);
+  await until(() => page(win)?.getURL() === url && !page(win).isLoading());
+  check('Personal container cannot see Work cookie',
+    !(await page(win).executeJavaScript('document.cookie')).includes('container_fixture='));
+  await ui(win, `window.forge.closeTab(${workState.id})`);
+  const reopened = await ui(win, "window.forge.newTab('about:blank', 'work')");
+  await until(() => ui(win, `window.forge.getState().then(s => s.tabs.some(t => t.id === ${reopened.id} && t.containerId === 'work'))`));
+  await ui(win, `window.forge.navigate(${JSON.stringify(url)})`);
+  await until(() => page(win)?.getURL() === url && !page(win).isLoading());
+  check('Work cookie survives tab close and reopening same container',
+    (await page(win).executeJavaScript('document.cookie')).includes('container_fixture=work'));
+  const modeChange = await ui(win, "window.forge.setMode('strict')");
+  check('privacy mode cannot silently move named tabs into another jar',
+    modeChange.ok === false && (await ui(win, 'window.forge.getState()')).mode === 'standard');
 }
 (async () => {
   try { await main(); }

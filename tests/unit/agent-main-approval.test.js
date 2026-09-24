@@ -3,6 +3,7 @@ const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
 const { forgeActionScript, forgeScrollScript } = require('../../src/page-actions');
+const { compareAgentPreview } = require('../../src/engine/action-policy');
 
 // Exercise the actual main-process functions with a mocked Electron webContents
 // and a live VM page. No real browser or credentials are involved.
@@ -27,7 +28,7 @@ function harness(onDialog = () => {}) {
   let active = tab;
   const dialogs = [];
   const logs = [];
-  const context = { activeTab: () => active, forgeActionScript, forgeScrollScript, require,
+  const context = { activeTab: () => active, forgeActionScript, forgeScrollScript, compareAgentPreview, require,
     requireAgentTab: async () => { if (active !== tab) throw Error('agent tab switched'); return tab; },
     chromeWin: { isDestroyed: () => false }, log: { log: (...entry) => { logs.push(entry); } },
     dialog: { showMessageBox: async (_win, options) => {
@@ -44,8 +45,57 @@ function harness(onDialog = () => {}) {
 }
 const action = () => ({ kind: 'click', targetIndex: 1, value: null, label: 'Continue' });
 const info = act => ({ action: act, policy: { why: 'control with side effects' } });
+function bindObserved(h, target) {
+  target.fingerprint = 'test-observation';
+  h.tab.agentOwned = true;
+  h.tab.lastAgentObservation = {
+    url: 'https://example.com/page',
+    snapshot: { url: 'https://example.com/page', fingerprint: target.fingerprint, elements: [{
+      index: 1, kind: 'click', label: 'Continue', is_submit: true,
+      form_action: 'https://example.com/submit', form_method: 'post', href: null,
+    }] },
+  };
+}
 
 module.exports = [
+  { name: 'agent action preview binds observed target and shows effect before allow once', gate: 'C1', fn: async a => {
+    const h = harness(); const target = action(); bindObserved(h, target);
+    a.strictEqual(await h.approve(info(target)), true);
+    a.ok(h.dialogs[0].message.includes('Action preview'));
+    a.ok(h.dialogs[0].detail.includes('Since observation: no target/effect change'));
+    a.ok(h.dialogs[0].detail.includes('Destination: https://example.com/submit'));
+    a.strictEqual((await h.act(target)).ok, true);
+    a.strictEqual(h.clicks(), 1);
+  } },
+  { name: 'changed target since observation cancels preview without approval', gate: 'C1', fn: async a => {
+    const h = harness(); const target = action(); bindObserved(h, target);
+    h.button.innerText = 'Delete account';
+    a.strictEqual(await h.approve(info(target)), false);
+    a.strictEqual(Array.from(h.dialogs[0].buttons).join(','), 'Close');
+    a.ok(h.dialogs[0].detail.includes('target label'));
+    a.strictEqual((await h.act(target)).ok, false);
+    a.strictEqual(h.clicks(), 0);
+  } },
+  { name: 'changed destination since observation cancels preview before approval', gate: 'C1', fn: async a => {
+    const h = harness(); const target = action(); bindObserved(h, target);
+    h.form.action = 'https://other.test/collect';
+    a.strictEqual(await h.approve(info(target)), false);
+    a.ok(h.dialogs[0].detail.includes('destination'));
+    a.strictEqual(h.clicks(), 0);
+  } },
+  { name: 'stale fingerprint rejects agent proposal before preview', gate: 'C1', fn: async a => {
+    const h = harness(); const target = action(); bindObserved(h, target);
+    target.fingerprint = 'from-earlier-snapshot';
+    a.strictEqual(await h.approve(info(target)), false);
+    a.strictEqual(h.dialogs.length, 0);
+  } },
+  { name: 'a new observation during the native dialog expires approval', gate: 'C1', fn: async a => {
+    let h;
+    h = harness(() => { h.tab.lastAgentObservation = { ...h.tab.lastAgentObservation }; });
+    const target = action(); bindObserved(h, target);
+    a.strictEqual(await h.approve(info(target)), false);
+    a.strictEqual((await h.act(target)).ok, false);
+  } },
   { name: 'approval inspection does not inject goal, policy or proposed value into the untrusted page', gate: 'C1', fn: async a => {
     const h = harness();
     const marker = 'fixturePrivateIntentOnly73';

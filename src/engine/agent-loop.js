@@ -237,6 +237,7 @@ function toAction(operation, decision, snapshot) {
       value: operation === 'CLICK' ? null : operation === 'SELECT'
         ? (decision.option_value != null ? decision.option_value : decision.value) : decision.value,
       label: el.label,
+      fingerprint: snapshot.fingerprint,
       // Risk signals come from the live element, not the model's own claim.
       signal: { label: el.label, href: el.href || '', isForm: el.kind === 'fill',
         isSubmit: el.is_submit, type: el.input_type || (el.role === 'textbox' ? 'text' : '') },

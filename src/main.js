@@ -36,7 +36,7 @@ const { createAgentSession } = require('./engine/agent-network-proxy');
 const { forgeSnapshotScript } = require('./page-snapshot');
 const { forgeActionScript, forgeScrollScript } = require('./page-actions');
 const { normalizeSnapshot } = require('./engine/page-snapshot');
-const { classifyAction } = require('./engine/action-policy');
+const { classifyAction, compareAgentPreview } = require('./engine/action-policy');
 const { runGoal } = require('./engine/agent-loop');
 const credentialPolicy = require('./engine/credential-policy');
 const { browserViewBounds } = require('./engine/view-layout');
@@ -290,6 +290,7 @@ function createTab(url = 'about:blank', opts = {}) {
     if (isMainFrame && !isInPlace) {
       tab.certError = false;
       tab.siteCounts = { ads: 0, trackers: 0, analytics: 0, thirdParty: 0 };
+      tab.lastAgentObservation = null;
     }
     if (isMainFrame && pageFind.tab === tab) pageFind.close();
   });
@@ -510,6 +511,8 @@ async function closeTab(id, { notify = true, persist = true } = {}) {
 async function changePrivacyMode(nextModeId) {
   if (!isValidMode(nextModeId)) return { ok: false, error: 'invalid privacy mode' };
   if (nextModeId === modeId) return { ok: true, mode: modeId, reloadedTabs: 0 };
+  if ([...tabs.values()].some(tab => tab.containerId))
+    return { ok: false, error: 'Close named container tabs before changing privacy mode.' };
 
   const previousModeId = modeId;
   const oldTabs = [...tabs.values()];
@@ -951,7 +954,7 @@ function registerIpc() {
     const tab = humanSite(event), status = siteStatus(event);
     if (!tab || !status) return { ok: false, reason: 'No active human HTTP(S) site.' };
     const result = await clearOriginData({ tab, current: activeTab, tabs: [...tabs.values()],
-      session: tab.wc.session, dedicated: tab.partition != null,
+      session: tab.wc.session, dedicated: tab.partition != null && !tab.containerId,
       confirm: async origin => {
         if (!chromeWin || chromeWin.isDestroyed()) return false;
         const response = await dialog.showMessageBox(chromeWin, { type: 'warning',
@@ -1184,7 +1187,10 @@ function createChromeWindow() {
   // near-instantly, so the listener must exist before the request starts.
   chromeWin.webContents.once('did-finish-load', () => {
     // Session restore (crash recovery): reopen tabs from the last session.
-    const saved = sessionStore.restoreTabRecords(getRuntimeBase());
+    // Named persistent containers are a Standard-mode feature. A later strict
+    // startup must not fail while reading an older Standard session file.
+    const saved = sessionStore.restoreTabRecords(getRuntimeBase())
+      .filter(item => !item.containerId || modeId === 'standard');
     if (saved.length) {
       saved.forEach((item, i) => {
         const t = createTab(item.url, { containerId: item.containerId });
@@ -1399,8 +1405,12 @@ async function readIndexedSnapshot() {
   try { await requireAgentTab(); }
   catch (error) { return { error: String(error.message || error).slice(0, 200) }; }
   try {
+    const url = t.wc.getURL();
     const raw = await t.wc.executeJavaScript(forgeSnapshotScript(), true);
+    if (activeTab() !== t || t.wc.isDestroyed() || t.wc.getURL() !== url)
+      return { error: 'page changed during observation' };
     const snapshot = normalizeSnapshot(raw);
+    t.lastAgentObservation = { url, snapshot };
     // The renderer has scrubbed sensitive value copies from the URL path.
     // The live webContents URL is authority for navigation, not observation.
     return snapshot;
@@ -1485,6 +1495,16 @@ async function approveAgentAction(info) {
   if (!['click', 'fill', 'select'].includes(kind) || !Number.isSafeInteger(targetIndex)) return false;
   if ((kind === 'fill' || kind === 'select') && action.value == null) return false;
   const value = action.value == null ? null : String(action.value);
+  // A model or API client never supplies the target proof. The last indexed
+  // observation lives in the main process and must still be the one the agent
+  // decided from. Another observation/tab navigation invalidates the proposal.
+  const binding = t.lastAgentObservation;
+  if (t.agentOwned && (!binding || binding.url !== url ||
+      binding.snapshot.fingerprint !== action.fingerprint ||
+      !binding.snapshot.elements.some(el => el.index === targetIndex && el.kind === kind))) {
+    log.log('DENY', 'agent action preview invalidated', { reason: 'observation changed' });
+    return false;
+  }
   let nonce, descriptor, display;
   nonce = require('crypto').randomBytes(24).toString('hex');
   try {
@@ -1495,14 +1515,30 @@ async function approveAgentAction(info) {
     descriptor = inspected.descriptor;
     display = inspected.display;
     if (!descriptor || !display) return false;
+    if (t.agentOwned) {
+      const observed = binding.snapshot.elements.find(el => el.index === targetIndex);
+      const changes = compareAgentPreview(observed, inspected, binding.snapshot.url, kind);
+      if (changes.length || t.lastAgentObservation !== binding) {
+        log.log('DENY', 'agent action preview invalidated', { changed: changes.join(', ') || 'observation changed' });
+        await dialog.showMessageBox(chromeWin, {
+          type: 'warning', title: 'ForgeOS Browser — action changed',
+          message: 'The agent action changed since it was observed. Approval expired.',
+          detail: `Changed: ${changes.join(', ') || 'page observation'}. Re-observe before trying again.`,
+          buttons: ['Close'], defaultId: 0, cancelId: 0, noLink: true,
+        });
+        return false;
+      }
+    }
   } catch { return false; }
   const result = await dialog.showMessageBox(chromeWin, {
     type: 'warning',
     title: 'ForgeOS Browser — agent action request',
-    message: `An external agent wants to ${kind === 'fill' ? 'type into' : kind === 'select' ? 'select an option in' : 'activate'} an element.`,
+    message: `Action preview — an external agent wants to ${kind === 'fill' ? 'type into' : kind === 'select' ? 'select an option in' : 'activate'} an element.`,
     detail: `Element: [${action.targetIndex}] ${display.label || '(unlabelled element)'}\n` +
       `Current page: ${display.pageUrl}\nDestination: ${display.destination}\n` +
       `Form method: ${display.formMethod || '(not a form)'}\n` +
+      (t.agentOwned ? 'Since observation: no target/effect change detected in comparable fields.\n' :
+        'Since observation: unavailable in this test context.\n') +
       (kind !== 'click' ? `Field: ${descriptor.tag} name=${display.fieldName || '(none)'} id=${display.fieldId || '(none)'}\n` : '') +
       'JavaScript event handlers may have additional unknown side effects.\n' +
       (kind !== 'click' ? 'The proposed text is hidden for privacy.\n' : '') +
@@ -1518,7 +1554,8 @@ async function approveAgentAction(info) {
     try {
       if (action.targetIndex !== targetIndex || action.kind !== kind ||
           (action.value == null ? null : String(action.value)) !== value ||
-          activeTab() !== t || wc.isDestroyed() || wc.getURL() !== url) allowed = false;
+          activeTab() !== t || wc.isDestroyed() || wc.getURL() !== url ||
+          (t.agentOwned && t.lastAgentObservation !== binding)) allowed = false;
       else {
         const current = await wc.executeJavaScript(forgeActionScript(targetIndex, 'recheck', nonce, { kind }), true);
         if (!current || !current.ok || action.targetIndex !== targetIndex ||
@@ -1544,7 +1581,8 @@ async function runSmoke() {
   if (smokeDone) return;
   smokeDone = true;
   const fs = require('fs');
-  const reportPath = path.join(path.dirname(APP_ROOT), 'results', 'smoke-report.json');
+  const reportPath = path.join(getRuntimeBase(), 'results', 'smoke-report.json');
+  fs.mkdirSync(path.dirname(reportPath), { recursive: true });
   const finish = (code) => {
     // Merge finished/code onto any report already written (do not clobber it).
     let obj = {};

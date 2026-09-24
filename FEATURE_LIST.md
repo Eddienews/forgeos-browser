@@ -19,7 +19,7 @@ increments. Status legend: `[x]` shipped, `[~]` in progress, `[ ]` planned.
 - [ ] Automatic update notification and an About ForgeOS page.
 - [ ] Advanced tabs: reopen closed, pin, duplicate, mute, group, and restore the
   previous session.
-- [ ] Find in page with result count and keyboard navigation.
+- [~] Find in page with result count, Ctrl+F/F3 navigation and a chrome-owned search bar (feature branch; pending review).
 - [ ] Site permission controls for camera, microphone, location, notifications,
   and clipboard access.
 - [ ] Complete keyboard shortcut reference and command palette.
@@ -28,10 +28,10 @@ increments. Status legend: `[x]` shipped, `[~]` in progress, `[ ]` planned.
 
 ## Privacy and security
 
-- [ ] Per-site protection report with individually reversible exceptions.
+- [~] Per-site protection panel with live-origin counters and reversible host exceptions (feature branch; pending review).
 - [ ] HTTPS-only mode and certificate details.
-- [ ] Clear cookies, cache, and storage for the current site only.
-- [ ] Named containers for isolated work, personal, banking, and social sessions.
+- [~] Clear current-origin storage; clear host-only cookies/cache only when the session is dedicated. Shared sessions preserve cookies/cache to avoid deleting another origin's data.
+- [~] Named persistent Work, Personal and Research containers with distinct Electron sessions; banking/social names remain planned.
 - [ ] Privacy-preserving phishing and lookalike-domain warnings.
 - [ ] Exportable local security and permission report.
 
@@ -39,7 +39,8 @@ increments. Status legend: `[x]` shipped, `[~]` in progress, `[ ]` planned.
 
 - [ ] Ask questions about the current page with source references.
 - [ ] Page summaries with short, detailed, outline, and plain-language modes.
-- [ ] Multi-tab Research Workspace with comparisons, citations, and exports.
+- [~] Local human-curated research notebook with selected excerpts, URL/title/date provenance, comparison and text export; AI synthesis remains planned.
+- [~] Browser-owned agent action preview before one-time approval, invalidated on changed observation, target or effect (feature branch; pending review).
 - [ ] Agent permission levels: read only, navigate, and act with approval.
 - [ ] Local model support through user-controlled providers such as Ollama or
   LM Studio; no cloud API required.

@@ -76,4 +76,30 @@ function classifyAction(action) {
   return { risk: 'approval', why: `unrecognised action "${kind}"` };
 }
 
-module.exports = { classifyAction, RISK_SIGNALS, SENSITIVE_INPUT_TYPES };
+/** Compare the browser-owned observation with the live, inspected target.
+ * Display text is only a preview; the raw descriptor and DOM node remain the
+ * effect proof. Redacted destinations cannot be compared here and are still
+ * checked verbatim at recheck and execution. */
+function compareAgentPreview(observed, inspected, observedUrl, kind) {
+  const changes = [];
+  if (!observed || !inspected || !inspected.descriptor || !inspected.display) return ['target unavailable'];
+  const live = inspected.descriptor;
+  const shown = inspected.display;
+  if (observed.kind !== kind) changes.push('control type');
+  if (observed.label && observed.label !== '(unlabelled)' && observed.label !== shown.label)
+    changes.push('target label');
+  if (kind === 'click' && observed.is_submit !== !!live.isSubmit) changes.push('submit behavior');
+  if (observed.input_type && observed.input_type !== live.type) changes.push('control subtype');
+  if ((observed.form_method || '') !== (live.formMethod || '')) changes.push('form method');
+  const priorDestination = observed.form_action || observed.href;
+  if (!priorDestination && (live.formAction || live.resolvedHref)) changes.push('destination');
+  if (priorDestination && !String(priorDestination).includes('<REDACTED>') &&
+      !String(shown.destination).includes('<REDACTED>')) {
+    try {
+      if (new URL(priorDestination, observedUrl).href !== shown.destination) changes.push('destination');
+    } catch { changes.push('destination'); }
+  }
+  return changes;
+}
+
+module.exports = { classifyAction, compareAgentPreview, RISK_SIGNALS, SENSITIVE_INPUT_TYPES };

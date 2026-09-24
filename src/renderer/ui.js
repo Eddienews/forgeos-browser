@@ -160,6 +160,11 @@
     const previousMode = state && state.mode;
     const nextMode = select.value;
     if (!previousMode || nextMode === previousMode) return;
+    if (state.tabs.some(tab => tab.containerId)) {
+      showToast('Close named container tabs before changing privacy mode.');
+      select.value = previousMode;
+      return;
+    }
     const hasLoadedPages = state.tabs.some((tab) => tab.url && tab.url !== 'about:blank');
     if (hasLoadedPages && !window.confirm(
       'Changing privacy mode reloads all open pages so the new storage isolation can take effect.\n\n' +
@@ -171,7 +176,7 @@
     select.disabled = true;
     try {
       const result = await F.setMode(nextMode);
-      if (!result || !result.ok) select.value = previousMode;
+      if (!result || !result.ok) { select.value = previousMode; showToast(result?.error || 'Mode change refused.'); }
       else closeMenu();
     } catch {
       select.value = previousMode;
