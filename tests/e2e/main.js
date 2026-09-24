@@ -441,6 +441,25 @@ async function main() {
     !JSON.stringify(privateSafe).includes('_privateEffectProofs'),
     JSON.stringify({ before, after, safeHref: recipientLink && recipientLink.href }));
 
+  await loadAndWait(wc, `http://127.0.0.1:${p}/clean.html`);
+  await wc.executeJavaScript(`(() => { window.__effectClicks = 0;
+    document.body.innerHTML = '<button id="effect" type="button" aria-label="Continue">Original</button>';
+    document.getElementById('effect').onclick = () => window.__effectClicks++;
+  })()`);
+  const effectRaw = await wc.executeJavaScript(forgeSnapshotScript(true), true);
+  const effectButton = effectRaw.elements.find(el => el.label === 'Continue');
+  const effectProof = effectRaw._privateEffectProofs.find(([id]) => id === effectButton.index)[1];
+  const effectHash = hashEffectProof(effectProof);
+  const effectInspect = await wc.executeJavaScript(
+    forgeActionScript(effectButton.index, 'inspect', 'fixture-effect-nonce', { kind: 'click' }), true);
+  await wc.executeJavaScript(`document.getElementById('effect').textContent = 'Changed'`);
+  const changedEffect = await wc.executeJavaScript(forgeActionScript(effectButton.index, 'click', null,
+    { nonce: 'fixture-effect-nonce', descriptor: effectInspect.descriptor, effectProofHash: effectHash }), true);
+  const effectClicks = await wc.executeJavaScript('window.__effectClicks');
+  record('C1', 'real Chromium final click atomically refuses changed private effect after inspection',
+    changedEffect && !changedEffect.ok && changedEffect.reason === 'approval_required_or_stale' && effectClicks === 0,
+    JSON.stringify({ reason: changedEffect && changedEffect.reason, effectClicks }));
+
   /* ---------- Test E (Gate G): prompt injection ---------- */
   await loadAndWait(wc, `http://127.0.0.1:${p}/prompt_injection.html`);
   const raw = await wc.executeJavaScript(IN_PAGE_SCRIPT, true);

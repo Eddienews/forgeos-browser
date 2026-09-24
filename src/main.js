@@ -1457,7 +1457,8 @@ async function executeAgentAction(action) {
             bound.index !== action.targetIndex || bound.kind !== kind ||
             bound.value !== (action.value == null ? null : String(action.value)))
           return { ok: false, reason: 'approval_required_or_stale' };
-        clickProof = { nonce: bound.nonce, descriptor: bound.descriptor, kind: bound.kind, value: bound.value };
+        clickProof = { nonce: bound.nonce, descriptor: bound.descriptor, kind: bound.kind,
+          value: bound.value, effectProofHash: bound.effectProofHash };
       }
     }
     const resolved = await t.wc.executeJavaScript(
@@ -1515,7 +1516,7 @@ async function approveAgentAction(info) {
     log.log('DENY', 'agent action preview invalidated', { reason: 'observation changed' });
     return false;
   }
-  let nonce, descriptor, display, previewLabel;
+  let nonce, descriptor, display, previewLabel, inspectedEffectHash;
   nonce = require('crypto').randomBytes(24).toString('hex');
   try {
     const inspected = await wc.executeJavaScript(forgeActionScript(targetIndex, 'inspect', nonce, { kind }), true);
@@ -1525,6 +1526,8 @@ async function approveAgentAction(info) {
     descriptor = inspected.descriptor;
     display = inspected.display;
     if (!descriptor || !display) return false;
+    inspectedEffectHash = hashEffectProof(inspected.effectProof);
+    if (!inspectedEffectHash) return false;
     previewLabel = display.label;
     if (t.agentOwned) {
       const observed = binding.snapshot.elements.find(el => el.index === targetIndex);
@@ -1577,13 +1580,15 @@ async function approveAgentAction(info) {
         if (!current || !current.ok || action.targetIndex !== targetIndex ||
             action.kind !== kind || (action.value == null ? null : String(action.value)) !== value ||
             JSON.stringify(current.descriptor) !== JSON.stringify(descriptor) ||
+            hashEffectProof(current.effectProof) !== inspectedEffectHash ||
             (t.agentOwned && hashEffectProof(current.effectProof) !== binding.effectProofHashes.get(targetIndex)) ||
             activeTab() !== t || wc.isDestroyed() || wc.getURL() !== url) allowed = false;
       }
     } catch { allowed = false; }
     if (allowed) {
       try { await requireAgentTab(); } catch { allowed = false; }
-      if (allowed) agentClickApprovals.set(action, { tab: t, wc, url, index: targetIndex, kind, value, nonce, descriptor });
+      if (allowed) agentClickApprovals.set(action, { tab: t, wc, url, index: targetIndex,
+        kind, value, nonce, descriptor, effectProofHash: inspectedEffectHash });
     }
   }
   log.log(allowed ? 'ALLOW' : 'DENY', 'agent action human decision', {

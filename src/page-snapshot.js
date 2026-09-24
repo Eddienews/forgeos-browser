@@ -40,6 +40,7 @@ function forgeSnapshotScript(includePrivateEffectProofs = false) {
   ${snapshotSafetyScript()}
   ${forgeEffectProofSource()}
   const privateEffectProofs = ${includePrivateEffectProofs ? 'new Map()' : 'null'};
+  let privateProofChars = 0;
   const store = (window.__forgeAgent ??= { ids: new WeakMap(), nodes: new Map(), next: 1 });
   const identify = (el) => {
     if (!store.ids.has(el)) store.ids.set(el, store.next++);
@@ -169,8 +170,14 @@ function forgeSnapshotScript(includePrivateEffectProofs = false) {
   const safeText = (value) => scrubKnownValues(value, leaked);
   const safeUrl = (value) => value == null ? null : sanitizeUrl(safeText(value));
   const describe = (el, id, label, extra) => {
-    if (privateEffectProofs && !privateEffectProofs.has(id)) privateEffectProofs.set(id, forgeEffectProof(el));
-    return Object.assign({
+    if (privateEffectProofs && !privateEffectProofs.has(id)) {
+      const proof = forgeEffectProof(el);
+      const size = proof ? JSON.stringify(proof).length : 0;
+      const accepted = !!proof && privateProofChars + size <= 131072;
+      privateEffectProofs.set(id, accepted ? proof : null);
+      if (accepted) privateProofChars += size;
+    }
+    const description = Object.assign({
     index: id,
     role: roleOf(el) || "generic",
     // Keep the control visible for orientation, but never offer an action the
@@ -188,6 +195,8 @@ function forgeSnapshotScript(includePrivateEffectProofs = false) {
     ...formInfo(el),
     href: el.tagName === "A" ? safeUrl(el.getAttribute("href")) : null,
     }, extra || {});
+    if (privateEffectProofs && privateEffectProofs.get(id) === null) description.kind = "blocked";
+    return description;
   };
 
   for (const el of document.querySelectorAll(selector)) {

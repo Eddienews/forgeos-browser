@@ -3,6 +3,7 @@ const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
 const { forgeActionScript, forgeScrollScript } = require('../../src/page-actions');
+const { hashEffectProof } = require('../../src/engine/action-policy');
 
 function harness(onDialog = () => {}) {
   const form = { action: 'https://example.com/search', method: 'get' };
@@ -23,7 +24,7 @@ function harness(onDialog = () => {}) {
     document: { activeElement: null, elementFromPoint: () => page.window.__forgeAgent.nodes.get(1),
       querySelectorAll: selector => selector === 'input, select, textarea' ? [query, ssn, choice] : [],
       getElementById: () => null },
-    Event: class { constructor(type) { this.type = type; } }, URL, Map,
+    Event: class { constructor(type) { this.type = type; } }, URL, Map, TextEncoder,
     location: { href: 'https://example.com/page', origin: 'https://example.com', pathname: '/page', search: '' },
     innerWidth: 800, innerHeight: 600 };
   const query = field('INPUT', 'query'), ssn = field('INPUT', 'ssn'), choice = field('SELECT', 'color');
@@ -34,7 +35,7 @@ function harness(onDialog = () => {}) {
     insertText: async value => { inserted++; if (page.document.activeElement) page.document.activeElement.value += value; } };
   const tab = { wc }; let active = tab;
   const dialogs = [];
-  const context = { activeTab: () => active, forgeActionScript, forgeScrollScript, require,
+  const context = { activeTab: () => active, forgeActionScript, forgeScrollScript, hashEffectProof, require,
     requireAgentTab: async () => { if (active !== tab) throw Error('agent tab switched'); return tab; },
     chromeWin: { isDestroyed: () => false }, log: { log: () => {} },
     dialog: { showMessageBox: async (_win, options) => {

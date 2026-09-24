@@ -1,6 +1,7 @@
 'use strict';
 const vm = require('vm');
 const { forgeActionScript } = require('../../src/page-actions');
+const { hashEffectProof } = require('../../src/engine/action-policy');
 
 function buttonFixture() {
   let clicks = 0;
@@ -18,11 +19,14 @@ function buttonFixture() {
   const store = {nodes:new Map([[1,button]])};
   const context = {window:{__forgeAgent:store},document:{elementFromPoint:()=>button,querySelectorAll:()=>[],getElementById:()=>null},
     location:{href:'https://example.com/page',origin:'https://example.com',pathname:'/page',search:''},
-    innerWidth:800,innerHeight:600,URL,Map};
+    innerWidth:800,innerHeight:600,URL,Map,TextEncoder};
   return {button,form,store,context,getClicks:()=>clicks};
 }
 const invoke = (f, kind, value, proof) => vm.runInNewContext(forgeActionScript(1,kind,value,proof),f.context);
-const inspect = (f, nonce='main-owned-id') => ({nonce, descriptor: invoke(f,'inspect',nonce).descriptor});
+const inspect = (f, nonce='main-owned-id') => {
+  const result = invoke(f, 'inspect', nonce);
+  return { nonce, descriptor: result.descriptor, effectProofHash: hashEffectProof(result.effectProof) };
+};
 
 module.exports = [
   {name:'caller-crafted approval witness has no authority',gate:'C1',fn(a){

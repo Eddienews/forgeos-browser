@@ -2,7 +2,7 @@
 const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
-const { forgeActionScript, forgeScrollScript, forgeEffectProofSource } = require('../../src/page-actions');
+const { forgeActionScript, forgeScrollScript, forgeEffectProofSource, forgeProofDigestSource } = require('../../src/page-actions');
 const { snapshotSafetyScript } = require('../../src/engine/sensitive-fields');
 const { compareAgentPreview, hashEffectProof } = require('../../src/engine/action-policy');
 
@@ -22,7 +22,8 @@ function harness(onDialog = () => {}) {
   const page = { window: { __forgeAgent: { nodes: new Map([[1, button]]) } },
     document: { elementFromPoint: () => currentElement, querySelectorAll: () => [], getElementById: () => null }, URL, Map,
     location: { href: 'https://example.com/page', origin: 'https://example.com', pathname: '/page', search: '' },
-    innerWidth: 800, innerHeight: 600, Event: class Event { constructor(type) { this.type = type; } } };
+    innerWidth: 800, innerHeight: 600, TextEncoder,
+    Event: class Event { constructor(type) { this.type = type; } } };
   const scripts = [];
   const wc = { getURL: () => page.location.href, isDestroyed: () => false,
     executeJavaScript: async source => { scripts.push(source); return vm.runInNewContext(source, page); } };
@@ -256,6 +257,33 @@ module.exports = [
     h.form.action = 'https://other.test/receive';
     a.strictEqual((await h.act(target)).ok, false);
     a.strictEqual(h.clicks(), 0);
+  } },
+  { name: 'final atomic click refuses private effect proof changed after dialog', gate: 'C1', fn: async a => {
+    const h = harness(); const target = action(); bindObserved(h, target);
+    h.button.textContent = 'original content';
+    // Bind the actual text at observation, then change only a field excluded
+    // from the shorter action descriptor after approval.
+    const original = vm.runInNewContext(`(() => { ${snapshotSafetyScript()} ${forgeEffectProofSource()}
+      return forgeEffectProof(window.__forgeAgent.nodes.get(1)); })()`, h.page);
+    h.tab.lastAgentObservation.effectProofHashes.set(1, hashEffectProof(original));
+    a.strictEqual(await h.approve(info(target)), true);
+    h.button.textContent = 'changed nested content';
+    a.strictEqual((await h.act(target)).ok, false);
+    a.strictEqual(h.clicks(), 0);
+  } },
+  { name: 'private effect proof refuses an oversized page-controlled text before IPC', gate: 'C1', fn: a => {
+    const h = harness(); h.button.textContent = 'x'.repeat(150000);
+    const proof = vm.runInNewContext(`(() => { ${snapshotSafetyScript()} ${forgeEffectProofSource()}
+      return forgeEffectProof(window.__forgeAgent.nodes.get(1)); })()`, h.page);
+    a.strictEqual(proof, null);
+  } },
+  { name: 'synchronous page digest matches trusted SHA-256 for Unicode effects', gate: 'C1', fn: a => {
+    for (const proof of [{ label: 'Pagar á€', href: '/?id=alice' },
+      { options: [['東', false, '東京'], ['西', false, '大阪']], value: null }]) {
+      const digest = vm.runInNewContext(`(() => { ${forgeProofDigestSource()}
+        return forgeProofDigest(${JSON.stringify(proof)}); })()`, { TextEncoder });
+      a.strictEqual(digest, hashEffectProof(proof));
+    }
   } },
   { name: 'native proof refuses active-tab swap even at the same URL', gate: 'C1', fn: async a => {
     const h = harness(); const target = action();
