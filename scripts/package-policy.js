@@ -108,8 +108,8 @@ function approvedMacMember(value, directory, arch) {
     'v8_context_snapshot.bin', 'vk_swiftshader_icd.json', 'electron.icns']);
   const locale = name => /^[a-z]{2,3}(?:[-_][A-Za-z0-9]+)?\.lproj$/.test(name);
 
-  // Electron Packager places its exact vendor license filenames beside .app.
-  if (['LICENSE', 'LICENSES.chromium.html', 'PORTABLE.md'].includes(value)) return !directory;
+  // Electron Packager places these exact vendor files beside .app.
+  if (['LICENSE', 'LICENSES.chromium.html', 'PORTABLE.md', 'version'].includes(value)) return !directory;
   if (['logs', 'downloads', 'results'].includes(p[0])) {
     return p.length === 1 ? directory : p.length === 2 && p[1] === '.keep' && !directory;
   }
@@ -250,6 +250,8 @@ function verifyPortableArchive(archive, platform, arch, options = {}) {
       if (value === 'resources/app.asar') hasAsar = true;
     }
     if (!approved) throw new Error(`Unapproved ZIP member: ${zipPath}`);
+    if (platform === 'darwin' && value === 'version' &&
+        (mode & 0xf000) !== 0x8000) throw new Error(`Invalid macOS version ZIP mode: ${zipPath}`);
     if (platform === 'darwin' && (value.endsWith('/_CodeSignature') ||
       value.endsWith('/_CodeSignature/CodeResources'))) {
       const expectedType = value.endsWith('/_CodeSignature') ? 0x4000 : 0x8000;

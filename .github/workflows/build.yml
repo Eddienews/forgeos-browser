@@ -78,13 +78,13 @@ jobs:
       - name: Package application
         run: node scripts/package.js --platform=${{ steps.platform.outputs.plat }} --arch=${{ matrix.arch }}
 
-      # Print only immediate vendor framework entry names and types on macOS
+      # Print only immediate bundle and vendor framework names/types on macOS
       # PRs, never their contents or packaged bytes. Uploads stay tag-only.
       - name: Inventory macOS framework names and types
         if: github.event_name == 'pull_request' && matrix.os == 'macos-latest'
         shell: bash
         run: |
-          node -e 'const fs = require("node:fs"); const root = "dist/ForgeBrowserLab-darwin-${{ matrix.arch }}/ForgeBrowserLab.app/Contents/Frameworks"; for (const framework of ["Electron Framework", "Mantle", "ReactiveObjC", "Squirrel"]) for (const folder of ["Resources", "Libraries", "Helpers"]) { const dir = `${root}/${framework}.framework/Versions/A/${folder}`; if (!fs.existsSync(dir)) continue; const entries = fs.readdirSync(dir, { withFileTypes: true }).map(entry => [entry.name, entry.isDirectory() ? "directory" : entry.isFile() ? "file" : entry.isSymbolicLink() ? "symlink" : "other"]).sort((a, b) => a[0].localeCompare(b[0])); console.log(`${framework} ${folder} entries:`, JSON.stringify(entries)); }'
+          node -e 'const fs = require("node:fs"); const bundle = "dist/ForgeBrowserLab-darwin-${{ matrix.arch }}"; const root = `${bundle}/ForgeBrowserLab.app/Contents/Frameworks`; const inventory = (dir, label) => { if (!fs.existsSync(dir)) return; const entries = fs.readdirSync(dir, { withFileTypes: true }).map(entry => [entry.name, entry.isDirectory() ? "directory" : entry.isFile() ? "file" : entry.isSymbolicLink() ? "symlink" : "other"]).sort((a, b) => a[0].localeCompare(b[0])); console.log(`${label} entries:`, JSON.stringify(entries)); }; inventory(bundle, "Bundle root"); for (const framework of ["Electron Framework", "Mantle", "ReactiveObjC", "Squirrel"]) for (const folder of ["Resources", "Libraries", "Helpers"]) inventory(`${root}/${framework}.framework/Versions/A/${folder}`, `${framework} ${folder}`);'
 
       - name: Create portable archive
         run: node scripts/make-portable.js --platform=${{ steps.platform.outputs.plat }} --arch=${{ matrix.arch }}

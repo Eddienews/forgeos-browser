@@ -64,6 +64,7 @@ module.exports = [
       const entries = [
         ['ForgeBrowserLab-darwin-x64/LICENSE', 'synthetic vendor license'],
         ['ForgeBrowserLab-darwin-x64/LICENSES.chromium.html', 'synthetic vendor notices'],
+        ['ForgeBrowserLab-darwin-x64/version', 'synthetic vendor version'],
         [p + 'MacOS/ForgeBrowserLab', 'binary'],
         [p + 'Resources/app.asar', 'asar'],
         [p + 'Resources/en.lproj/locale.pak', 'locale'],
@@ -85,6 +86,8 @@ module.exports = [
         syntheticZip(zip, entries);
         a.ok(verifyPortableArchive(zip, 'darwin', 'x64'));
         for (const privatePath of ['ForgeBrowserLab-darwin-x64/private-note.txt',
+          'ForgeBrowserLab-darwin-x64/version.old',
+          p + 'version',
           p + 'Resources/en.lproj/private-key.txt',
           p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/zh_CN_PRIVATE.lproj/locale.pak',
           p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/zh_PRIVATE_FEMININE.lproj/locale.pak',
@@ -169,6 +172,14 @@ module.exports = [
           syntheticZip(zip, mutated);
           a.throws(() => verifyPortableArchive(zip, 'darwin', 'x64'),
             /Invalid macOS ShipIt ZIP mode/);
+        }
+        const version = 'ForgeBrowserLab-darwin-x64/version';
+        for (const mode of [0o120777, 0o40755]) {
+          const mutated = entries.map(([name, content, originalMode]) =>
+            name === version ? [name, 'A', mode] : [name, content, originalMode]);
+          syntheticZip(zip, mutated);
+          a.throws(() => verifyPortableArchive(zip, 'darwin', 'x64'),
+            /Invalid macOS version ZIP mode/);
         }
       } finally { fs.rmSync(temp, { recursive: true, force: true }); }
     },
