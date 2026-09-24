@@ -78,6 +78,14 @@ jobs:
       - name: Package application
         run: node scripts/package.js --platform=${{ steps.platform.outputs.plat }} --arch=${{ matrix.arch }}
 
+      # Inventory only vendor ICU locale directory names on PRs; no files
+      # or package bytes are uploaded or printed. This bounds allowlist review.
+      - name: Inventory macOS gendered locale names
+        if: github.event_name == 'pull_request' && matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          node -e 'const fs = require("node:fs"); const dir = "dist/ForgeBrowserLab-darwin-${{ matrix.arch }}/ForgeBrowserLab.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources"; const names = fs.readdirSync(dir, { withFileTypes: true }).filter(entry => entry.isDirectory() && /^[a-z]{2,3}_[A-Z0-9]{2,8}_(?:MASCULINE|FEMININE|NEUTER)\.lproj$/.test(entry.name)).map(entry => entry.name).sort(); console.log("Electron Framework gendered locales:", JSON.stringify(names));'
+
       - name: Create portable archive
         run: node scripts/make-portable.js --platform=${{ steps.platform.outputs.plat }} --arch=${{ matrix.arch }}
 
