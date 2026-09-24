@@ -65,6 +65,8 @@ module.exports = [
         [p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/pt_PT_MASCULINE.lproj/locale.pak', 'locale'],
         [p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/zh_CN_FEMININE.lproj/', '', 0o40755],
         [p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/zh_CN_FEMININE.lproj/locale.pak', 'locale'],
+        [p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/zh_TW_NEUTER.lproj/', '', 0o40755],
+        [p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/zh_TW_NEUTER.lproj/locale.pak', 'locale'],
         [p + 'Frameworks/Electron Framework.framework/Versions/A/_CodeSignature/', '', 0o40755],
         [p + 'Frameworks/Electron Framework.framework/Versions/A/_CodeSignature/CodeResources', 'synthetic signature'],
         [p + 'Frameworks/Electron Framework.framework/Versions/Current', 'A', 0o120777],
@@ -80,6 +82,7 @@ module.exports = [
           p + 'Resources/pt_PT_MASCULINE.lproj/locale.pak',
           p + 'Frameworks/Mantle.framework/Versions/A/Resources/zh_CN_FEMININE.lproj/locale.pak',
           p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/pt_PT_MASCULINE.lproj/private-key.txt',
+          p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/zh_TW_NEUTER.lproj/private-key.txt',
           p + 'Frameworks/Electron Framework.framework/Versions/A/_CodeSignature/private-key.txt',
           p + 'Frameworks/Electron Framework.framework/private-key.txt']) {
           syntheticZip(zip, [...entries, [privatePath, 'synthetic secret']]);
@@ -97,7 +100,7 @@ module.exports = [
           a.throws(() => verifyPortableArchive(zip, 'darwin', 'x64'),
             /Invalid code signature ZIP mode/, `${target} mode ${mode.toString(8)} must fail`);
         }
-        for (const localeName of ['pt_PT_MASCULINE', 'zh_CN_FEMININE']) {
+        for (const localeName of ['pt_PT_MASCULINE', 'zh_CN_FEMININE', 'zh_TW_NEUTER']) {
           const localeDir = p + 'Frameworks/Electron Framework.framework/Versions/A/Resources/' + localeName + '.lproj/';
           for (const [target, mode] of [
             [localeDir, 0o120777], [localeDir, 0o100644],

@@ -94,7 +94,8 @@ function approvedMacMember(value, directory) {
     'v8_context_snapshot.bin', 'vk_swiftshader_icd.json', 'electron.icns']);
   const locale = name => /^[a-z]{2,3}(?:[-_][A-Za-z0-9]+)?\.lproj$/.test(name);
   // Only these observed Electron Framework ICU variants extend the locale rule.
-  const frameworkLocale = name => ['pt_PT_MASCULINE.lproj', 'zh_CN_FEMININE.lproj'].includes(name);
+  const frameworkLocale = name => ['pt_PT_MASCULINE.lproj', 'zh_CN_FEMININE.lproj',
+    'zh_TW_NEUTER.lproj'].includes(name);
   // Electron Packager places its exact vendor license filenames beside .app.
   if (['LICENSE', 'LICENSES.chromium.html', 'PORTABLE.md'].includes(value)) return !directory;
   if (['logs', 'downloads', 'results'].includes(p[0])) {
@@ -236,7 +237,7 @@ function verifyPortableArchive(archive, platform, arch, options = {}) {
       const expectedType = value.endsWith('/_CodeSignature') ? 0x4000 : 0x8000;
       if ((mode & 0xf000) !== expectedType) throw new Error(`Invalid code signature ZIP mode: ${zipPath}`);
     }
-    if (platform === 'darwin' && /^ForgeBrowserLab\.app\/Contents\/Frameworks\/Electron Framework\.framework\/Versions\/A\/Resources\/(?:pt_PT_MASCULINE|zh_CN_FEMININE)\.lproj(?:\/locale\.pak)?$/.test(value)) {
+    if (platform === 'darwin' && /^ForgeBrowserLab\.app\/Contents\/Frameworks\/Electron Framework\.framework\/Versions\/A\/Resources\/(?:pt_PT_MASCULINE|zh_CN_FEMININE|zh_TW_NEUTER)\.lproj(?:\/locale\.pak)?$/.test(value)) {
       const expectedType = value.endsWith('/locale.pak') ? 0x8000 : 0x4000;
       if ((mode & 0xf000) !== expectedType) throw new Error(`Invalid gendered locale ZIP mode: ${zipPath}`);
     }
