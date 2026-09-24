@@ -17,6 +17,7 @@
     <button data-sec="agent">Agent view</button>
     <button data-sec="bookmarks">Bookmarks</button>
     <button data-sec="history">History</button>
+    <button data-sec="notebook">Notebook</button>
     <button data-sec="events">Event log</button>
     <button data-sec="downloads">Downloads</button>
     <button data-sec="demo">Demo agent</button>
@@ -76,6 +77,21 @@
       <tbody></tbody>
     </table>
     <p class="note">History is session-scoped and capped at 500 entries. Cleared by "Clear session".</p>
+  </section>
+
+  <!-- Local research notebook -->
+  <section id="sec-notebook" class="sec hidden">
+    <h2>Local research notebook</h2>
+    <p class="note">Select text on a persistent human page, then use Settings → Capture selected excerpt. Only your explicit capture is saved; no model upload or AI summary. Query strings and fragments are omitted from source URLs for safety.</p>
+    <div class="list-actions"><button id="nb-refresh">Refresh</button><button id="nb-export">Export .txt</button></div>
+    <p id="nb-status" class="note" role="status"></p>
+    <h2>Sources (check to compare)</h2>
+    <div id="nb-sources"></div>
+    <h2>Comparison</h2>
+    <ol id="nb-comparison"></ol>
+    <h2>Plain notes</h2>
+    <textarea id="nb-notes" maxlength="12000" rows="8" style="width:100%;box-sizing:border-box" aria-label="Notebook notes"></textarea>
+    <button id="nb-save-notes">Save notes locally</button>
   </section>
 
   <!-- Download Center -->

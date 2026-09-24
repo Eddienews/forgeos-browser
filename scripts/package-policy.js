@@ -38,6 +38,7 @@ const PACKAGE_FILES = Object.freeze([
   'src/engine/page-processing-policy.js',
   'src/engine/page-snapshot.js',
   'src/engine/permissions.js',
+  'src/engine/research-notebook.js',
   'src/engine/privacy-modes.js',
   'src/engine/prompt-injection.js',
   'src/engine/sensitive-fields.js',

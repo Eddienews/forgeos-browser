@@ -31,6 +31,7 @@ const { containerPartition, sessionPlanFor } = require('../../src/engine/storage
 const { clearOriginData } = require('../../src/engine/site-privacy');
 const { runAgentProxyE2E } = require('./agent-proxy');
 const { runQuicE2E } = require('./quic');
+const { runNotebookE2E } = require('./research-notebook');
 
 // The Electron integration process must not reuse the user's browser profile.
 const scratchRoot = process.env.BH_AGENT_WORKSPACE || path.join(os.homedir(), 'AppData', 'Local', 'hermes', 'cache', 'scratch');
@@ -427,6 +428,7 @@ async function main() {
     JSON.stringify(boundary));
   boundaryWin.destroy();
 
+  await runNotebookE2E(wc, `http://127.0.0.1:${p}/clean.html`, scratchProfile, record);
   await runAgentProxyE2E(record);
   await runQuicE2E(record);
 

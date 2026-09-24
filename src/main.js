@@ -41,6 +41,7 @@ const { runGoal } = require('./engine/agent-loop');
 const credentialPolicy = require('./engine/credential-policy');
 const { browserViewBounds } = require('./engine/view-layout');
 const sessionStore = require('./engine/session-store');
+const notebook = require('./engine/research-notebook');
 const { cleanUrlString } = require('./engine/url-cleaner');
 const { classifyField } = require('./engine/sensitive-fields');
 const { createPageWebPreferences } = require('./page-web-preferences');
@@ -82,6 +83,12 @@ function getLogFile() {
 
 function getDownloadDir() {
   return path.join(getRuntimeBase(), 'downloads');
+}
+
+// Dev checkouts are repositories: never place notebook user data in source.
+// Packaged/portable and smoke runs retain their existing runtime base.
+function getNotebookBase() {
+  return !IS_PACKAGED && !SMOKE_RUNTIME_BASE ? app.getPath('userData') : getRuntimeBase();
 }
 
 // Lazy: log is initialized inside app.whenReady() so getRuntimeBase() can use
@@ -746,6 +753,16 @@ function buildState() {
 
 function sendState() { sendToChrome('forge:state', buildState()); }
 
+// Deliberate chrome action only. The page receives no notebook bridge and the
+// selected text never enters an agent snapshot, model request, or event log.
+function humanNotebookTab() {
+  const t = activeTab();
+  if (!t || t.agentOwned || t.closing || t.modeId === 'ephemeral' || t.forgetOnClose ||
+      t.restoreOnRestart === false || !t.wc || t.wc.isDestroyed()) throw new Error('Notebook requires a persistent human tab');
+  notebook.canonicalUrl(t.wc.getURL());
+  return t;
+}
+
 function registerIpc() {
   // Only the trusted toolbar renderer may drive search. Untrusted page views
   // have no preload, and a forged IPC message from a page is rejected too.
@@ -759,6 +776,35 @@ function registerIpc() {
     if (!isChrome(event)) return false;
     pageFind.close();
     return true;
+  });
+  const fromChrome = e => {
+    if (![chromeWin, panelWin].some(w => w && !w.isDestroyed() &&
+      e.sender === w.webContents && e.senderFrame === w.webContents.mainFrame))
+      throw new Error('Notebook is chrome-only');
+  };
+  ipcMain.handle('forge:notebook-list', e => { fromChrome(e); return notebook.load(getNotebookBase()); });
+  ipcMain.handle('forge:notebook-capture', async e => {
+    fromChrome(e);
+    const t = humanNotebookTab();
+    const id = t.id, url = t.wc.getURL();
+    const selection = await t.wc.executeJavaScript(notebook.SELECTION_SCRIPT, true);
+    if (activeTabId !== id || t.closing || t.wc.isDestroyed() || t.wc.getURL() !== url ||
+        !selection || selection.url !== url) throw new Error('No safe selected excerpt on active human page');
+    return notebook.addSource(getNotebookBase(), selection);
+  });
+  ipcMain.handle('forge:notebook-notes', (e, notes) => { fromChrome(e); return notebook.saveNotes(getNotebookBase(), notes); });
+  ipcMain.handle('forge:notebook-compare', (e, ids) => { fromChrome(e); return notebook.setComparison(getNotebookBase(), ids); });
+  ipcMain.handle('forge:notebook-remove', (e, id) => { fromChrome(e); return notebook.removeSource(getNotebookBase(), id); });
+  ipcMain.handle('forge:notebook-export', async e => {
+    fromChrome(e);
+    const choice = await dialog.showSaveDialog(panelWin && !panelWin.isDestroyed() ? panelWin : chromeWin, {
+      title: 'Export local research notebook',
+      defaultPath: path.join(app.getPath('documents'), 'forge-research-notebook.txt'),
+      filters: [{ name: 'Plain text', extensions: ['txt'] }],
+    });
+    if (choice.canceled || !choice.filePath) return { canceled: true };
+    if (path.extname(choice.filePath).toLowerCase() !== '.txt') throw new Error('Export requires a .txt destination');
+    return notebook.exportTo(getNotebookBase(), choice.filePath);
   });
   ipcMain.handle('forge:navigate', (_e, url) => {
     const t = activeTab();

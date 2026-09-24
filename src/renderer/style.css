@@ -293,6 +293,9 @@ h1 { font: 600 13px var(--mono); letter-spacing: .14em; color: var(--amber); }
 .kv .lbl { color: var(--muted); font-size: 12px; }
 .kv .val { font: 12px var(--mono); color: var(--fg); }
 .kv.small { grid-template-columns: 110px 1fr; }
+.notebook-source { border: 1px solid var(--line); border-radius: 6px; padding: 10px; margin: 8px 0; overflow-wrap: anywhere; }
+.notebook-source > * { display: block; margin: 5px 0; }
+#nb-comparison li { overflow-wrap: anywhere; margin-bottom: 8px; }
 .mono { font-family: var(--mono); }
 .json, .log {
   font: 11px var(--mono); background: var(--bg2); border: 1px solid var(--line);

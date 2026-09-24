@@ -135,6 +135,14 @@
   $('btn-fwd').addEventListener('click', () => F.forward());
   $('btn-reload').addEventListener('click', () => F.reload());
   $('mi-panels').addEventListener('click', () => { closeMenu(); F.togglePanels(); });
+  $('mi-notebook').addEventListener('click', () => { closeMenu(); F.togglePanels('notebook'); });
+  $('mi-notebook-capture').addEventListener('click', async () => {
+    closeMenu();
+    try {
+      const result = await F.notebook.capture();
+      window.alert(result.duplicate ? 'Excerpt already in notebook.' : 'Excerpt saved locally. Open Research notebook to compare or export.');
+    } catch (error) { window.alert('Capture refused: ' + error.message); }
+  });
   $('mi-devtools').addEventListener('click', () => { closeMenu(); F.openDevTools(); });
   $('mi-clear').addEventListener('click', async () => {
     closeMenu();

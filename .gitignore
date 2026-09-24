@@ -16,6 +16,7 @@ forge-fp-level
 /dist/
 forge-allowlist.json.presets
 forge-session.json
+forge-research-notebook.json
 scripts/_*.js
 
 # local working notes (handoffs, scratch) — not part of the product
