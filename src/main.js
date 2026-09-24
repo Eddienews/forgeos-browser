@@ -48,8 +48,10 @@ const agentProvider = require('./engine/agent-provider');
 const { DARK_SCROLLBAR_CSS, supportsPageAppearance } = require('./engine/page-appearance');
 const { isExistingPathInside, upsertDownload } = require('./engine/download-center');
 const { pageProcessingPolicy } = require('./engine/page-processing-policy');
+const { FindInPage } = require('./engine/find-in-page');
 
 const TOOLBAR_H = 42; // must match renderer CSS --bar-h
+const FIND_H = 42; // must match renderer CSS --find-h
 let menuRightInset = 0;
 const APP_ROOT = __dirname;
 const RENDERER = path.join(APP_ROOT, 'renderer', 'index.html');
@@ -112,6 +114,10 @@ let tabSeq = 0;
 const tabs = new Map();   // id -> tab
 const sessions = new Map(); // partitionKey -> { session, adapter }
 let activeTabId = null;
+const pageFind = new FindInPage((status) => {
+  layoutActiveView();
+  sendToChrome('forge:find-result', status);
+});
 let agentLease = null;
 let agentTabId = null;
 const downloads = [];
@@ -264,6 +270,21 @@ function createTab(url = 'about:blank', opts = {}) {
 
   wc.on('did-start-navigation', (_e, url, isInPlace, isMainFrame) => {
     if (isMainFrame && !isInPlace) tab.certError = false;
+    if (isMainFrame && pageFind.tab === tab) pageFind.close();
+  });
+  wc.on('found-in-page', (_e, result) => pageFind.result(tab, result));
+  wc.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown' || input.isAutoRepeat || !input.key) return;
+    const ctrl = input.control || input.meta;
+    const find = ctrl && !input.alt && input.key.toLowerCase() === 'f';
+    const repeat = !ctrl && !input.alt && input.key === 'F3';
+    const close = !ctrl && !input.alt && input.key === 'Escape' && pageFind.opened;
+    if (!find && !repeat && !close) return;
+    event.preventDefault();
+    if (activeTabId === tab.id) {
+      if (close) pageFind.close();
+      else sendToChrome('forge:find-shortcut', find ? 'open' : (input.shift ? 'previous' : 'next'));
+    }
   });
 
   wc.on('did-navigate', (_e, url, httpCode) => {
@@ -396,12 +417,13 @@ function layoutActiveView() {
   if (!tab) return;
   const { width, height } = chromeWin.getContentBounds();
   tab.view.setBounds(browserViewBounds({
-    width, height, toolbarHeight: TOOLBAR_H, rightInset: menuRightInset,
+    width, height, toolbarHeight: TOOLBAR_H + (pageFind.opened ? FIND_H : 0), rightInset: menuRightInset,
   }));
   tab.view.setVisible(true);
 }
 
 function switchTab(id, { focus = true } = {}) {
+  if (activeTabId !== id) pageFind.close();
   const prev = tabs.get(activeTabId);
   if (prev) chromeWin.contentView.removeChildView(prev.view);
   const tab = tabs.get(id);
@@ -418,6 +440,7 @@ function switchTab(id, { focus = true } = {}) {
 async function closeTab(id, { notify = true, persist = true } = {}) {
   const tab = tabs.get(id);
   if (!tab) return;
+  if (pageFind.tab === tab) pageFind.close();
   if (tab.closePromise) return tab.closePromise;
   // Revoke authority before the first await: an in-flight readiness check
   // cannot load a tab whose teardown has begun.
@@ -700,6 +723,19 @@ function buildState() {
 function sendState() { sendToChrome('forge:state', buildState()); }
 
 function registerIpc() {
+  // Only the trusted toolbar renderer may drive search. Untrusted page views
+  // have no preload, and a forged IPC message from a page is rejected too.
+  const isChrome = (event) => !!chromeWin && !chromeWin.isDestroyed() &&
+    event.sender === chromeWin.webContents &&
+    event.senderFrame === chromeWin.webContents.mainFrame;
+  ipcMain.handle('forge:find-open', (event) => isChrome(event) && pageFind.open(activeTab()));
+  ipcMain.handle('forge:find-search', (event, query, direction) =>
+    isChrome(event) && pageFind.search(activeTab(), query, direction));
+  ipcMain.handle('forge:find-close', (event) => {
+    if (!isChrome(event)) return false;
+    pageFind.close();
+    return true;
+  });
   ipcMain.handle('forge:navigate', (_e, url) => {
     const t = activeTab();
     if (!t) return null;

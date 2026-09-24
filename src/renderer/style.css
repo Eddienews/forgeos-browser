@@ -16,6 +16,7 @@
   --red: #d1603d;
   --mono: "Cascadia Mono", "Consolas", monospace;
   --bar-h: 42px;
+  --find-h: 42px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -48,6 +49,23 @@ body {
 body.platform-win32 #bar { padding-right: 148px; }
 body.platform-darwin #bar { padding-left: 78px; }
 #bar button, #bar input, #bar select, .tab, .menu { -webkit-app-region: no-drag; }
+
+#find-bar {
+  height: var(--find-h); flex: 0 0 var(--find-h);
+  display: flex; align-items: center; justify-content: flex-end; gap: 6px;
+  background: var(--glass-strong); border-bottom: 1px solid var(--line);
+  padding: 4px 12px;
+}
+#find-bar label { color: var(--muted); font-size: 11px; white-space: nowrap; }
+#find-query {
+  width: min(260px, 40vw); min-width: 80px; height: 29px;
+  background: var(--bg3); border: 1px solid var(--line); border-radius: 5px;
+  color: var(--fg); padding: 0 8px; outline: none;
+}
+#find-query:focus { border-color: var(--amber-dim); }
+#find-count { min-width: 44px; text-align: center; white-space: nowrap; color: var(--muted); font: 11px var(--mono); }
+#find-bar button { height: 28px; min-width: 28px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg3); color: var(--fg); cursor: pointer; }
+#find-bar button:hover { border-color: var(--amber-dim); color: var(--amber); }
 
 #tabs {
   display: flex; gap: 4px; overflow-x: auto;

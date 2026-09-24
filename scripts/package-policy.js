@@ -30,6 +30,7 @@ const PACKAGE_FILES = Object.freeze([
   'src/engine/download-center.js',
   'src/engine/event-log.js',
   'src/engine/filter-engine.js',
+  'src/engine/find-in-page.js',
   'src/engine/fingerprint-hardening.js',
   'src/engine/fingerprint.js',
   'src/engine/network-policy.js',

@@ -11,6 +11,47 @@
 
   let state = null;
 
+  /* ---------------- native page find (chrome only) ---------------- */
+  const findBar = $('find-bar');
+  const findQuery = $('find-query');
+  let findOpen = false;
+  function updateFind(status) {
+    findOpen = !!status.open;
+    findBar.classList.toggle('hidden', !findOpen);
+    if (!findOpen) findQuery.value = '';
+    $('find-count').textContent = `${status.active || 0} / ${status.matches || 0}`;
+  }
+  async function openFind() {
+    if (await F.findOpen()) {
+      findQuery.focus();
+      findQuery.select();
+    }
+  }
+  function stepFind(direction) {
+    if (!findOpen) { openFind(); return; }
+    F.findSearch(findQuery.value, direction);
+  }
+  findQuery.addEventListener('input', () => F.findSearch(findQuery.value, 'forward'));
+  $('find-next').addEventListener('click', () => stepFind('forward'));
+  $('find-prev').addEventListener('click', () => stepFind('backward'));
+  $('find-close').addEventListener('click', () => F.findClose());
+  F.onFindResult(updateFind);
+  F.onFindShortcut((action) => {
+    if (action === 'open') openFind();
+    else stepFind(action === 'previous' ? 'backward' : 'forward');
+  });
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'f') {
+      e.preventDefault(); openFind();
+    } else if (e.key === 'F3' && !e.ctrlKey && !e.altKey) {
+      e.preventDefault(); stepFind(e.shiftKey ? 'backward' : 'forward');
+    } else if (e.key === 'Enter' && document.activeElement === findQuery) {
+      e.preventDefault(); stepFind(e.shiftKey ? 'backward' : 'forward');
+    } else if (e.key === 'Escape' && findOpen) {
+      e.preventDefault(); F.findClose();
+    }
+  });
+
   /* ---------------- gear menu ---------------- */
   const gearBtn = $('btn-gear');
   const gearMenu = $('gear-menu');

@@ -151,6 +151,15 @@
       </div>
   </div>
 
+  <div id="find-bar" class="hidden" role="search" aria-label="Find in page">
+    <label for="find-query">Find in page</label>
+    <input id="find-query" type="search" placeholder="Find in page" maxlength="512" autocomplete="off" spellcheck="false" />
+    <output id="find-count" aria-live="polite">0 / 0</output>
+    <button id="find-prev" title="Previous match (Shift+F3)" aria-label="Previous match">↑</button>
+    <button id="find-next" title="Next match (F3)" aria-label="Next match">↓</button>
+    <button id="find-close" title="Close find (Escape)" aria-label="Close find">×</button>
+  </div>
+
   <div id="plug-toast"></div>
 
   <script src="ui.js"></script>
