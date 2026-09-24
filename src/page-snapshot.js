@@ -32,11 +32,14 @@
 'use strict';
 
 const { snapshotSafetyScript } = require('./engine/sensitive-fields');
+const { forgeEffectProofSource } = require('./page-actions');
 
 /** Build (or reuse) the per-page agent store. */
-function forgeSnapshotScript() {
+function forgeSnapshotScript(includePrivateEffectProofs = false) {
   return `(() => {
   ${snapshotSafetyScript()}
+  ${forgeEffectProofSource()}
+  const privateEffectProofs = ${includePrivateEffectProofs ? 'new Map()' : 'null'};
   const store = (window.__forgeAgent ??= { ids: new WeakMap(), nodes: new Map(), next: 1 });
   const identify = (el) => {
     if (!store.ids.has(el)) store.ids.set(el, store.next++);
@@ -165,7 +168,9 @@ function forgeSnapshotScript() {
   }
   const safeText = (value) => scrubKnownValues(value, leaked);
   const safeUrl = (value) => value == null ? null : sanitizeUrl(safeText(value));
-  const describe = (el, id, label, extra) => Object.assign({
+  const describe = (el, id, label, extra) => {
+    if (privateEffectProofs && !privateEffectProofs.has(id)) privateEffectProofs.set(id, forgeEffectProof(el));
+    return Object.assign({
     index: id,
     role: roleOf(el) || "generic",
     // Keep the control visible for orientation, but never offer an action the
@@ -182,7 +187,8 @@ function forgeSnapshotScript() {
     is_anchor: el.tagName === "A",
     ...formInfo(el),
     href: el.tagName === "A" ? safeUrl(el.getAttribute("href")) : null,
-  }, extra || {});
+    }, extra || {});
+  };
 
   for (const el of document.querySelectorAll(selector)) {
     if (elements.length >= MAX_ELEMENTS && belowFold.length >= MAX_BELOW_FOLD) break;
@@ -240,6 +246,7 @@ function forgeSnapshotScript() {
     title: safeText(document.title),
     text: bodyText,
     elements,
+    ...(privateEffectProofs ? { _privateEffectProofs: [...privateEffectProofs] } : {}),
     // Real controls that exist out of view: the agent should scroll toward them
     // deliberately instead of hunting for them.
     below_fold: belowFold,

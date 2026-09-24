@@ -24,6 +24,7 @@ const { analyzeAgentView, IN_PAGE_SCRIPT } = require('../../src/engine/agent-vie
 const { forgeSnapshotScript } = require('../../src/page-snapshot');
 const { forgeActionScript } = require('../../src/page-actions');
 const { normalizeSnapshot } = require('../../src/engine/page-snapshot');
+const { compareAgentPreview, hashEffectProof } = require('../../src/engine/action-policy');
 const { candidatesFor } = require('../../src/engine/typesafe-decider');
 const { createPageWebPreferences } = require('../../src/page-web-preferences');
 const sessionStore = require('../../src/engine/session-store');
@@ -373,6 +374,33 @@ async function main() {
     !JSON.stringify(inspected.display).includes('fixtureDialogPath93') &&
     inspected.display.label.includes('<REDACTED>') && inspected.display.pageUrl.includes('<REDACTED>'),
     JSON.stringify({ safeUrl: displaySnapshot.url, display: inspected && inspected.display }));
+
+  /* Private raw effect witness: two query recipients look identical in the
+   * agent-visible projection, but must never share an approval. */
+  await loadAndWait(wc, `http://127.0.0.1:${p}/clean.html`);
+  await wc.executeJavaScript(`document.body.innerHTML =
+    '<a id="recipient-link" href="/submit?recipient=alice">Continue</a>'`);
+  const privateRaw = await wc.executeJavaScript(forgeSnapshotScript(true), true);
+  const privateHashes = new Map(privateRaw._privateEffectProofs.map(([id, proof]) => [id, hashEffectProof(proof)]));
+  delete privateRaw._privateEffectProofs;
+  const privateSafe = normalizeSnapshot(privateRaw);
+  const recipientLink = privateSafe.elements.find(el => el.label === 'Continue');
+  const firstInspection = recipientLink && await wc.executeJavaScript(
+    forgeActionScript(recipientLink.index, 'inspect', 'fixture-private-first', { kind: 'click' }), true);
+  await wc.executeJavaScript(`document.getElementById('recipient-link').href = '/submit?recipient=attacker'`);
+  const secondInspection = recipientLink && await wc.executeJavaScript(
+    forgeActionScript(recipientLink.index, 'inspect', 'fixture-private-second', { kind: 'click' }), true);
+  const before = recipientLink && firstInspection && compareAgentPreview(
+    recipientLink, firstInspection, privateSafe.url, 'click', privateHashes.get(recipientLink.index));
+  const after = recipientLink && secondInspection && compareAgentPreview(
+    recipientLink, secondInspection, privateSafe.url, 'click', privateHashes.get(recipientLink.index));
+  record('C1', 'real Chromium snapshot binds raw link query without exposing either recipient to agent',
+    recipientLink && firstInspection && secondInspection && before.length === 0 &&
+    after.includes('target/effect proof') &&
+    firstInspection.display.destination === secondInspection.display.destination &&
+    !JSON.stringify(privateSafe).includes('alice') &&
+    !JSON.stringify(privateSafe).includes('_privateEffectProofs'),
+    JSON.stringify({ before, after, safeHref: recipientLink && recipientLink.href }));
 
   /* ---------- Test E (Gate G): prompt injection ---------- */
   await loadAndWait(wc, `http://127.0.0.1:${p}/prompt_injection.html`);

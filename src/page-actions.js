@@ -17,6 +17,38 @@
 'use strict';
 const { snapshotSafetyScript } = require('./engine/sensitive-fields');
 
+// This private, unsanitized effect witness is returned only to the main process,
+// hashed there, and stripped before any snapshot reaches an agent. Use the SAME
+// source at observation and inspection; display projections cannot prove that a
+// redacted query parameter or a labeled control has not changed.
+function forgeEffectProofSource() {
+  return `const forgeEffectProof = (el) => {
+    const form = el.tagName === "A" ? null : (el.form || el.closest("form"));
+    const href = el.tagName === "A" ? (el.getAttribute("href") || "") : "";
+    const formAction = form ? (el.getAttribute("formaction") !== null ? el.getAttribute("formaction") : (form.action || location.href)) : "";
+    const formMethod = form ? (el.getAttribute("formmethod") !== null ? el.getAttribute("formmethod") : (form.method || "get")).toLowerCase() : "";
+    let resolvedHref = "", resolvedFormAction = "";
+    try {
+      if (href) resolvedHref = new URL(href, location.href).href;
+      if (form) resolvedFormAction = new URL(formAction, location.href).href;
+    } catch { return null; }
+    const field = ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) ? domFieldInfo(el) : null;
+    const labelledBy = (el.getAttribute("aria-labelledby") || "").split(/\\s+/).filter(Boolean)
+      .map(id => { const named = document.getElementById(id); return named ? String(named.textContent || "") : ""; });
+    const nestedLabels = typeof el.querySelectorAll === "function"
+      ? [...el.querySelectorAll("[aria-label]")].map(node => node.getAttribute("aria-label") || "") : [];
+    return {
+      tag: el.tagName, type: (el.type || "").toLowerCase(), role: el.getAttribute("role") || "",
+      label: el.getAttribute("aria-label") || el.innerText || el.value || "",
+      labelledBy, nestedLabels, textContent: el.textContent || "",
+      title: el.getAttribute("title") || "", disabled: !!el.disabled, readOnly: !!el.readOnly,
+      resolvedHref, resolvedFormAction, formMethod,
+      field, value: field && el.tagName !== "SELECT" ? String(el.value || "") : "",
+      options: el.tagName === "SELECT" ? [...el.options].map(o => [o.value, !!o.disabled, o.text || ""]) : null,
+    };
+  };`;
+}
+
 /**
  * Resolve an element by index and validate it is actionable.
  * Clicks, fills and selections execute in the validated page turn (no
@@ -28,6 +60,7 @@ const { snapshotSafetyScript } = require('./engine/sensitive-fields');
 function forgeActionScript(index, kind, value, approval = null) {
   return `(() => {
   ${snapshotSafetyScript()}
+  ${forgeEffectProofSource()}
   const store = window.__forgeAgent;
   const el = store && store.nodes ? store.nodes.get(${Number(index)}) : null;
   if (!el || !el.isConnected) return { ok: false, reason: "detached" };
@@ -116,13 +149,13 @@ function forgeActionScript(index, kind, value, approval = null) {
         }
       }
       const safe = (text) => scrubKnownValues(text, values);
-      return { ok: true, descriptor, display: {
+      return { ok: true, descriptor, effectProof: forgeEffectProof(el), display: {
         label: safe(label), pageUrl: sanitizeUrl(safe(location.href)),
         destination: sanitizeUrl(safe(destination)), formMethod: safe(formMethod),
         fieldName: safe(descriptor.fieldName || ""), fieldId: safe(descriptor.fieldId || ""),
       } };
     }
-    return { ok: true, descriptor };
+    return { ok: true, descriptor, effectProof: forgeEffectProof(el) };
   }
   if (${JSON.stringify(kind)} === "click") {
     // Literal/private destinations cannot be approved by the agent dialog.
@@ -207,4 +240,4 @@ function forgeScrollScript(direction) {
   return `(() => { window.scrollBy({ top: ${dy}, behavior: "instant" }); return { ok: true, y: window.scrollY }; })()`;
 }
 
-module.exports = { forgeActionScript, forgeScrollScript };
+module.exports = { forgeActionScript, forgeScrollScript, forgeEffectProofSource };

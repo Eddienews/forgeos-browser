@@ -36,7 +36,7 @@ const { createAgentSession } = require('./engine/agent-network-proxy');
 const { forgeSnapshotScript } = require('./page-snapshot');
 const { forgeActionScript, forgeScrollScript } = require('./page-actions');
 const { normalizeSnapshot } = require('./engine/page-snapshot');
-const { classifyAction, compareAgentPreview } = require('./engine/action-policy');
+const { classifyAction, compareAgentPreview, hashEffectProof } = require('./engine/action-policy');
 const { runGoal } = require('./engine/agent-loop');
 const credentialPolicy = require('./engine/credential-policy');
 const { browserViewBounds } = require('./engine/view-layout');
@@ -1406,11 +1406,19 @@ async function readIndexedSnapshot() {
   catch (error) { return { error: String(error.message || error).slice(0, 200) }; }
   try {
     const url = t.wc.getURL();
-    const raw = await t.wc.executeJavaScript(forgeSnapshotScript(), true);
+    const raw = await t.wc.executeJavaScript(forgeSnapshotScript(true), true);
     if (activeTab() !== t || t.wc.isDestroyed() || t.wc.getURL() !== url)
       return { error: 'page changed during observation' };
+    // Raw effect fields may include private query values. Hash them in the
+    // trusted process, then remove them before normalization/agent exposure.
+    const effectProofHashes = new Map();
+    for (const [index, proof] of raw._privateEffectProofs || []) {
+      const hash = hashEffectProof(proof);
+      if (Number.isSafeInteger(index) && hash) effectProofHashes.set(index, hash);
+    }
+    delete raw._privateEffectProofs;
     const snapshot = normalizeSnapshot(raw);
-    t.lastAgentObservation = { url, snapshot };
+    t.lastAgentObservation = { url, snapshot, effectProofHashes };
     // The renderer has scrubbed sensitive value copies from the URL path.
     // The live webContents URL is authority for navigation, not observation.
     return snapshot;
@@ -1501,11 +1509,13 @@ async function approveAgentAction(info) {
   const binding = t.lastAgentObservation;
   if (t.agentOwned && (!binding || binding.url !== url ||
       binding.snapshot.fingerprint !== action.fingerprint ||
-      !binding.snapshot.elements.some(el => el.index === targetIndex && el.kind === kind))) {
+      !binding.effectProofHashes || !binding.effectProofHashes.has(targetIndex) ||
+      binding.snapshot.elements.filter(el => el.index === targetIndex && el.kind === kind &&
+        (kind !== 'select' || String(el.option_value) === value)).length !== 1)) {
     log.log('DENY', 'agent action preview invalidated', { reason: 'observation changed' });
     return false;
   }
-  let nonce, descriptor, display;
+  let nonce, descriptor, display, previewLabel;
   nonce = require('crypto').randomBytes(24).toString('hex');
   try {
     const inspected = await wc.executeJavaScript(forgeActionScript(targetIndex, 'inspect', nonce, { kind }), true);
@@ -1515,9 +1525,15 @@ async function approveAgentAction(info) {
     descriptor = inspected.descriptor;
     display = inspected.display;
     if (!descriptor || !display) return false;
+    previewLabel = display.label;
     if (t.agentOwned) {
       const observed = binding.snapshot.elements.find(el => el.index === targetIndex);
-      const changes = compareAgentPreview(observed, inspected, binding.snapshot.url, kind);
+      previewLabel = observed.label || previewLabel;
+      const changes = compareAgentPreview(observed, inspected, binding.snapshot.url, kind,
+        binding.effectProofHashes.get(targetIndex));
+      if (kind === 'select' && (!Array.isArray(descriptor.options) ||
+          descriptor.options.filter(option => option[0] === value && !option[1]).length !== 1))
+        changes.push('proposed option');
       if (changes.length || t.lastAgentObservation !== binding) {
         log.log('DENY', 'agent action preview invalidated', { changed: changes.join(', ') || 'observation changed' });
         await dialog.showMessageBox(chromeWin, {
@@ -1534,10 +1550,10 @@ async function approveAgentAction(info) {
     type: 'warning',
     title: 'ForgeOS Browser — agent action request',
     message: `Action preview — an external agent wants to ${kind === 'fill' ? 'type into' : kind === 'select' ? 'select an option in' : 'activate'} an element.`,
-    detail: `Element: [${action.targetIndex}] ${display.label || '(unlabelled element)'}\n` +
+    detail: `Element: [${action.targetIndex}] ${previewLabel || '(unlabelled element)'}\n` +
       `Current page: ${display.pageUrl}\nDestination: ${display.destination}\n` +
       `Form method: ${display.formMethod || '(not a form)'}\n` +
-      (t.agentOwned ? 'Since observation: no target/effect change detected in comparable fields.\n' :
+      (t.agentOwned ? 'Since observation: browser-held target/effect witness matched.\n' :
         'Since observation: unavailable in this test context.\n') +
       (kind !== 'click' ? `Field: ${descriptor.tag} name=${display.fieldName || '(none)'} id=${display.fieldId || '(none)'}\n` : '') +
       'JavaScript event handlers may have additional unknown side effects.\n' +
@@ -1561,6 +1577,7 @@ async function approveAgentAction(info) {
         if (!current || !current.ok || action.targetIndex !== targetIndex ||
             action.kind !== kind || (action.value == null ? null : String(action.value)) !== value ||
             JSON.stringify(current.descriptor) !== JSON.stringify(descriptor) ||
+            (t.agentOwned && hashEffectProof(current.effectProof) !== binding.effectProofHashes.get(targetIndex)) ||
             activeTab() !== t || wc.isDestroyed() || wc.getURL() !== url) allowed = false;
       }
     } catch { allowed = false; }
@@ -1570,7 +1587,7 @@ async function approveAgentAction(info) {
     }
   }
   log.log(allowed ? 'ALLOW' : 'DENY', 'agent action human decision', {
-    kind: action.kind, label: display.label, why: 'interaction requires approval', decision: allowed ? 'allow' : 'deny',
+    kind: action.kind, label: previewLabel, why: 'interaction requires approval', decision: allowed ? 'allow' : 'deny',
   });
   return allowed;
 }

@@ -2,8 +2,9 @@
 const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
-const { forgeActionScript, forgeScrollScript } = require('../../src/page-actions');
-const { compareAgentPreview } = require('../../src/engine/action-policy');
+const { forgeActionScript, forgeScrollScript, forgeEffectProofSource } = require('../../src/page-actions');
+const { snapshotSafetyScript } = require('../../src/engine/sensitive-fields');
+const { compareAgentPreview, hashEffectProof } = require('../../src/engine/action-policy');
 
 // Exercise the actual main-process functions with a mocked Electron webContents
 // and a live VM page. No real browser or credentials are involved.
@@ -17,10 +18,11 @@ function harness(onDialog = () => {}) {
     contains: other => other === button, closest: selector => selector === 'form' ? form : null,
     getAttribute: () => null, click: () => { clicks += 1; },
   };
+  let currentElement = button;
   const page = { window: { __forgeAgent: { nodes: new Map([[1, button]]) } },
-    document: { elementFromPoint: () => button, querySelectorAll: () => [], getElementById: () => null }, URL, Map,
+    document: { elementFromPoint: () => currentElement, querySelectorAll: () => [], getElementById: () => null }, URL, Map,
     location: { href: 'https://example.com/page', origin: 'https://example.com', pathname: '/page', search: '' },
-    innerWidth: 800, innerHeight: 600 };
+    innerWidth: 800, innerHeight: 600, Event: class Event { constructor(type) { this.type = type; } } };
   const scripts = [];
   const wc = { getURL: () => page.location.href, isDestroyed: () => false,
     executeJavaScript: async source => { scripts.push(source); return vm.runInNewContext(source, page); } };
@@ -28,7 +30,7 @@ function harness(onDialog = () => {}) {
   let active = tab;
   const dialogs = [];
   const logs = [];
-  const context = { activeTab: () => active, forgeActionScript, forgeScrollScript, compareAgentPreview, require,
+  const context = { activeTab: () => active, forgeActionScript, forgeScrollScript, compareAgentPreview, hashEffectProof, require,
     requireAgentTab: async () => { if (active !== tab) throw Error('agent tab switched'); return tab; },
     chromeWin: { isDestroyed: () => false }, log: { log: (...entry) => { logs.push(entry); } },
     dialog: { showMessageBox: async (_win, options) => {
@@ -41,15 +43,20 @@ function harness(onDialog = () => {}) {
   const end = source.indexOf('let smokeDone = false;', begin);
   if (begin < 0 || end < 0) throw new Error('main-process action functions not found');
   vm.runInNewContext(source.slice(begin, end) + '\nthis.approve = approveAgentAction; this.act = executeAgentAction;', context);
-  return { ...context, button, form, page, wc, tab, dialogs, logs, scripts, switchTab: () => { active = { wc }; }, clicks: () => clicks };
+  return { ...context, button, form, page, wc, tab, dialogs, logs, scripts,
+    installTarget: element => { currentElement = element; page.window.__forgeAgent.nodes.set(1, element); },
+    switchTab: () => { active = { wc }; }, clicks: () => clicks };
 }
 const action = () => ({ kind: 'click', targetIndex: 1, value: null, label: 'Continue' });
 const info = act => ({ action: act, policy: { why: 'control with side effects' } });
 function bindObserved(h, target) {
+  const proof = vm.runInNewContext(`(() => { ${snapshotSafetyScript()} ${forgeEffectProofSource()}
+    return forgeEffectProof(window.__forgeAgent.nodes.get(1)); })()`, h.page);
   target.fingerprint = 'test-observation';
   h.tab.agentOwned = true;
   h.tab.lastAgentObservation = {
     url: 'https://example.com/page',
+    effectProofHashes: new Map([[1, hashEffectProof(proof)]]),
     snapshot: { url: 'https://example.com/page', fingerprint: target.fingerprint, elements: [{
       index: 1, kind: 'click', label: 'Continue', is_submit: true,
       form_action: 'https://example.com/submit', form_method: 'post', href: null,
@@ -62,7 +69,7 @@ module.exports = [
     const h = harness(); const target = action(); bindObserved(h, target);
     a.strictEqual(await h.approve(info(target)), true);
     a.ok(h.dialogs[0].message.includes('Action preview'));
-    a.ok(h.dialogs[0].detail.includes('Since observation: no target/effect change'));
+    a.ok(h.dialogs[0].detail.includes('browser-held target/effect witness matched'));
     a.ok(h.dialogs[0].detail.includes('Destination: https://example.com/submit'));
     a.strictEqual((await h.act(target)).ok, true);
     a.strictEqual(h.clicks(), 1);
@@ -72,7 +79,7 @@ module.exports = [
     h.button.innerText = 'Delete account';
     a.strictEqual(await h.approve(info(target)), false);
     a.strictEqual(Array.from(h.dialogs[0].buttons).join(','), 'Close');
-    a.ok(h.dialogs[0].detail.includes('target label'));
+    a.ok(h.dialogs[0].detail.includes('target/effect proof'));
     a.strictEqual((await h.act(target)).ok, false);
     a.strictEqual(h.clicks(), 0);
   } },
@@ -82,6 +89,69 @@ module.exports = [
     a.strictEqual(await h.approve(info(target)), false);
     a.ok(h.dialogs[0].detail.includes('destination'));
     a.strictEqual(h.clicks(), 0);
+  } },
+  { name: 'redacted query change before preview must not inherit approval', gate: 'C1', fn: async a => {
+    const h = harness(); const target = action();
+    h.form.action = 'https://example.com/submit?recipient=alice';
+    bindObserved(h, target);
+    h.tab.lastAgentObservation.snapshot.elements[0].form_action =
+      'https://example.com/submit?recipient=%3CREDACTED%3E';
+    h.form.action = 'https://example.com/submit?recipient=attacker';
+    a.strictEqual(await h.approve(info(target)), false);
+    a.strictEqual(h.clicks(), 0);
+  } },
+  { name: 'unchanged labeled fill and select do not fail due to display label shape', gate: 'C1', fn: a => {
+    const fill = { kind: 'fill', label: 'Search', input_type: 'search', form_method: null };
+    const select = { kind: 'select', label: 'Color -> Blue', input_type: 'select-one', form_method: null };
+    a.deepStrictEqual(compareAgentPreview(fill, {
+      descriptor: { type: 'search', formMethod: '' }, display: { label: '', destination: '' },
+    }, 'https://example.com', 'fill'), []);
+    a.deepStrictEqual(compareAgentPreview(select, {
+      descriptor: { type: 'select-one', formMethod: '' }, display: { label: 'Blue Red', destination: '' },
+    }, 'https://example.com', 'select'), []);
+  } },
+  { name: 'agent-owned labeled fill previews and executes the observed field', gate: 'C1', fn: async a => {
+    const h = harness(); let events = 0;
+    const field = { tagName: 'INPUT', type: 'search', value: '', name: 'search', id: 'query',
+      labels: [{ textContent: 'Search' }], disabled: false, readOnly: false, isConnected: true,
+      checkVisibility: () => true, getClientRects: () => [{ x: 10, y: 10, width: 80, height: 20 }],
+      contains: other => other === field, closest: () => null, getAttribute: () => null,
+      dispatchEvent: () => { events++; } };
+    h.installTarget(field);
+    const target = { kind: 'fill', targetIndex: 1, value: 'fixture search', label: 'Search' };
+    bindObserved(h, target);
+    Object.assign(h.tab.lastAgentObservation.snapshot.elements[0], {
+      kind: 'fill', label: 'Search', is_submit: false, input_type: 'search', form_action: null, form_method: null,
+    });
+    a.strictEqual(await h.approve(info(target)), true);
+    a.ok(h.dialogs[0].detail.includes('Element: [1] Search'));
+    a.ok(!h.scripts[0].includes('fixture search'), 'proposed value reached untrusted page before approval');
+    a.strictEqual((await h.act(target)).ok, true);
+    a.strictEqual(field.value, 'fixture search');
+    a.strictEqual(events, 2);
+  } },
+  { name: 'agent-owned select previews observed option then selects only that option', gate: 'C1', fn: async a => {
+    const h = harness(); let events = 0;
+    const field = { tagName: 'SELECT', type: 'select-one', value: 'red', innerText: 'Red Blue',
+      name: 'color', labels: [{ textContent: 'Color' }],
+      options: [{ value: 'red', text: 'Red', label: 'Red', disabled: false },
+        { value: 'blue', text: 'Blue', label: 'Blue', disabled: false }],
+      disabled: false, readOnly: false, isConnected: true,
+      checkVisibility: () => true, getClientRects: () => [{ x: 10, y: 10, width: 80, height: 20 }],
+      contains: other => other === field, closest: () => null, getAttribute: () => null,
+      dispatchEvent: () => { events++; } };
+    h.installTarget(field);
+    const target = { kind: 'select', targetIndex: 1, value: 'blue', label: 'Color -> Blue' };
+    bindObserved(h, target);
+    Object.assign(h.tab.lastAgentObservation.snapshot.elements[0], {
+      kind: 'select', label: 'Color -> Blue', option_value: 'blue',
+      is_submit: false, input_type: 'select-one', form_action: null, form_method: null,
+    });
+    a.strictEqual(await h.approve(info(target)), true);
+    a.ok(h.dialogs[0].detail.includes('Element: [1] Color -> Blue'));
+    a.strictEqual((await h.act(target)).ok, true);
+    a.strictEqual(field.value, 'blue');
+    a.strictEqual(events, 2);
   } },
   { name: 'stale fingerprint rejects agent proposal before preview', gate: 'C1', fn: async a => {
     const h = harness(); const target = action(); bindObserved(h, target);
