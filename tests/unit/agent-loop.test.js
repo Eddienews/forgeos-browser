@@ -25,6 +25,35 @@ const page = (over = {}) => ({
 
 module.exports = [
   {
+    name: 'select approval and execution retain the exact observed option, not first sibling',
+    gate: 'C1',
+    fn: async (assert) => {
+      const options = [
+        { index: 9, kind: 'select', role: 'combobox', label: 'Region -> East', option_value: 'east', option_index: 0 },
+        { index: 9, kind: 'select', role: 'combobox', label: 'Region -> West', option_value: 'west', option_index: 1 },
+      ];
+      const p = fakePage([page({ elements: options })]);
+      let approved;
+      const result = await runGoal({ goal: 'choose West', observe: p.observe,
+        decide: async () => ({ operation: 'SELECT', target: 9, option_value: 'west', option_index: 1 }),
+        act: p.act, requestApproval: async ({ action }) => { approved = { ...action }; return true; },
+      }, { maxSteps: 1, settleMs: 0 });
+      assert.strictEqual(approved.label, 'Region -> West');
+      assert.strictEqual(approved.value, 'west');
+      assert.strictEqual(approved.optionIndex, 1);
+      assert.deepStrictEqual(p.acted[0], approved);
+      assert.strictEqual(result.history[0].value, 'west');
+
+      const invalid = fakePage([page({ elements: options })]);
+      const refused = await runGoal({ goal: 'choose West', observe: invalid.observe,
+        decide: async () => ({ operation: 'SELECT', target: 9, option_value: 'east', option_index: 1 }),
+        act: invalid.act, requestApproval: async () => { throw Error('should not ask approval'); },
+      }, { maxSteps: 1, settleMs: 0 });
+      assert.strictEqual(refused.status, 'stalled');
+      assert.strictEqual(invalid.acted.length, 0);
+    },
+  },
+  {
     name: 'default submit button cannot be clicked without human approval',
     gate: 'C1',
     fn: async (assert) => {

@@ -21,6 +21,30 @@ function fakeTabs(urls, opts = {}) {
 
 module.exports = [
   {
+    name: 'named containers survive crash restore without moving URLs between jars',
+    gate: 'C1',
+    fn(a) {
+      const tabs = new Map([
+        [1, { url: 'https://example.com/a', containerId: 'work', restoreOnRestart: true }],
+        [2, { url: 'https://example.com/a', containerId: 'personal', restoreOnRestart: true }],
+        [3, { url: 'https://example.com/a', agentOwned: true, restoreOnRestart: false }],
+        [4, { url: 'https://secret.example/', containerId: 'research', forgetOnClose: true }],
+      ]);
+      store.captureOpenTabs(tabs, tmp);
+      a.deepStrictEqual(store.restoreTabRecords(tmp), [
+        { url: 'https://example.com/a', containerId: 'work' },
+        { url: 'https://example.com/a', containerId: 'personal' },
+      ]);
+      a.deepStrictEqual(store.restoreTabs(tmp), ['https://example.com/a', 'https://example.com/a']);
+      fs.writeFileSync(path.join(tmp, 'forge-session.json'), JSON.stringify({ v: 2, tabs: [
+        { url: 'https://ok.example/', containerId: 'work' },
+        { url: 'file:///private', containerId: 'personal' },
+        { url: 'https://no.example/', containerId: 'agent-key' },
+      ] }));
+      a.deepStrictEqual(store.restoreTabRecords(tmp), [{ url: 'https://ok.example/', containerId: 'work' }]);
+    },
+  },
+  {
     name: 'capture → restore roundtrip preserves urls',
     gate: 'C1',
     fn: () => {

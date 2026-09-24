@@ -3,7 +3,7 @@
  * evidence sources and write results/gates.md.
  *
  *   1. unit   -> tests/run-tests.js           (pure engine, Fast)
- *   2. e2e    -> electron tests/e2e/main.js   (real Chromium, fixtures)
+ *   2. e2e    -> electron tests/e2e/main.js and find-in-page.js
  *   3. smoke  -> electron . --smoke           (the real app, example.com)
  *
  * Usage: node scripts/verify-gates.js  [also: npm run verify]
@@ -79,21 +79,32 @@ async function main() {
   const e2eRun = await run(ELECTRON, [path.join('tests', 'e2e', 'main.js')], 120000);
   const e2e = e2eRun.ok ? readJson('e2e-results.json') : null;
   if (!e2eRun.ok) console.error(e2eRun.output);
+  console.log('> Find/container E2E (real application UI) ...');
+  clearJson('find-e2e-results.json');
+  const findRun = await run(ELECTRON, [path.join('tests', 'e2e', 'find-in-page.js')], 120000);
+  const find = findRun.ok ? readJson('find-e2e-results.json') : null;
+  if (!findRun.ok) console.error(findRun.output);
 
   // 3. smoke
   console.log('> Smoke (real app, https://example.com) ...');
-  clearJson('smoke-report.json');
-  const smokeRuntime = fs.mkdtempSync(path.join(os.tmpdir(), 'forge-smoke-runtime-'));
+  const scratchRoot = process.env.BH_AGENT_WORKSPACE ||
+    path.join(os.homedir(), 'AppData', 'Local', 'hermes', 'cache', 'scratch');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const smokeRuntime = fs.mkdtempSync(path.join(scratchRoot, 'forge-smoke-runtime-'));
   let smokeRun;
+  let smoke = null;
   try {
     smokeRun = await run(ELECTRON, ['.', '--smoke'], 120000, {
       env: { ...process.env, FORGE_SMOKE_RUNTIME_BASE: smokeRuntime },
     });
+    if (smokeRun.ok) {
+      try { smoke = JSON.parse(fs.readFileSync(path.join(smokeRuntime, 'results', 'smoke-report.json'), 'utf8')); }
+      catch { smoke = null; }
+    }
   } finally {
     fs.rmSync(smokeRuntime, { recursive: true, force: true });
   }
   await sleep(1000);
-  const smoke = smokeRun.ok ? readJson('smoke-report.json') : null;
   if (!smokeRun.ok) console.error(smokeRun.output);
 
   const e2eList = e2e ? e2e.results : [];
@@ -123,8 +134,9 @@ async function main() {
       pass = smokeOk && e2ePass;
       detail = `smoke ${smokeOk && smoke.title ? 'PASS (' + smoke.title + ')' : 'FAIL'} + e2e ${e2ePass ? 'PASS' : 'FAIL'}`;
     } else if (gate === 'J') {
-      pass = unit && unit.fail === 0 && e2e && e2e.results.every((r) => r.pass);
-      detail = `unit ${unit && unit.fail === 0 ? 'PASS' : 'FAIL'} + e2e all ${e2e ? (e2e.results.every((r) => r.pass) ? 'PASS' : 'FAIL') : 'n/a'}`;
+      pass = unit && unit.fail === 0 && e2e && e2e.results.every((r) => r.pass) &&
+        find && find.failed === 0 && find.passed > 0;
+      detail = `unit ${unit && unit.fail === 0 ? 'PASS' : 'FAIL'} + e2e all ${e2e ? (e2e.results.every((r) => r.pass) ? 'PASS' : 'FAIL') : 'n/a'} + find ${find ? `${find.passed}/${find.passed + find.failed}` : 'n/a'}`;
     } else if (gate === 'K') {
       const smokePass = !!(smoke && smoke.pageBoundary && smoke.pageBoundary.safe);
       const e2ePass = passesAll(e2eList, 'K');
@@ -152,6 +164,7 @@ async function main() {
     `Ran: ${new Date().toISOString()}`,
     `Unit: ${unit ? unit.pass + ' passed / ' + unit.fail + ' failed' : 'n/a'}`,
     `E2E: ${e2e ? e2e.results.filter((r) => r.pass).length + '/' + e2e.results.length + ' checks passed' : 'n/a'}`,
+    `Find/container E2E: ${find ? find.passed + '/' + (find.passed + find.failed) + ' checks passed' : 'n/a'}`,
     `Smoke: ${smoke ? JSON.stringify(smoke) : 'n/a'}`,
     '',
     '## Gates',

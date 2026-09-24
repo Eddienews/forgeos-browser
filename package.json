@@ -9,7 +9,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node tests/run-tests.js",
-    "test:e2e": "electron tests/e2e/main.js",
+    "test:e2e": "electron tests/e2e/main.js && electron tests/e2e/find-in-page.js",
     "test:adblock:public": "electron scripts/test-public-adblock.js",
     "verify": "node scripts/verify-gates.js",
     "update-lists": "node scripts/update-lists.js",

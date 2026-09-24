@@ -304,6 +304,30 @@ module.exports = [
     },
   },
   {
+    name: 'same dropdown offers East and West independently and composes the chosen option',
+    gate: 'C1',
+    fn: async (assert) => {
+      const snap = snapshot({ elements: [
+        { index: 7, kind: 'select', role: 'combobox', label: 'Region -> East', option_value: 'east', option_index: 0 },
+        { index: 7, kind: 'select', role: 'combobox', label: 'Region -> West', option_value: 'west', option_index: 1 },
+      ] });
+      const choices = buildQuestions(snap).select_target.criteria;
+      assert.deepStrictEqual(Object.keys(choices).filter(key => key !== '(none)'), ['7:0', '7:1']);
+      assert.strictEqual(choices['7:0'].option_value, 'east');
+      assert.strictEqual(choices['7:1'].option_value, 'west');
+      const state = buildState('choose West', snap, []);
+      assert.ok(state.includes('[7:0] select combobox: Region -> East'));
+      assert.ok(state.includes('[7:1] select combobox: Region -> West'));
+      const answers = { goal_met: { noul: 0 }, operation: { choice: 'SELECT' },
+        select_target: { choice: '7:1' } };
+      const chosen = composeDecision(answers, snap);
+      assert.strictEqual(chosen.target, 7);
+      assert.strictEqual(chosen.option_value, 'west');
+      assert.strictEqual(chosen.option_index, 1);
+      assert.strictEqual(composeDecision({ ...answers, select_target: { choice: '7:99' } }, snap).operation, null);
+    },
+  },
+  {
     name: 'an operation with its element index becomes an actionable decision',
     gate: 'L',
     fn: async (assert) => {

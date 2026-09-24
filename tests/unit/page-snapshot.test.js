@@ -22,6 +22,23 @@ const raw = (over = {}) => ({
 
 module.exports = [
   {
+    name: 'select candidates and catalogue keep option ordinals distinct at one node',
+    gate: 'C1',
+    fn: async (assert) => {
+      const elements = [
+        { index: 7, role: 'combobox', kind: 'select', label: 'Region -> East', option_value: 'east', option_index: 0 },
+        { index: 7, role: 'combobox', kind: 'select', label: 'Region -> West', option_value: 'west', option_index: 1 },
+      ];
+      const s = normalizeSnapshot(raw({ elements }));
+      assert.deepStrictEqual([...candidatesByKind(s, 'select').keys()], ['7:0', '7:1']);
+      assert.ok(elementCatalogue(s, 'select')[0].includes('[7:0]'));
+      assert.ok(elementCatalogue(s, 'select')[1].includes('[7:1]'));
+      assert.notStrictEqual(s.fingerprint, normalizeSnapshot(raw({ elements: [
+        elements[0], { ...elements[1], option_index: 2 },
+      ] })).fingerprint);
+    },
+  },
+  {
     name: 'sensitive controls are masked in both visible and below-fold catalogues',
     gate: 'C1',
     fn: async (assert) => {

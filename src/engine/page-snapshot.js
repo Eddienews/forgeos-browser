@@ -35,6 +35,8 @@ function normalizeElement(raw, i, values = []) {
     label: sensitive ? '(sensitive field)' : safe(String(raw.label || '').replace(/\s+/g, ' ').trim()).slice(0, 300) || '(unlabelled)',
     current_value: sensitive ? '' : safe(raw.current_value == null ? '' : raw.current_value).slice(0, 200),
     option_value: sensitive ? null : raw.option_value == null ? null : safe(raw.option_value).slice(0, 200),
+    option_index: kind === 'select' && Number.isSafeInteger(raw.option_index) && raw.option_index >= 0
+      ? raw.option_index : null,
     input_type: safe(String(raw.input_type || '')).slice(0, 40),
     sensitive,
     is_submit: !!raw.is_submit,
@@ -118,7 +120,7 @@ function fingerprintSnapshot(snapshot) {
     scroll_y: snapshot.scroll_y,
     text: snapshot.text,
     elements: (snapshot.elements || []).map((el) => [
-      el.index, el.kind, el.label, el.current_value, el.option_value, el.href, el.input_type, el.is_submit,
+      el.index, el.kind, el.label, el.current_value, el.option_value, el.option_index, el.href, el.input_type, el.is_submit,
     ]),
     can_scroll_down: snapshot.can_scroll_down,
     can_scroll_up: snapshot.can_scroll_up,
@@ -130,7 +132,8 @@ function fingerprintSnapshot(snapshot) {
 function candidatesByKind(snapshot, kind) {
   const out = new Map();
   for (const el of (snapshot && snapshot.elements) || []) {
-    if (el.kind === kind) out.set(el.index, el);
+    if (el.kind === kind) out.set(kind === 'select' && Number.isSafeInteger(el.option_index)
+      ? `${el.index}:${el.option_index}` : el.index, el);
   }
   return out;
 }
@@ -150,7 +153,9 @@ function elementCatalogue(snapshot, kind) {
     ? [...candidatesByKind(snapshot, kind).values()]
     : [...((snapshot && snapshot.elements) || []), ...((snapshot && snapshot.below_fold) || [])];
   return pool.map((el) => {
-    const bits = [`[${el.index}]`, el.kind, `${el.role}:`, el.label];
+    const key = el.kind === 'select' && Number.isSafeInteger(el.option_index)
+      ? `${el.index}:${el.option_index}` : el.index;
+    const bits = [`[${key}]`, el.kind, `${el.role}:`, el.label];
     if (el.current_value) bits.push(`= "${el.current_value}"`);
     if (el.option_value != null) bits.push(`value="${el.option_value}"`);
     return bits.join(' ');

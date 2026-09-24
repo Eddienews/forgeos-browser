@@ -19,12 +19,82 @@
     button.classList.add('active');
     document.querySelectorAll('.sec').forEach((s) => s.classList.add('hidden'));
     section.classList.remove('hidden');
+    if (name === 'notebook') refreshNotebook();
   }
 
   document.querySelectorAll('#panel-nav button').forEach((b) => {
     b.addEventListener('click', () => activateSection(b.dataset.sec));
   });
   F.onPanelSection?.((name) => activateSection(name));
+
+  /* Notebook content is untrusted page text: only textContent/value, never HTML. */
+  let notebookState = null;
+  const notebookMessage = message => { $('nb-status').textContent = message; };
+  async function refreshNotebook() {
+    try {
+      notebookState = await F.notebook.list();
+      $('nb-notes').value = notebookState.notes;
+      const host = $('nb-sources');
+      host.replaceChildren();
+      const compared = $('nb-comparison');
+      compared.replaceChildren();
+      for (const source of notebookState.sources) {
+        const card = document.createElement('div');
+        card.className = 'notebook-source';
+        const label = document.createElement('label');
+        const check = document.createElement('input');
+        check.type = 'checkbox';
+        check.checked = notebookState.comparison.includes(source.id);
+        check.addEventListener('change', async () => {
+          try {
+            const ids = notebookState.sources.filter(s =>
+              s.id === source.id ? check.checked : notebookState.comparison.includes(s.id)).map(s => s.id);
+            notebookState = await F.notebook.compare(ids);
+            renderComparison();
+          } catch (error) { notebookMessage(error.message); check.checked = !check.checked; }
+        });
+        label.append(check, document.createTextNode(' Compare'));
+        const title = document.createElement('strong'); title.textContent = source.title;
+        const url = document.createElement('div'); url.textContent = source.sourceFingerprint
+          ? `${source.url} (query/fragment omitted; fingerprint ${source.sourceFingerprint}; source ${source.id})`
+          : `${source.url} (base URL; query/fragment not recorded; source ${source.id})`;
+        const time = document.createElement('div'); time.textContent = source.capturedAt;
+        const quote = document.createElement('pre'); quote.textContent = source.excerpt;
+        quote.style.whiteSpace = 'pre-wrap'; quote.style.overflowWrap = 'anywhere';
+        const remove = document.createElement('button'); remove.textContent = 'Remove';
+        remove.addEventListener('click', async () => {
+          if (!window.confirm('Remove this source from notebook?')) return;
+          try { await F.notebook.remove(source.id); await refreshNotebook(); }
+          catch (error) { notebookMessage(error.message); }
+        });
+        card.append(label, title, url, time, quote, remove);
+        host.append(card);
+      }
+      function renderComparison() {
+        compared.replaceChildren();
+        for (const id of notebookState.comparison) {
+          const s = notebookState.sources.find(source => source.id === id);
+          if (!s) continue;
+          const item = document.createElement('li');
+          item.textContent = `${s.title} — ${s.url}${s.sourceFingerprint ? ` (query/fragment omitted; fingerprint ${s.sourceFingerprint})` : ' (base URL; query/fragment not recorded)'} — source ${s.id} — ${s.capturedAt} — “${s.excerpt}”`;
+          compared.append(item);
+        }
+      }
+      renderComparison();
+      notebookMessage(`${notebookState.sources.length} sources saved locally.`);
+    } catch (error) { notebookMessage(error.message); }
+  }
+  $('nb-refresh').addEventListener('click', refreshNotebook);
+  $('nb-save-notes').addEventListener('click', async () => {
+    try { notebookState = await F.notebook.notes($('nb-notes').value); notebookMessage('Notes saved locally.'); }
+    catch (error) { notebookMessage(error.message); }
+  });
+  $('nb-export').addEventListener('click', async () => {
+    try {
+      const result = await F.notebook.export();
+      notebookMessage(result.canceled ? 'Export canceled.' : `Exported ${result.bytes} bytes to chosen .txt file.`);
+    } catch (error) { notebookMessage(`Export refused: ${error.message} (choose a new .txt path)`); }
+  });
 
   /* ---------------- privacy dashboard ---------------- */
   function renderPrivacy(s) {

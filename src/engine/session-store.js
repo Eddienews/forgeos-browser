@@ -10,6 +10,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { CONTAINER_IDS } = require('./storage-manager');
 
 const MAX_RESTORE = 20; // cap tabs restored (session bloat guard)
 
@@ -21,21 +22,24 @@ function sessionFile(runtimeBase) {
 function captureOpenTabs(tabs, runtimeBase) {
   let tmpFile = null;
   try {
-    const urls = [];
+    const records = [];
     const seen = new Set();
     for (const tab of tabs.values()) {
       const u = tab.url;
       if (!u || !/^https?:/i.test(u)) continue;      // skip blank/internal
-      if (tab.forgetOnClose || tab.restoreOnRestart === false) continue;
-      if (seen.has(u)) continue;
-      seen.add(u);
-      urls.push(u);
+      if (tab.agentOwned || tab.forgetOnClose || tab.restoreOnRestart === false) continue;
+      const containerId = tab.containerId == null ? null : tab.containerId;
+      if (containerId != null && !CONTAINER_IDS.includes(containerId)) continue;
+      const key = JSON.stringify([u, containerId]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      records.push({ url: u, containerId });
     }
     const file = sessionFile(runtimeBase);
     tmpFile = file + '.tmp';
-    fs.writeFileSync(tmpFile, JSON.stringify({ v: 1, ts: Date.now(), urls }, null, 2), 'utf8');
+    fs.writeFileSync(tmpFile, JSON.stringify({ v: 2, ts: Date.now(), tabs: records }, null, 2), 'utf8');
     fs.renameSync(tmpFile, file);
-    return urls.length;
+    return records.length;
   } catch {
     if (tmpFile) {
       try { fs.rmSync(tmpFile, { force: true }); } catch {}
@@ -44,15 +48,26 @@ function captureOpenTabs(tabs, runtimeBase) {
   }
 }
 
-/** Read previously saved tab URLs (returns [] on none/corrupt). */
-function restoreTabs(runtimeBase) {
+/** Reopen only validated human URLs in their original container. */
+function restoreTabRecords(runtimeBase) {
   try {
     const file = sessionFile(runtimeBase);
     if (!fs.existsSync(file)) return [];
     const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (!Array.isArray(data.urls)) return [];
-    return data.urls.filter((u) => /^https?:/i.test(u)).slice(0, MAX_RESTORE);
+    const rows = data.v === 2 && Array.isArray(data.tabs) ? data.tabs :
+      Array.isArray(data.urls) ? data.urls.map(url => ({ url, containerId: null })) : [];
+    return rows.filter(row => {
+      if (!row || typeof row.url !== 'string' || row.url.length > 4096) return false;
+      if (row.containerId != null && !CONTAINER_IDS.includes(row.containerId)) return false;
+      try { return ['http:', 'https:'].includes(new URL(row.url).protocol); }
+      catch { return false; }
+    }).slice(0, MAX_RESTORE).map(row => ({ url: row.url, containerId: row.containerId || null }));
   } catch { return []; }
+}
+
+/** Legacy caller compatibility: URL-only consumers never choose a partition. */
+function restoreTabs(runtimeBase) {
+  return restoreTabRecords(runtimeBase).map(row => row.url);
 }
 
 /** Remove the session file (explicit close / "don't restore"). */
@@ -60,4 +75,4 @@ function clear(runtimeBase) {
   try { fs.rmSync(sessionFile(runtimeBase), { force: true }); } catch {}
 }
 
-module.exports = { captureOpenTabs, restoreTabs, clear, sessionFile };
+module.exports = { captureOpenTabs, restoreTabs, restoreTabRecords, clear, sessionFile };

@@ -22,7 +22,7 @@ const { FilterEngine } = require('./engine/filter-engine');
 const { EventLog } = require('./engine/event-log');
 const { SessionAdapter } = require('./ext/electron-adapter');
 const { PluginRunner } = require('./ext/plugins');
-const { sessionPlanFor, captureTabReloadPlan, clearSessionData } = require('./engine/storage-manager');
+const { sessionPlanFor, captureTabReloadPlan, clearSessionData, containerPartition, CONTAINER_IDS } = require('./engine/storage-manager');
 const { MODES, isValidMode } = require('./engine/privacy-modes');
 const { analyzeAgentView, IN_PAGE_SCRIPT, readPageView } = require('./engine/agent-view');
 const { applyAppLevelHardening } = require('./engine/fingerprint-hardening');
@@ -36,11 +36,12 @@ const { createAgentSession } = require('./engine/agent-network-proxy');
 const { forgeSnapshotScript } = require('./page-snapshot');
 const { forgeActionScript, forgeScrollScript } = require('./page-actions');
 const { normalizeSnapshot } = require('./engine/page-snapshot');
-const { classifyAction } = require('./engine/action-policy');
+const { classifyAction, compareAgentPreview, hashEffectProof } = require('./engine/action-policy');
 const { runGoal } = require('./engine/agent-loop');
 const credentialPolicy = require('./engine/credential-policy');
 const { browserViewBounds } = require('./engine/view-layout');
 const sessionStore = require('./engine/session-store');
+const notebook = require('./engine/research-notebook');
 const { cleanUrlString } = require('./engine/url-cleaner');
 const { classifyField } = require('./engine/sensitive-fields');
 const { createPageWebPreferences } = require('./page-web-preferences');
@@ -48,8 +49,11 @@ const agentProvider = require('./engine/agent-provider');
 const { DARK_SCROLLBAR_CSS, supportsPageAppearance } = require('./engine/page-appearance');
 const { isExistingPathInside, upsertDownload } = require('./engine/download-center');
 const { pageProcessingPolicy } = require('./engine/page-processing-policy');
+const { FindInPage } = require('./engine/find-in-page');
+const { siteSnapshot, clearOriginData } = require('./engine/site-privacy');
 
 const TOOLBAR_H = 42; // must match renderer CSS --bar-h
+const FIND_H = 42; // must match renderer CSS --find-h
 let menuRightInset = 0;
 const APP_ROOT = __dirname;
 const RENDERER = path.join(APP_ROOT, 'renderer', 'index.html');
@@ -79,6 +83,12 @@ function getLogFile() {
 
 function getDownloadDir() {
   return path.join(getRuntimeBase(), 'downloads');
+}
+
+// Dev checkouts are repositories: never place notebook user data in source.
+// Packaged/portable and smoke runs retain their existing runtime base.
+function getNotebookBase() {
+  return !IS_PACKAGED && !SMOKE_RUNTIME_BASE ? app.getPath('userData') : getRuntimeBase();
 }
 
 // Lazy: log is initialized inside app.whenReady() so getRuntimeBase() can use
@@ -112,6 +122,10 @@ let tabSeq = 0;
 const tabs = new Map();   // id -> tab
 const sessions = new Map(); // partitionKey -> { session, adapter }
 let activeTabId = null;
+const pageFind = new FindInPage((status) => {
+  layoutActiveView();
+  sendToChrome('forge:find-result', status);
+});
 let agentLease = null;
 let agentTabId = null;
 const downloads = [];
@@ -122,12 +136,19 @@ function persistOpenTabs() {
   catch { return 0; }
 }
 
+function noteSiteBlock(webContentsId, category) {
+  const tab = [...tabs.values()].find(t => t.wc.id === webContentsId);
+  if (!tab || !tab.siteCounts) return;
+  const key = { ADVERTISING: 'ads', TRACKING: 'trackers', ANALYTICS: 'analytics', THIRD_PARTY: 'thirdParty' }[category];
+  if (key) tab.siteCounts[key]++;
+}
+
 function getSessionFor(partitionKey) {
   if (partitionKey == null) {
     let e = sessions.get('__default__');
     if (!e) {
       const s = session.defaultSession;
-      e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, downloadsDir: DL_DIR(), getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r) }) };
+      e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, downloadsDir: DL_DIR(), getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r), onSiteBlocked: noteSiteBlock }) };
       sessions.set('__default__', e);
     }
     return e;
@@ -135,7 +156,7 @@ function getSessionFor(partitionKey) {
   let e = sessions.get(partitionKey);
   if (!e) {
     const s = session.fromPartition(partitionKey);
-    e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, downloadsDir: DL_DIR(), getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r) }) };
+    e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, downloadsDir: DL_DIR(), getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r), onSiteBlocked: noteSiteBlock }) };
     sessions.set(partitionKey, e);
   }
   return e;
@@ -228,9 +249,10 @@ async function runPluginJob(kind, pageUrl, label) {
 
 function createTab(url = 'about:blank', opts = {}) {
   const id = ++tabSeq;
+  const containerId = opts.agentLease ? null : (opts.containerId || null);
   const plan = opts.agentLease
     ? { partition: opts.agentLease.partition, retainHistory: false, restoreOnRestart: false }
-    : sessionPlanFor(url, modeId, !!opts.forgetOnClose);
+    : sessionPlanFor(url, modeId, !!opts.forgetOnClose, containerId);
   const { session: ses, adapter } = getSessionFor(plan.partition);
   adapter.setMode(modeId);
   adapter.install();
@@ -243,7 +265,7 @@ function createTab(url = 'about:blank', opts = {}) {
   try { wc.setZoomFactor((settings.all().pageZoom || 100) / 100); } catch {}
 
   const tab = {
-    id, view, wc, adapter, partition: plan.partition,
+    id, view, wc, adapter, partition: plan.partition, containerId,
     agentOwned: !!opts.agentLease,
     url, title: '', history: [], index: -1,
     modeId,
@@ -252,6 +274,9 @@ function createTab(url = 'about:blank', opts = {}) {
     restoreOnRestart: plan.restoreOnRestart,
     certError: false,
     pageCounts: { ads: 0, trackers: 0, analytics: 0, thirdParty: 0, params: 0, cookies: 0 },
+    siteCounts: { ads: 0, trackers: 0, analytics: 0, thirdParty: 0 },
+    blockedCredentialUrl: null,
+    blockedCredentialNoticeUrl: null,
     lastAgentView: null,
   };
   tabs.set(id, tab);
@@ -262,19 +287,48 @@ function createTab(url = 'about:blank', opts = {}) {
   });
 
   wc.on('did-start-navigation', (_e, url, isInPlace, isMainFrame) => {
-    if (isMainFrame && !isInPlace) tab.certError = false;
+    if (isMainFrame && !isInPlace) {
+      tab.certError = false;
+      tab.siteCounts = { ads: 0, trackers: 0, analytics: 0, thirdParty: 0 };
+      tab.lastAgentObservation = null;
+    }
+    if (isMainFrame && pageFind.tab === tab) pageFind.close();
+  });
+  wc.on('found-in-page', (_e, result) => pageFind.result(tab, result));
+  wc.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown' || input.isAutoRepeat || !input.key) return;
+    const ctrl = input.control || input.meta;
+    const find = ctrl && !input.alt && input.key.toLowerCase() === 'f';
+    const repeat = !ctrl && !input.alt && input.key === 'F3';
+    const close = !ctrl && !input.alt && input.key === 'Escape' && pageFind.opened;
+    if (!find && !repeat && !close) return;
+    event.preventDefault();
+    if (activeTabId === tab.id) {
+      if (close) pageFind.close();
+      else sendToChrome('forge:find-shortcut', find ? 'open' : (input.shift ? 'previous' : 'next'));
+
+    }
   });
 
   wc.on('did-navigate', (_e, url, httpCode) => {
+    if (url === tab.blockedCredentialNoticeUrl && tab.blockedCredentialUrl) {
+      tab.url = tab.blockedCredentialUrl;
+      sendState();
+      return;
+    }
+    tab.blockedCredentialUrl = null;
+    tab.blockedCredentialNoticeUrl = null;
     // NO-CREDENTIALS policy: intercept identity-provider sign-in pages and
     // show a clear notice instead of Google's misleading "may not be secure".
     if (credentialPolicy.matchesCredentialHost(url) && !settings.all().allowCredentials) {
       // Per-site opt-in? (user accepted the risk in the badge menu)
       let optedIn = false;
-      try { optedIn = settings.all().credentialOptIn?.[new URL(url).hostname.toLowerCase().replace(/^www\./, '')] === true; } catch {}
+      try { optedIn = settings.all().credentialOptIn?.[new URL(url).hostname.toLowerCase()] === true; } catch {}
       if (!optedIn) {
         const notice = credentialPolicy.NOTICE_HTML(new URL(url).hostname);
-        wc.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(notice));
+        tab.blockedCredentialUrl = url;
+        tab.blockedCredentialNoticeUrl = 'data:text/html;charset=utf-8,' + encodeURIComponent(notice);
+        wc.loadURL(tab.blockedCredentialNoticeUrl);
         tab.url = url; // keep the intended URL in history/state
         log.log('INFO', 'sign-in blocked by no-credentials policy', { host: new URL(url).hostname });
         sendState();
@@ -395,12 +449,13 @@ function layoutActiveView() {
   if (!tab) return;
   const { width, height } = chromeWin.getContentBounds();
   tab.view.setBounds(browserViewBounds({
-    width, height, toolbarHeight: TOOLBAR_H, rightInset: menuRightInset,
+    width, height, toolbarHeight: TOOLBAR_H + (pageFind.opened ? FIND_H : 0), rightInset: menuRightInset,
   }));
   tab.view.setVisible(true);
 }
 
 function switchTab(id, { focus = true } = {}) {
+  if (activeTabId !== id) pageFind.close();
   const prev = tabs.get(activeTabId);
   if (prev) chromeWin.contentView.removeChildView(prev.view);
   const tab = tabs.get(id);
@@ -417,6 +472,7 @@ function switchTab(id, { focus = true } = {}) {
 async function closeTab(id, { notify = true, persist = true } = {}) {
   const tab = tabs.get(id);
   if (!tab) return;
+  if (pageFind.tab === tab) pageFind.close();
   if (tab.closePromise) return tab.closePromise;
   // Revoke authority before the first await: an in-flight readiness check
   // cannot load a tab whose teardown has begun.
@@ -432,7 +488,7 @@ async function closeTab(id, { notify = true, persist = true } = {}) {
     try {
       if (lease) await lease.stop();
     } finally {
-      if (tab.forgetOnClose || tab.modeId === 'ephemeral' || tab.partition) {
+      if (tab.forgetOnClose || tab.modeId === 'ephemeral' || tab.partition && !tab.containerId) {
         try { await clearSessionData(tab.adapter.session); } catch {}
         log.log('INFO', 'site data cleared on tab close', { url: tab.url.slice(0, 200), partition: tab.partition || 'default' });
       }
@@ -455,6 +511,8 @@ async function closeTab(id, { notify = true, persist = true } = {}) {
 async function changePrivacyMode(nextModeId) {
   if (!isValidMode(nextModeId)) return { ok: false, error: 'invalid privacy mode' };
   if (nextModeId === modeId) return { ok: true, mode: modeId, reloadedTabs: 0 };
+  if ([...tabs.values()].some(tab => tab.containerId))
+    return { ok: false, error: 'Close named container tabs before changing privacy mode.' };
 
   const previousModeId = modeId;
   const oldTabs = [...tabs.values()];
@@ -667,6 +725,7 @@ function buildState() {
       id: t.id, url: t.url, title: t.title,
       canGoBack: t.index > 0, canGoForward: t.index < t.history.length - 1,
       security: securityFor(t), counts: t.pageCounts, forget: t.forgetOnClose,
+      containerId: t.containerId,
     });
   }
   const totals = { ads: 0, trackers: 0, analytics: 0, thirdParty: 0, params: 0, cookies: 0 };
@@ -697,7 +756,59 @@ function buildState() {
 
 function sendState() { sendToChrome('forge:state', buildState()); }
 
+// Deliberate chrome action only. The page receives no notebook bridge and the
+// selected text never enters an agent snapshot, model request, or event log.
+function humanNotebookTab() {
+  const t = activeTab();
+  if (!t || t.agentOwned || t.closing || t.modeId === 'ephemeral' || t.forgetOnClose ||
+      t.restoreOnRestart === false || !t.wc || t.wc.isDestroyed()) throw new Error('Notebook requires a persistent human tab');
+  notebook.canonicalUrl(t.wc.getURL());
+  return t;
+}
+
 function registerIpc() {
+  // Only the trusted toolbar renderer may drive search. Untrusted page views
+  // have no preload, and a forged IPC message from a page is rejected too.
+  const isChrome = (event) => !!chromeWin && !chromeWin.isDestroyed() &&
+    event.sender === chromeWin.webContents &&
+    event.senderFrame === chromeWin.webContents.mainFrame;
+  ipcMain.handle('forge:find-open', (event) => isChrome(event) && pageFind.open(activeTab()));
+  ipcMain.handle('forge:find-search', (event, query, direction) =>
+    isChrome(event) && pageFind.search(activeTab(), query, direction));
+  ipcMain.handle('forge:find-close', (event) => {
+    if (!isChrome(event)) return false;
+    pageFind.close();
+    return true;
+  });
+  const fromChrome = e => {
+    if (![chromeWin, panelWin].some(w => w && !w.isDestroyed() &&
+      e.sender === w.webContents && e.senderFrame === w.webContents.mainFrame))
+      throw new Error('Notebook is chrome-only');
+  };
+  ipcMain.handle('forge:notebook-list', e => { fromChrome(e); return notebook.load(getNotebookBase()); });
+  ipcMain.handle('forge:notebook-capture', async e => {
+    fromChrome(e);
+    const t = humanNotebookTab();
+    const id = t.id, url = t.wc.getURL();
+    const selection = await t.wc.executeJavaScript(notebook.SELECTION_SCRIPT, true);
+    if (activeTabId !== id || t.closing || t.wc.isDestroyed() || t.wc.getURL() !== url ||
+        !selection || selection.url !== url) throw new Error('No safe selected excerpt on active human page');
+    return notebook.addSource(getNotebookBase(), selection);
+  });
+  ipcMain.handle('forge:notebook-notes', (e, notes) => { fromChrome(e); return notebook.saveNotes(getNotebookBase(), notes); });
+  ipcMain.handle('forge:notebook-compare', (e, ids) => { fromChrome(e); return notebook.setComparison(getNotebookBase(), ids); });
+  ipcMain.handle('forge:notebook-remove', (e, id) => { fromChrome(e); return notebook.removeSource(getNotebookBase(), id); });
+  ipcMain.handle('forge:notebook-export', async e => {
+    fromChrome(e);
+    const choice = await dialog.showSaveDialog(panelWin && !panelWin.isDestroyed() ? panelWin : chromeWin, {
+      title: 'Export local research notebook',
+      defaultPath: path.join(app.getPath('documents'), 'forge-research-notebook.txt'),
+      filters: [{ name: 'Plain text', extensions: ['txt'] }],
+    });
+    if (choice.canceled || !choice.filePath) return { canceled: true };
+    if (path.extname(choice.filePath).toLowerCase() !== '.txt') throw new Error('Export requires a .txt destination');
+    return notebook.exportTo(getNotebookBase(), choice.filePath);
+  });
   ipcMain.handle('forge:navigate', (_e, url) => {
     const t = activeTab();
     if (!t) return null;
@@ -729,10 +840,15 @@ function registerIpc() {
     t.wc.reload();
     return true;
   });
-  ipcMain.handle('forge:new-tab', (_e, url) => {
-    const t = createTab(url || 'about:blank');
+  ipcMain.handle('forge:new-tab', (_e, url, containerId) => {
+    if (containerId != null && (!CONTAINER_IDS.includes(containerId) || modeId !== 'standard')) {
+      return { error: 'Containers are available only in Standard mode.' };
+    }
+    // A named container always starts blank. It cannot silently receive a
+    // caller-controlled URL or inherit an existing page's browser context.
+    const t = createTab(containerId ? 'about:blank' : url || 'about:blank', { containerId });
     switchTab(t.id, { focus: true });
-    return { id: t.id };
+    return { id: t.id, containerId: t.containerId };
   });
   ipcMain.handle('forge:close-tab', (_e, id) => closeTab(id));
   ipcMain.handle('forge:switch-tab', (_e, id) => { if (tabs.has(id)) switchTab(id); });
@@ -751,6 +867,7 @@ function registerIpc() {
   ipcMain.handle('forge:clear-session', async () => {
     log.log('INFO', 'clear session requested');
     const todo = new Set(sessions.values());
+    for (const id of CONTAINER_IDS) todo.add(getSessionFor(containerPartition(id)));
     let removed = 0;
     for (const { session: s } of todo) removed += await clearSessionData(s);
     for (const t of tabs.values()) {
@@ -769,6 +886,7 @@ function registerIpc() {
   ipcMain.handle('forge:set-forget', (_e, on) => {
     const t = activeTab();
     if (!t) return false;
+    if (t.containerId) return false; // never wipe a shared named container on one tab close
     t.forgetOnClose = !!on;
     t.restoreOnRestart = t.retainHistory && !t.forgetOnClose;
     persistOpenTabs();
@@ -786,6 +904,67 @@ function registerIpc() {
   ipcMain.handle('forge:security-status', () => {
     const t = activeTab();
     return t ? { url: t.url, security: securityFor(t), counts: t.pageCounts, injection: t.lastAgentView?.security || null, mode: modeId } : null;
+  });
+  const humanSite = (event) => {
+    if (!chromeWin || chromeWin.isDestroyed() || event.sender !== chromeWin.webContents) return null;
+    const tab = activeTab();
+    return tab && siteSnapshot(tab, () => false, () => false, {}) ? tab : null;
+  };
+  const siteStatus = (event) => {
+    const tab = humanSite(event);
+    if (!tab) return null;
+    const info = siteSnapshot(tab, allowlist.isAllowed,
+      h => settings.all().credentialOptIn?.[h] === true, tab.adapter.counters);
+    return info && { ...info, credentialsGloballyAllowed: settings.all().allowCredentials === true };
+  };
+  ipcMain.handle('forge:site-privacy', siteStatus);
+  ipcMain.handle('forge:site-exception', async (event, kind, enabled) => {
+    const tab = humanSite(event), status = siteStatus(event);
+    if (!tab || !status || typeof enabled !== 'boolean' || !['blocking', 'credentials'].includes(kind))
+      return { ok: false, reason: 'No active human HTTP(S) site or invalid action.' };
+    if (enabled) {
+      const response = await dialog.showMessageBox(chromeWin, { type: 'warning',
+        title: 'Site privacy exception', message: `Allow ${kind === 'blocking' ? 'unfiltered requests' : 'sign-in'} on ${status.host}?`,
+        detail: `${status.origin}\nThis weakens protection and can be reversed from this badge.`,
+        buttons: ['Cancel', 'Allow on this host'], defaultId: 0, cancelId: 0, noLink: true });
+      if (response.response !== 1) return { ok: false, reason: 'Cancelled.' };
+    }
+    if (humanSite(event) !== tab || siteStatus(event)?.origin !== status.origin)
+      return { ok: false, reason: 'Active human site changed.' };
+    const host = status.host;
+    if (kind === 'blocking') {
+      const result = enabled ? allowlist.addExact(host) : allowlist.removeExact(host);
+      if (!result.ok) return result;
+    } else {
+      const map = { ...(settings.all().credentialOptIn || {}) };
+      if (enabled) map[host] = true;
+      else delete map[host];
+      const saved = settings.save({ credentialOptIn: map });
+      if (!saved.ok) return { ok: false, reason: 'Unable to save credential exception.' };
+    }
+    log.log('INFO', 'site exception changed', { host, kind, enabled });
+    if (kind === 'credentials' && enabled && tab.blockedCredentialNoticeUrl &&
+        tab.wc.getURL() === tab.blockedCredentialNoticeUrl && tab.blockedCredentialUrl) {
+      tab.wc.loadURL(tab.blockedCredentialUrl).catch(() => {});
+    }
+    sendState();
+    return { ok: true, site: siteStatus(event) };
+  });
+  ipcMain.handle('forge:site-clear', async (event) => {
+    const tab = humanSite(event), status = siteStatus(event);
+    if (!tab || !status) return { ok: false, reason: 'No active human HTTP(S) site.' };
+    const result = await clearOriginData({ tab, current: activeTab, tabs: [...tabs.values()],
+      session: tab.wc.session, dedicated: tab.partition != null && !tab.containerId,
+      confirm: async origin => {
+        if (!chromeWin || chromeWin.isDestroyed()) return false;
+        const response = await dialog.showMessageBox(chromeWin, { type: 'warning',
+          title: 'Clear data for this origin?', message: `Clear site data for ${origin}?`,
+          detail: 'This cannot be undone. In the shared session, cookies and cache are preserved because deleting them may affect other origins. Domain cookies are always preserved.',
+          buttons: ['Cancel', 'Clear this origin'], defaultId: 0, cancelId: 0, noLink: true });
+        return response.response === 1;
+      } });
+    log.log(result.ok ? 'INFO' : 'DENY', 'site origin clear', { origin: status.origin, ok: result.ok });
+    return result;
   });
   ipcMain.handle('forge:get-state', () => buildState());
   ipcMain.handle('forge:click', async (_e, selector) => {
@@ -854,7 +1033,11 @@ function registerIpc() {
   // Settings: load all / patch subset; the adapter reads them live per request.
   ipcMain.handle('forge:settings-get', () => settings.all());
   ipcMain.handle('forge:settings-set', (_e, patch) => {
-    const res = settings.save(patch || {});
+    // Credential exceptions are only changed by the active-human-site IPC.
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch) ||
+        Object.hasOwn(patch, 'credentialOptIn') || Object.hasOwn(patch, 'allowCredentials'))
+      return { ok: false, error: 'Credential policy requires the site approval flow.' };
+    const res = settings.save(patch);
     if (res.ok) log.log('INFO', 'settings updated', { keys: Object.keys(patch || {}).join(',') });
     return res;
   });
@@ -884,7 +1067,6 @@ function registerIpc() {
   });
 
   /* ---- per-site allowlist + zoom (v0.3) ---- */
-  ipcMain.handle('forge:allow-is', (_e, host) => ({ allowed: allowlist.isAllowed(host) }));
   ipcMain.handle('forge:presets-list', () => ({
     available: Object.entries(allowlist.TRUST_PRESETS).map(([name, hosts]) => ({ name, hosts: hosts.length })),
     active: allowlist.activePresets(),
@@ -897,29 +1079,6 @@ function registerIpc() {
   ipcMain.handle('forge:preset-revoke', (_e, name) => {
     const r = allowlist.revokePreset(String(name || ''));
     if (r.ok) { sendState(); log.log('INFO', 'trust preset revoked', { preset: name, revoked: r.revokedCount }); }
-    return r;
-  });
-  ipcMain.handle('forge:allow-add', (_e, host) => {
-    const r = allowlist.add(host);
-    if (r.ok) log.log('INFO', 'site allowlisted (blocking disabled)', { host: r.host });
-    return r;
-  });
-  ipcMain.handle('forge:cred-allow', (_e, host) => {
-    // Per-site opt-in to the no-credentials policy ("Allow sign-in here").
-    const s = settings.all();
-    const map = s.credentialOptIn || {};
-    map[String(host || '').toLowerCase().replace(/^www\./, '')] = true;
-    settings.set({ credentialOptIn: map });
-    log.log('INFO', 'sign-in allowed per-site opt-in', { host });
-    return { ok: true };
-  });
-  ipcMain.handle('forge:cred-allowed', (_e, host) => {
-    const map = settings.all().credentialOptIn || {};
-    return { allowed: !!map[String(host || '').toLowerCase().replace(/^www\./, '')] };
-  });
-  ipcMain.handle('forge:allow-remove', (_e, host) => {
-    const r = allowlist.remove(host);
-    if (r.ok) log.log('INFO', 'site allowlist removed', { host });
     return r;
   });
   ipcMain.handle('forge:set-zoom', (_e, pct) => {
@@ -1028,10 +1187,13 @@ function createChromeWindow() {
   // near-instantly, so the listener must exist before the request starts.
   chromeWin.webContents.once('did-finish-load', () => {
     // Session restore (crash recovery): reopen tabs from the last session.
-    const saved = sessionStore.restoreTabs(getRuntimeBase());
+    // Named persistent containers are a Standard-mode feature. A later strict
+    // startup must not fail while reading an older Standard session file.
+    const saved = sessionStore.restoreTabRecords(getRuntimeBase())
+      .filter(item => !item.containerId || modeId === 'standard');
     if (saved.length) {
-      saved.forEach((u, i) => {
-        const t = createTab(u);
+      saved.forEach((item, i) => {
+        const t = createTab(item.url, { containerId: item.containerId });
         if (i === 0) switchTab(t.id, { focus: false });
       });
       log.log('INFO', 'session restored', { tabs: saved.length });
@@ -1243,8 +1405,20 @@ async function readIndexedSnapshot() {
   try { await requireAgentTab(); }
   catch (error) { return { error: String(error.message || error).slice(0, 200) }; }
   try {
-    const raw = await t.wc.executeJavaScript(forgeSnapshotScript(), true);
+    const url = t.wc.getURL();
+    const raw = await t.wc.executeJavaScript(forgeSnapshotScript(true), true);
+    if (activeTab() !== t || t.wc.isDestroyed() || t.wc.getURL() !== url)
+      return { error: 'page changed during observation' };
+    // Raw effect fields may include private query values. Hash them in the
+    // trusted process, then remove them before normalization/agent exposure.
+    const effectProofHashes = new Map();
+    for (const [index, proof] of raw._privateEffectProofs || []) {
+      const hash = hashEffectProof(proof);
+      if (Number.isSafeInteger(index) && hash) effectProofHashes.set(index, hash);
+    }
+    delete raw._privateEffectProofs;
     const snapshot = normalizeSnapshot(raw);
+    t.lastAgentObservation = { url, snapshot, effectProofHashes };
     // The renderer has scrubbed sensitive value copies from the URL path.
     // The live webContents URL is authority for navigation, not observation.
     return snapshot;
@@ -1281,9 +1455,12 @@ async function executeAgentAction(action) {
       if (bound) {
         if (bound.tab !== t || bound.wc !== t.wc || bound.url !== t.wc.getURL() ||
             bound.index !== action.targetIndex || bound.kind !== kind ||
+            bound.optionIndex !== action.optionIndex ||
             bound.value !== (action.value == null ? null : String(action.value)))
           return { ok: false, reason: 'approval_required_or_stale' };
-        clickProof = { nonce: bound.nonce, descriptor: bound.descriptor, kind: bound.kind, value: bound.value };
+        clickProof = { nonce: bound.nonce, descriptor: bound.descriptor, kind: bound.kind,
+          value: bound.value, optionIndex: bound.optionIndex,
+          effectProofHash: bound.effectProofHash };
       }
     }
     const resolved = await t.wc.executeJavaScript(
@@ -1329,24 +1506,68 @@ async function approveAgentAction(info) {
   if (!['click', 'fill', 'select'].includes(kind) || !Number.isSafeInteger(targetIndex)) return false;
   if ((kind === 'fill' || kind === 'select') && action.value == null) return false;
   const value = action.value == null ? null : String(action.value);
-  let nonce, descriptor, display;
+  const optionIndex = action.optionIndex;
+  // A model or API client never supplies the target proof. The last indexed
+  // observation lives in the main process and must still be the one the agent
+  // decided from. Another observation/tab navigation invalidates the proposal.
+  const binding = t.lastAgentObservation;
+  if (t.agentOwned && (!binding || binding.url !== url ||
+      binding.snapshot.fingerprint !== action.fingerprint ||
+      !binding.effectProofHashes || !binding.effectProofHashes.has(targetIndex) ||
+      binding.snapshot.elements.filter(el => el.index === targetIndex && el.kind === kind &&
+        (kind !== 'select' || (String(el.option_value) === value &&
+          (action.optionIndex == null || el.option_index === action.optionIndex)))).length !== 1)) {
+    log.log('DENY', 'agent action preview invalidated', { reason: 'observation changed' });
+    return false;
+  }
+  let nonce, descriptor, display, previewLabel, inspectedEffectHash;
   nonce = require('crypto').randomBytes(24).toString('hex');
   try {
     const inspected = await wc.executeJavaScript(forgeActionScript(targetIndex, 'inspect', nonce, { kind }), true);
     if (!inspected || !inspected.ok || action.targetIndex !== targetIndex || action.kind !== kind ||
+        action.optionIndex !== optionIndex ||
         (action.value == null ? null : String(action.value)) !== value ||
         activeTab() !== t || wc.isDestroyed() || wc.getURL() !== url) return false;
     descriptor = inspected.descriptor;
     display = inspected.display;
     if (!descriptor || !display) return false;
+    inspectedEffectHash = hashEffectProof(inspected.effectProof);
+    if (!inspectedEffectHash) return false;
+    previewLabel = display.label;
+    if (t.agentOwned) {
+      const observed = binding.snapshot.elements.find(el => el.index === targetIndex &&
+        (kind !== 'select' || (String(el.option_value) === value &&
+          (action.optionIndex == null || el.option_index === action.optionIndex))));
+      previewLabel = observed.label || previewLabel;
+      const changes = compareAgentPreview(observed, inspected, binding.snapshot.url, kind,
+        binding.effectProofHashes.get(targetIndex));
+      if (kind === 'select' && (!Array.isArray(descriptor.options) ||
+          descriptor.options.filter(option => option[0] === value && !option[1]).length !== 1 ||
+          (action.optionIndex != null && (!Number.isSafeInteger(action.optionIndex) ||
+            !descriptor.options[action.optionIndex] || descriptor.options[action.optionIndex][0] !== value ||
+            descriptor.options[action.optionIndex][1]))))
+        changes.push('proposed option');
+      if (changes.length || t.lastAgentObservation !== binding) {
+        log.log('DENY', 'agent action preview invalidated', { changed: changes.join(', ') || 'observation changed' });
+        await dialog.showMessageBox(chromeWin, {
+          type: 'warning', title: 'ForgeOS Browser — action changed',
+          message: 'The agent action changed since it was observed. Approval expired.',
+          detail: `Changed: ${changes.join(', ') || 'page observation'}. Re-observe before trying again.`,
+          buttons: ['Close'], defaultId: 0, cancelId: 0, noLink: true,
+        });
+        return false;
+      }
+    }
   } catch { return false; }
   const result = await dialog.showMessageBox(chromeWin, {
     type: 'warning',
     title: 'ForgeOS Browser — agent action request',
-    message: `An external agent wants to ${kind === 'fill' ? 'type into' : kind === 'select' ? 'select an option in' : 'activate'} an element.`,
-    detail: `Element: [${action.targetIndex}] ${display.label || '(unlabelled element)'}\n` +
+    message: `Action preview — an external agent wants to ${kind === 'fill' ? 'type into' : kind === 'select' ? 'select an option in' : 'activate'} an element.`,
+    detail: `Element: [${action.targetIndex}] ${previewLabel || '(unlabelled element)'}\n` +
       `Current page: ${display.pageUrl}\nDestination: ${display.destination}\n` +
       `Form method: ${display.formMethod || '(not a form)'}\n` +
+      (t.agentOwned ? 'Since observation: browser-held target/effect witness matched.\n' :
+        'Since observation: unavailable in this test context.\n') +
       (kind !== 'click' ? `Field: ${descriptor.tag} name=${display.fieldName || '(none)'} id=${display.fieldId || '(none)'}\n` : '') +
       'JavaScript event handlers may have additional unknown side effects.\n' +
       (kind !== 'click' ? 'The proposed text is hidden for privacy.\n' : '') +
@@ -1360,24 +1581,29 @@ async function approveAgentAction(info) {
   let allowed = result.response === 1;
   if (allowed && descriptor) {
     try {
-      if (action.targetIndex !== targetIndex || action.kind !== kind ||
+      if (action.targetIndex !== targetIndex || action.kind !== kind || action.optionIndex !== optionIndex ||
           (action.value == null ? null : String(action.value)) !== value ||
-          activeTab() !== t || wc.isDestroyed() || wc.getURL() !== url) allowed = false;
+          activeTab() !== t || wc.isDestroyed() || wc.getURL() !== url ||
+          (t.agentOwned && t.lastAgentObservation !== binding)) allowed = false;
       else {
         const current = await wc.executeJavaScript(forgeActionScript(targetIndex, 'recheck', nonce, { kind }), true);
         if (!current || !current.ok || action.targetIndex !== targetIndex ||
+            action.optionIndex !== optionIndex ||
             action.kind !== kind || (action.value == null ? null : String(action.value)) !== value ||
             JSON.stringify(current.descriptor) !== JSON.stringify(descriptor) ||
+            hashEffectProof(current.effectProof) !== inspectedEffectHash ||
+            (t.agentOwned && hashEffectProof(current.effectProof) !== binding.effectProofHashes.get(targetIndex)) ||
             activeTab() !== t || wc.isDestroyed() || wc.getURL() !== url) allowed = false;
       }
     } catch { allowed = false; }
     if (allowed) {
       try { await requireAgentTab(); } catch { allowed = false; }
-      if (allowed) agentClickApprovals.set(action, { tab: t, wc, url, index: targetIndex, kind, value, nonce, descriptor });
+      if (allowed) agentClickApprovals.set(action, { tab: t, wc, url, index: targetIndex,
+        kind, value, optionIndex, nonce, descriptor, effectProofHash: inspectedEffectHash });
     }
   }
   log.log(allowed ? 'ALLOW' : 'DENY', 'agent action human decision', {
-    kind: action.kind, label: display.label, why: 'interaction requires approval', decision: allowed ? 'allow' : 'deny',
+    kind: action.kind, label: previewLabel, why: 'interaction requires approval', decision: allowed ? 'allow' : 'deny',
   });
   return allowed;
 }
@@ -1388,7 +1614,8 @@ async function runSmoke() {
   if (smokeDone) return;
   smokeDone = true;
   const fs = require('fs');
-  const reportPath = path.join(path.dirname(APP_ROOT), 'results', 'smoke-report.json');
+  const reportPath = path.join(getRuntimeBase(), 'results', 'smoke-report.json');
+  fs.mkdirSync(path.dirname(reportPath), { recursive: true });
   const finish = (code) => {
     // Merge finished/code onto any report already written (do not clobber it).
     let obj = {};

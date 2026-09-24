@@ -32,11 +32,17 @@
       <div id="site-menu" class="menu hidden">
         <div class="menu-sec">
           <div class="menu-title" id="site-menu-host">site</div>
+          <div class="menu-hint" id="site-origin">—</div>
+          <div class="menu-hint" id="site-counts">This page: —</div>
+          <div class="menu-hint" id="site-session-counts">Session: —</div>
           <label class="menu-row check"><input type="checkbox" id="site-allow-check" />
             <span>Disable blocking on this site</span></label>
           <label class="menu-row check"><input type="checkbox" id="site-cred-check" />
             <span>Allow sign-in here (risky)</span></label>
-          <div class="menu-hint">Requests from an allowlisted site pass unfiltered. The badge turns amber so you never forget.</div>
+          <div class="menu-hint">Requests from an allowlisted host pass unfiltered. Sign-in exceptions weaken the credential warning and can be reversed here.</div>
+          <button id="site-clear" type="button" class="site-clear">Clear this origin's data…</button>
+          <div class="menu-hint">Shared session: origin storage only; cookies and cache stay to protect other origins. Dedicated session: host-only cookies and cache also clear. Domain cookies stay.</div>
+          <div class="menu-hint" id="site-result" role="status"></div>
         </div>
         <div class="menu-sep"></div>
         <div class="menu-sec">
@@ -130,8 +136,18 @@
 
         <div class="menu-sep"></div>
         <div class="menu-sec">
+          <div class="menu-title">Named containers</div>
+          <div class="menu-hint">Separate persistent site data. Available in Standard mode; never shared with agent tabs.</div>
+          <button class="menu-row action" data-container="work">New Work tab</button>
+          <button class="menu-row action" data-container="personal">New Personal tab</button>
+          <button class="menu-row action" data-container="research">New Research tab</button>
+        </div>
+        <div class="menu-sep"></div>
+        <div class="menu-sec">
           <div class="menu-title">Session</div>
           <button class="menu-row action" id="mi-panels">☰&nbsp; Privacy &amp; Agent panels</button>
+          <button class="menu-row action" id="mi-notebook-capture">✎&nbsp; Capture selected excerpt</button>
+          <button class="menu-row action" id="mi-notebook">▤&nbsp; Research notebook</button>
           <button class="menu-row action" id="mi-devtools">🛠&nbsp; Developer tools</button>
           <button class="menu-row action danger" id="mi-clear">✕&nbsp; Clear session</button>
         </div>
@@ -141,6 +157,15 @@
           <div class="menu-hint center">Electron/Chromium · Telemetry: ZERO ✓</div>
         </div>
       </div>
+  </div>
+
+  <div id="find-bar" class="hidden" role="search" aria-label="Find in page">
+    <label for="find-query">Find in page</label>
+    <input id="find-query" type="search" placeholder="Find in page" maxlength="512" autocomplete="off" spellcheck="false" />
+    <output id="find-count" aria-live="polite">0 / 0</output>
+    <button id="find-prev" title="Previous match (Shift+F3)" aria-label="Previous match">↑</button>
+    <button id="find-next" title="Next match (F3)" aria-label="Next match">↓</button>
+    <button id="find-close" title="Close find (Escape)" aria-label="Close find">×</button>
   </div>
 
   <div id="plug-toast"></div>

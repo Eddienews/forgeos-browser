@@ -11,6 +11,47 @@
 
   let state = null;
 
+  /* ---------------- native page find (chrome only) ---------------- */
+  const findBar = $('find-bar');
+  const findQuery = $('find-query');
+  let findOpen = false;
+  function updateFind(status) {
+    findOpen = !!status.open;
+    findBar.classList.toggle('hidden', !findOpen);
+    if (!findOpen) findQuery.value = '';
+    $('find-count').textContent = `${status.active || 0} / ${status.matches || 0}`;
+  }
+  async function openFind() {
+    if (await F.findOpen()) {
+      findQuery.focus();
+      findQuery.select();
+    }
+  }
+  function stepFind(direction) {
+    if (!findOpen) { openFind(); return; }
+    F.findSearch(findQuery.value, direction);
+  }
+  findQuery.addEventListener('input', () => F.findSearch(findQuery.value, 'forward'));
+  $('find-next').addEventListener('click', () => stepFind('forward'));
+  $('find-prev').addEventListener('click', () => stepFind('backward'));
+  $('find-close').addEventListener('click', () => F.findClose());
+  F.onFindResult(updateFind);
+  F.onFindShortcut((action) => {
+    if (action === 'open') openFind();
+    else stepFind(action === 'previous' ? 'backward' : 'forward');
+  });
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'f') {
+      e.preventDefault(); openFind();
+    } else if (e.key === 'F3' && !e.ctrlKey && !e.altKey) {
+      e.preventDefault(); stepFind(e.shiftKey ? 'backward' : 'forward');
+    } else if (e.key === 'Enter' && document.activeElement === findQuery) {
+      e.preventDefault(); stepFind(e.shiftKey ? 'backward' : 'forward');
+    } else if (e.key === 'Escape' && findOpen) {
+      e.preventDefault(); F.findClose();
+    }
+  });
+
   /* ---------------- gear menu ---------------- */
   const gearBtn = $('btn-gear');
   const gearMenu = $('gear-menu');
@@ -45,8 +86,7 @@
     if (!gearMenu.contains(e.target)) closeMenu();
     const sm = document.getElementById('site-menu');
     if (sm && !sm.classList.contains('hidden') && !sm.contains(e.target) && e.target.id !== 'sec-badge') {
-      sm.classList.add('hidden');
-      F.setMenuOpen(false);
+      closeSiteMenu();
     }
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
@@ -63,6 +103,13 @@
       const title = document.createElement('span');
       title.className = 't-title';
       title.textContent = t.title || t.url || 'blank';
+      if (t.containerId) {
+        const chip = document.createElement('span');
+        chip.className = `container-chip container-${t.containerId}`;
+        chip.textContent = { work: 'W', personal: 'P', research: 'R' }[t.containerId] || '?';
+        chip.title = `${t.containerId} container`;
+        el.appendChild(chip);
+      }
       const x = document.createElement('button');
       x.className = 't-x';
       x.textContent = '×';
@@ -76,10 +123,25 @@
 
   /* ---------------- actions ---------------- */
   $('btn-newtab').addEventListener('click', () => F.newTab('about:blank'));
+  for (const btn of document.querySelectorAll('[data-container]')) {
+    btn.addEventListener('click', async () => {
+      const result = await F.newTab('about:blank', btn.dataset.container);
+      if (result && result.error) showToast(result.error);
+      else closeMenu();
+    });
+  }
   $('btn-back').addEventListener('click', () => F.back());
   $('btn-fwd').addEventListener('click', () => F.forward());
   $('btn-reload').addEventListener('click', () => F.reload());
   $('mi-panels').addEventListener('click', () => { closeMenu(); F.togglePanels(); });
+  $('mi-notebook').addEventListener('click', () => { closeMenu(); F.togglePanels('notebook'); });
+  $('mi-notebook-capture').addEventListener('click', async () => {
+    closeMenu();
+    try {
+      const result = await F.notebook.capture();
+      window.alert(result.duplicate ? 'Excerpt already in notebook.' : 'Excerpt saved locally. Open Research notebook to compare or export.');
+    } catch (error) { window.alert('Capture refused: ' + error.message); }
+  });
   $('mi-devtools').addEventListener('click', () => { closeMenu(); F.openDevTools(); });
   $('mi-clear').addEventListener('click', async () => {
     closeMenu();
@@ -97,6 +159,11 @@
     const previousMode = state && state.mode;
     const nextMode = select.value;
     if (!previousMode || nextMode === previousMode) return;
+    if (state.tabs.some(tab => tab.containerId)) {
+      showToast('Close named container tabs before changing privacy mode.');
+      select.value = previousMode;
+      return;
+    }
     const hasLoadedPages = state.tabs.some((tab) => tab.url && tab.url !== 'about:blank');
     if (hasLoadedPages && !window.confirm(
       'Changing privacy mode reloads all open pages so the new storage isolation can take effect.\n\n' +
@@ -108,7 +175,7 @@
     select.disabled = true;
     try {
       const result = await F.setMode(nextMode);
-      if (!result || !result.ok) select.value = previousMode;
+      if (!result || !result.ok) { select.value = previousMode; showToast(result?.error || 'Mode change refused.'); }
       else closeMenu();
     } catch {
       select.value = previousMode;
@@ -191,22 +258,40 @@
   /* ---------------- site menu (badge click) ---------------- */
   const siteMenu = $('site-menu');
   const badgeEl = document.querySelector('.badge') || document.getElementById('security-badge');
-  let siteMenuHost = '';
-  function closeSiteMenu() { siteMenu.classList.add('hidden'); }
+  let siteMenuOrigin = '';
+  let siteContext = '';
+  let siteRequest = 0;
+  function currentSiteContext() {
+    const t = state && state.tabs.find(x => x.id === state.activeTabId);
+    return t ? `${t.id}:${t.url}` : '';
+  }
+  function closeSiteMenu() {
+    siteRequest++;
+    const wasOpen = !siteMenu.classList.contains('hidden');
+    siteMenu.classList.add('hidden');
+    siteMenuOrigin = '';
+    if (wasOpen) F.setMenuOpen(false);
+  }
   async function openSiteMenu() {
-    const t = state && state.tabs.find((x) => x.id === state.activeTabId);
-    if (!t || !/^https?:/i.test(t.url || '')) return;
-    try { siteMenuHost = new URL(t.url).hostname.replace(/^www\./, ''); } catch { return; }
-    $('site-menu-host').textContent = siteMenuHost;
-    const { allowed } = await F.allowIs(siteMenuHost);
-    $('site-allow-check').checked = allowed;
-    try {
-      const { allowed: credOk } = await F.credAllowed(siteMenuHost);
-      $('site-cred-check').checked = credOk;
-    } catch { $('site-cred-check').checked = false; }
+    const context = currentSiteContext(), request = ++siteRequest;
+    let info;
+    try { info = await F.sitePrivacy(); } catch { info = null; }
+    if (request !== siteRequest || context !== currentSiteContext()) return;
+    let shownOrigin = '';
+    try { shownOrigin = new URL(context.slice(context.indexOf(':') + 1)).origin; } catch {}
+    if (!info || !info.origin || info.tabId !== state?.activeTabId || shownOrigin !== info.origin) {
+      closeSiteMenu(); return;
+    }
+    siteMenuOrigin = info.origin;
+    $('site-menu-host').textContent = info.host;
+    $('site-origin').textContent = info.origin;
+    $('site-counts').textContent = `This page: ${info.counts.ads} ads · ${info.counts.trackers} trackers · ${info.counts.analytics} analytics`;
+    $('site-session-counts').textContent = `Session: ${info.sessionCounts.ads} ads · ${info.sessionCounts.trackers} trackers · ${info.sessionCounts.allowed} passed`;
+    $('site-allow-check').checked = info.allowed;
+    $('site-cred-check').checked = info.credentialAllowed;
+    $('site-result').textContent = info.credentialsGloballyAllowed ? 'Global credential policy is already disabled; this site switch cannot restore it.' : '';
     siteMenu.classList.remove('hidden');
     reserveSpaceFor(siteMenu);
-    // keep page shrunk until both menus closed
     setTimeout(() => { if (siteMenu.classList.contains('hidden')) F.setMenuOpen(false); }, 0);
   }
   if (badgeEl) {
@@ -217,19 +302,35 @@
       openSiteMenu();
     });
   }
-  $('site-allow-check').addEventListener('change', async (e) => {
-    if (e.target.checked) await F.allowAdd(siteMenuHost);
-    else await F.allowRemove(siteMenuHost);
-    refreshBadge();
-  });
-  $('site-cred-check').addEventListener('change', async (e) => {
-    if (e.target.checked) {
-      await F.credAllow(siteMenuHost);
-      // reload so the intercepted sign-in page loads for real
-      const t = state && state.tabs.find((x) => x.id === state.activeTabId);
-      const intended = t && t.url;
-      if (intended && /^https?:/i.test(intended)) window.forge.navigate(intended);
-    }
+  async function changeSiteException(kind, checked, control) {
+    control.disabled = true;
+    const context = currentSiteContext(), origin = siteMenuOrigin;
+    try {
+      const info = await F.sitePrivacy();
+      if (!info || info.origin !== origin || context !== currentSiteContext() || siteMenu.classList.contains('hidden'))
+        throw new Error('Active site changed.');
+      const r = await F.siteException(kind, checked);
+      if (!r.ok) throw new Error(r.reason || 'Exception not changed.');
+      if (context === currentSiteContext() && origin === siteMenuOrigin) await openSiteMenu();
+      refreshBadge();
+    } catch (error) {
+      if (context === currentSiteContext() && origin === siteMenuOrigin) {
+        control.checked = !checked;
+        $('site-result').textContent = String(error.message || error);
+      }
+    } finally { control.disabled = false; }
+  }
+  $('site-allow-check').addEventListener('change', (e) => changeSiteException('blocking', e.target.checked, e.target));
+  $('site-cred-check').addEventListener('change', (e) => changeSiteException('credentials', e.target.checked, e.target));
+  $('site-clear').addEventListener('click', async () => {
+    const button = $('site-clear'); button.disabled = true;
+    try {
+      const info = await F.sitePrivacy();
+      if (!info || info.origin !== siteMenuOrigin) throw new Error('Active site changed.');
+      const result = await F.siteClear();
+      $('site-result').textContent = result.ok ? result.note : result.reason;
+    } catch (error) { $('site-result').textContent = String(error.message || error); }
+    finally { button.disabled = false; }
   });
 
   /* Trust presets: one decision releases a whole provider ecosystem. */
@@ -254,10 +355,22 @@
           cb.type = 'checkbox';
           cb.checked = isActive;
           cb.addEventListener('change', async () => {
-            if (cb.checked) await F.presetApply(p.name);
-            else await F.presetRevoke(p.name);
-            refreshBadge();
-            renderPresets();
+            cb.disabled = true;
+            try {
+              const result = cb.checked ? await F.presetApply(p.name) : await F.presetRevoke(p.name);
+              if (!result?.ok) {
+                cb.checked = isActive;
+                showToast(result?.reason || result?.error || 'Unable to save trust preset.');
+              } else {
+                refreshBadge();
+              }
+            } catch (error) {
+              cb.checked = isActive;
+              showToast('Unable to save trust preset.');
+            } finally {
+              cb.disabled = false;
+              renderPresets();
+            }
           });
           const span = document.createElement('span');
           span.textContent = `${PRESET_LABELS[p.name] || p.name} (${p.hosts})`;
@@ -268,13 +381,14 @@
     }
   }
   renderPresets();
+  let badgeRequest = 0;
   async function refreshBadge() {
     if (!badgeEl) return;
-    const t = state && state.tabs.find((x) => x.id === state.activeTabId);
-    if (!t) return;
-    let host = '';
-    try { host = new URL(t.url).hostname.replace(/^www\./, ''); } catch {}
-    const { allowed } = host ? await F.allowIs(host) : { allowed: false };
+    const context = currentSiteContext(), request = ++badgeRequest;
+    let info;
+    try { info = await F.sitePrivacy(); } catch { info = null; }
+    if (request !== badgeRequest || context !== currentSiteContext()) return;
+    const allowed = !!info?.allowed;
     badgeEl.classList.toggle('friendly', allowed);
     badgeEl.textContent = allowed ? 'FRIENDLY' : (badgeEl.dataset.secure || 'HTTPS');
   }
@@ -501,7 +615,13 @@
   };
 
   let applyState = function (s) {
+    const previousContext = siteContext;
     state = s;
+    siteContext = currentSiteContext();
+    if (previousContext !== siteContext) {
+      closeSiteMenu();
+      $('sec-badge').classList.remove('friendly');
+    }
     renderTabs();
     const t = s.tabs.find((x) => x.id === s.activeTabId);
     if (t) {
@@ -517,8 +637,11 @@
       badge.dataset.secure = t.security.label;
       badge.className = 'badge ' + (t.security.ok ? 'ok' : 'bad') + (badge.classList.contains('friendly') ? ' friendly' : '');
       $('forget-check').checked = t.forget;
+      $('forget-check').disabled = !!t.containerId;
+      $('forget-check').title = t.containerId ? 'Shared container data is retained until Clear session' : '';
     }
     $('mode-select').value = s.mode;
+    for (const btn of document.querySelectorAll('[data-container]')) btn.disabled = s.mode !== 'standard';
     $('mode-hint').textContent = MODE_HINTS[s.mode] || '';
     renderCounters(s);
     renderAuditHealth(s);

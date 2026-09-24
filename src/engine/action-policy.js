@@ -34,6 +34,7 @@ const RISK_SIGNALS = [
 ];
 
 const { classifyField } = require('./sensitive-fields');
+const crypto = require('crypto');
 
 /** Input types that carry credentials or payment data — kept for compatibility. */
 const SENSITIVE_INPUT_TYPES = ['password', 'credit', 'card', 'cvv', 'cc-', 'otp'];
@@ -76,4 +77,37 @@ function classifyAction(action) {
   return { risk: 'approval', why: `unrecognised action "${kind}"` };
 }
 
-module.exports = { classifyAction, RISK_SIGNALS, SENSITIVE_INPUT_TYPES };
+function hashEffectProof(proof) {
+  if (!proof || typeof proof !== 'object') return null;
+  return crypto.createHash('sha256').update(JSON.stringify(proof)).digest('hex');
+}
+
+/** Compare the browser-owned observation with the live, inspected target.
+ * Display text is never the effect proof: redaction may conceal a changed
+ * query, and input/select labels have a different presentation in a snapshot.
+ * A private hash of the same raw fields at both ends binds those changes. */
+function compareAgentPreview(observed, inspected, observedUrl, kind, observedProofHash = null) {
+  const changes = [];
+  if (!observed || !inspected || !inspected.descriptor || !inspected.display) return ['target unavailable'];
+  const live = inspected.descriptor;
+  const shown = inspected.display;
+  if (observed.kind !== kind) changes.push('control type');
+  // Snapshot names use accessibility semantics; the inspection's short label
+  // uses visible text. Compare the private shared witness, not these formats.
+  if (kind === 'click' && observed.is_submit !== !!live.isSubmit) changes.push('submit behavior');
+  if (observed.input_type && observed.input_type !== live.type) changes.push('control subtype');
+  if ((observed.form_method || '') !== (live.formMethod || '')) changes.push('form method');
+  const priorDestination = observed.form_action || observed.href;
+  if (!priorDestination && (live.formAction || live.resolvedHref)) changes.push('destination');
+  if (priorDestination && !String(priorDestination).includes('<REDACTED>') &&
+      !String(shown.destination).includes('<REDACTED>')) {
+    try {
+      if (new URL(priorDestination, observedUrl).href !== shown.destination) changes.push('destination');
+    } catch { changes.push('destination'); }
+  }
+  if (observedProofHash && observedProofHash !== hashEffectProof(inspected.effectProof))
+    changes.push('target/effect proof');
+  return changes;
+}
+
+module.exports = { classifyAction, compareAgentPreview, hashEffectProof, RISK_SIGNALS, SENSITIVE_INPUT_TYPES };

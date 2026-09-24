@@ -18,7 +18,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { dialog } = require('electron');
+const { dialog, webContents } = require('electron');
 
 const { decideRequest } = require('../engine/network-policy');
 const { filterSetCookieHeaders } = require('../engine/cookie-policy');
@@ -31,6 +31,17 @@ const { GENERIC_UA } = require('../engine/fingerprint-hardening');
 const { progressPercent } = require('../engine/download-center');
 
 const DOWNLOADS_DIR = path.join(path.dirname(path.dirname(__dirname)), 'downloads');
+
+// A referrer is supplied by the request, not proof of the tab that owns it.
+// In particular, a main-frame request must be evaluated for its destination.
+function owningPageUrl(details) {
+  if (details.resourceType === 'mainFrame') return details.url;
+  try {
+    const owner = webContents.fromId(details.webContentsId);
+    if (owner && !owner.isDestroyed() && owner.session === details.session) return owner.getURL();
+  } catch {}
+  return ''; // no verified owner: never inherit a referrer's exemption
+}
 
 /** Sanitize a download filename: no path separators, dots, or control chars. */
 function safeFileName(name) {
@@ -67,6 +78,7 @@ class SessionAdapter {
     this.modeId = opts.modeId;
     this.getChromeWindow = opts.getChromeWindow || (() => null);
     this.onDownloadRecord = opts.onDownloadRecord || (() => {});
+    this.onSiteBlocked = opts.onSiteBlocked || (() => {});
     this.downloadsDir = opts.downloadsDir || DOWNLOADS_DIR;
     this.downloadItems = new Map();
     this.downloadSeq = 0;
@@ -114,7 +126,7 @@ class SessionAdapter {
 
     session.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, callback) => {
       const url = details.url;
-      const tabUrl = details.referrer || (details.resourceType === 'mainFrame' ? url : url);
+      const tabUrl = self.pageUrl(details);
       const resourceType = details.resourceType || 'other';
       const S = settings.all();
 
@@ -154,6 +166,7 @@ class SessionAdapter {
         else if (cat === 'TRACKING') self.counters.trackers++;
         else if (cat === 'ANALYTICS') self.counters.analytics++;
         else if (cat === 'THIRD_PARTY') self.counters.thirdParty++;
+        self.onSiteBlocked(details.webContentsId, cat);
         log.log('BLOCK', `${decision.reason} request blocked`, {
           url, category: cat, tab: tabUrl.slice(0, 200), type: resourceType,
         });
@@ -195,7 +208,7 @@ class SessionAdapter {
       }
       const res = filterSetCookieHeaders(responseHeaders, {
         requestUrl: details.url,
-        tabUrl: details.referrer || details.url,
+        tabUrl: self.pageUrl(details),
         modeId: self.modeId,
       });
       if (res.blocked.length) {
@@ -342,6 +355,8 @@ class SessionAdapter {
   }
 
   setMode(modeId) { this.modeId = modeId; }
+
+  pageUrl(details) { return owningPageUrl({ ...details, session: this.session }); }
 
   cancelDownload(id) {
     const item = this.downloadItems.get(id);

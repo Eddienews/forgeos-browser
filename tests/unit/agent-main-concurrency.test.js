@@ -27,6 +27,7 @@ function harness() {
     tabs, sessions, session: {}, chromeWin: { contentView: { removeChildView: () => {} } },
     activeTab: () => tabs.get(activeTabId) || null, clearSessionData: async () => {},
     log: { log: () => {} }, persistOpenTabs: () => {}, sendState: () => {},
+    pageFind: { tab: null, close: () => {} },
     get activeTabId() { return activeTabId; }, set activeTabId(v) { activeTabId = v; },
     get agentLease() { return agentLease; }, set agentLease(v) { agentLease = v; },
     get agentTabId() { return agentTabId; }, set agentTabId(v) { agentTabId = v; },

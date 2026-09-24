@@ -24,11 +24,17 @@ const { analyzeAgentView, IN_PAGE_SCRIPT } = require('../../src/engine/agent-vie
 const { forgeSnapshotScript } = require('../../src/page-snapshot');
 const { forgeActionScript } = require('../../src/page-actions');
 const { normalizeSnapshot } = require('../../src/engine/page-snapshot');
-const { candidatesFor } = require('../../src/engine/typesafe-decider');
+const { compareAgentPreview, hashEffectProof } = require('../../src/engine/action-policy');
+const { candidatesFor, composeDecision, buildQuestions } = require('../../src/engine/typesafe-decider');
+const { runGoal } = require('../../src/engine/agent-loop');
 const { createPageWebPreferences } = require('../../src/page-web-preferences');
 const sessionStore = require('../../src/engine/session-store');
+const { containerPartition, sessionPlanFor } = require('../../src/engine/storage-manager');
+const { clearOriginData } = require('../../src/engine/site-privacy');
+const allowlist = require('../../src/engine/site-allowlist');
 const { runAgentProxyE2E } = require('./agent-proxy');
 const { runQuicE2E } = require('./quic');
+const { runNotebookE2E } = require('./research-notebook');
 
 // The Electron integration process must not reuse the user's browser profile.
 const scratchRoot = process.env.BH_AGENT_WORKSPACE || path.join(os.homedir(), 'AppData', 'Local', 'hermes', 'cache', 'scratch');
@@ -97,6 +103,16 @@ function serve() {
         <input type="password" name="password" value="fixturePathValue78">
         <a href="/next/fixturePathValue78/%66%69%78%74%75%72%65%50%61%74%68%56%61%6c%75%65%37%38">Read fixturePathValue78</a>
         <a style="position:absolute;top:1400px" href="/later/fixturePathValue78">Later fixturePathValue78</a>`);
+      return;
+    }
+    if (req.url.startsWith('/privacy-script.js')) {
+      res.writeHead(200, { 'content-type': 'application/javascript' });
+      res.end('window.__privacyLoaded = true');
+      return;
+    }
+    if (req.url.startsWith('/privacy-subrequest')) {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(`<!doctype html><script referrerpolicy="no-referrer" src="http://127.0.0.1:${port}/privacy-script.js"></script>`);
       return;
     }
     // Third-party endpoint: sets a cookie on a DIFFERENT host (Test C).
@@ -188,11 +204,36 @@ async function main() {
   const p = await serve();
   console.log(`e2e server on localhost:${p} and 127.0.0.1:${p}`);
 
+  /* ---------- Named human container cookie isolation ---------- */
+  const containerUrl = `http://127.0.0.1:${p}/cookies.html`;
+  const workPlan = sessionPlanFor(containerUrl, 'standard', false, 'work');
+  const personalPlan = sessionPlanFor(containerUrl, 'standard', false, 'personal');
+  const workJar = session.fromPartition(workPlan.partition);
+  const personalJar = session.fromPartition(personalPlan.partition);
+  await workJar.cookies.set({ url: containerUrl, name: 'container_fixture', value: 'work-only' });
+  const [workCookies, personalCookies] = await Promise.all([
+    session.fromPartition(containerPartition('work')).cookies.get({ url: containerUrl, name: 'container_fixture' }),
+    personalJar.cookies.get({ url: containerUrl, name: 'container_fixture' }),
+  ]);
+  record('CONTAINERS', 'same named container shares jar; different container cannot read its cookie',
+    workCookies.length === 1 && workCookies[0].value === 'work-only' && personalCookies.length === 0,
+    `work=${workCookies.length}, personal=${personalCookies.length}`);
+  await personalJar.cookies.set({ url: containerUrl, name: 'container_fixture', value: 'personal-only' });
+  await workJar.clearStorageData({ origin: new URL(containerUrl).origin, storages: ['cookies'] });
+  const [afterWork, afterPersonal] = await Promise.all([
+    workJar.cookies.get({ url: containerUrl, name: 'container_fixture' }),
+    personalJar.cookies.get({ url: containerUrl, name: 'container_fixture' }),
+  ]);
+  record('CONTAINERS', 'clearing work container does not clear personal',
+    afterWork.length === 0 && afterPersonal.length === 1 && afterPersonal[0].value === 'personal-only',
+    `work=${afterWork.length}, personal=${afterPersonal.length}`);
+
   const PART = 'forge-e2e-' + Date.now();
   const ses = session.fromPartition(PART);
   const eventLog = new EventLog(null, 5000);
   const engine = new FilterEngine({});
-  const adapter = new SessionAdapter({ session: ses, engine, log: eventLog, modeId: 'standard', getChromeWindow: () => null, onDownloadRecord: () => {} });
+  const siteHits = [];
+  const adapter = new SessionAdapter({ session: ses, engine, log: eventLog, modeId: 'standard', getChromeWindow: () => null, onDownloadRecord: () => {}, onSiteBlocked: (id, category) => siteHits.push({ id, category }) });
   adapter.install();
 
   const win = new BrowserWindow({
@@ -242,6 +283,36 @@ async function main() {
   const ad = await wc.executeJavaScript('({ adLoaded: !!window.__adLoaded, gaLoaded: !!window.__gaLoaded, okLoaded: !!window.__okLoaded })');
   record('BLOCKING', 'advertising request blocked (Test A)',
     ad.okLoaded === true && ad.adLoaded === false && ad.gaLoaded === false, JSON.stringify(ad));
+  record('SITE-PRIVACY', 'blocked requests attributed to the owning WebContents',
+    siteHits.some(x => x.id === wc.id && x.category === 'ADVERTISING'), JSON.stringify(siteHits));
+
+  // Exercise the adapter in real Chromium with a synthetic allowlist and
+  // classifier. No site exception is written to the checkout/user profile.
+  const privacyPart = PART + '-privacy';
+  const privacySession = session.fromPartition(privacyPart);
+  const privacyHits = [];
+  const privacyAdapter = new SessionAdapter({ session: privacySession,
+    engine: { classifyRequest: () => ({ category: 'ADVERTISING', filterDecision: 'block',
+      matchedKind: 'hostname', matchedRule: 'fixture', firstParty: false }) },
+    log: eventLog, modeId: 'standard', onSiteBlocked: id => privacyHits.push(id) });
+  privacyAdapter.install();
+  const privacyWin = new BrowserWindow({ show: false, webPreferences: createPageWebPreferences({ partition: privacyPart }) });
+  const previousAllowed = allowlist.isAllowed;
+  allowlist.isAllowed = host => host === 'localhost';
+  try {
+    await loadAndWait(privacyWin.webContents, `http://localhost:${p}/privacy-subrequest`);
+    const loaded = await privacyWin.webContents.executeJavaScript('window.__privacyLoaded === true');
+    record('SITE-PRIVACY', 'referrerless third-party script inherits owning allowlisted page',
+      loaded && !privacyHits.includes(privacyWin.webContents.id), JSON.stringify({ loaded, hits: privacyHits }));
+    let denied = false;
+    try { await privacyWin.webContents.loadURL(`http://127.0.0.1:${p}/clean.html`); }
+    catch { denied = true; }
+    record('SITE-PRIVACY', 'main-frame destination outside allowlist is blocked after allowed page',
+      denied && privacyHits.includes(privacyWin.webContents.id), JSON.stringify({ denied, hits: privacyHits }));
+  } finally {
+    allowlist.isAllowed = previousAllowed;
+    privacyWin.destroy();
+  }
 
   /* ---------- Tests B & C (Gate D): cookies ---------- */
   await loadAndWait(wc, `http://localhost:${p}/cookies.html`);
@@ -250,6 +321,41 @@ async function main() {
     names.includes('forge_1p') && names.includes('session_js'), 'jar=' + names.join(','));
   record('C', 'third-party cookie blocked',
     !names.includes('partner'), 'jar=' + names.join(','));
+
+  /* ---------- Origin-only clear in a real shared Chromium session ---------- */
+  const otherWin = new BrowserWindow({ show: false, webPreferences: createPageWebPreferences({ partition: PART }) });
+  await loadAndWait(otherWin.webContents, `http://127.0.0.1:${p}/clean.html`);
+  await wc.executeJavaScript("localStorage.setItem('site-private','alpha')");
+  await otherWin.webContents.executeJavaScript("localStorage.setItem('site-private','beta')");
+  const live = { wc, id: 1, agentOwned: false };
+  const neighbor = { wc: otherWin.webContents, id: 2, agentOwned: false };
+  const clearResult = await clearOriginData({ tab: live, current: () => live, tabs: [live, neighbor],
+    session: ses, dedicated: false, confirm: async origin => origin === `http://localhost:${p}` });
+  await loadAndWait(wc, `http://localhost:${p}/cookies.html`);
+  const alphaAfter = await wc.executeJavaScript("localStorage.getItem('site-private')");
+  const betaAfter = await otherWin.webContents.executeJavaScript("localStorage.getItem('site-private')");
+  const cookieAfter = (await ses.cookies.get({ url: `http://localhost:${p}/` })).some(c => c.name === 'forge_1p');
+  record('SITE-PRIVACY', 'real shared session clears only selected origin storage; other origin and cookies survive',
+    clearResult.ok && !clearResult.cacheCleared && alphaAfter === null && betaAfter === 'beta' && cookieAfter,
+    JSON.stringify({ clearResult, alphaAfter, betaAfter, cookieAfter }));
+  otherWin.destroy();
+
+  const dedicatedPart = PART + '-origin-clear';
+  const dedicatedSession = session.fromPartition(dedicatedPart);
+  const dedicatedWin = new BrowserWindow({ show: false, webPreferences: createPageWebPreferences({ partition: dedicatedPart }) });
+  await loadAndWait(dedicatedWin.webContents, `http://localhost:${p}/clean.html`);
+  await dedicatedWin.webContents.executeJavaScript("localStorage.setItem('site-private','dedicated'); document.cookie='dedicated_cookie=1; Path=/'");
+  const dedicatedTab = { wc: dedicatedWin.webContents, id: 3, agentOwned: false };
+  const dedicatedResult = await clearOriginData({ tab: dedicatedTab, current: () => dedicatedTab, tabs: [dedicatedTab],
+    session: dedicatedSession, dedicated: true, confirm: async () => true });
+  await loadAndWait(dedicatedWin.webContents, `http://localhost:${p}/clean.html`);
+  const dedicatedStorage = await dedicatedWin.webContents.executeJavaScript("localStorage.getItem('site-private')");
+  const dedicatedCookies = (await dedicatedSession.cookies.get({ url: `http://localhost:${p}/` })).filter(c => c.name === 'dedicated_cookie');
+  record('SITE-PRIVACY', 'real dedicated session clears host-only cookie, origin storage and cache',
+    dedicatedResult.ok && dedicatedResult.cacheCleared && dedicatedResult.cookiesRemoved === 1 &&
+    dedicatedStorage === null && dedicatedCookies.length === 0,
+    JSON.stringify({ dedicatedResult, dedicatedStorage, dedicatedCookies: dedicatedCookies.length }));
+  dedicatedWin.destroy();
 
   /* ---------- Test D (Gate E): tracking URL cleanup ---------- */
   await loadAndWait(wc, `http://127.0.0.1:${p}/clean.html?utm_source=test&utm_campaign=e2e&id=10&fbclid=x`);
@@ -309,6 +415,98 @@ async function main() {
     inspected.display.label.includes('<REDACTED>') && inspected.display.pageUrl.includes('<REDACTED>'),
     JSON.stringify({ safeUrl: displaySnapshot.url, display: inspected && inspected.display }));
 
+  /* Private raw effect witness: two query recipients look identical in the
+   * agent-visible projection, but must never share an approval. */
+  await loadAndWait(wc, `http://127.0.0.1:${p}/clean.html`);
+  await wc.executeJavaScript(`document.body.innerHTML =
+    '<a id="recipient-link" href="/submit?recipient=alice">Continue</a>'`);
+  const privateRaw = await wc.executeJavaScript(forgeSnapshotScript(true), true);
+  const privateHashes = new Map(privateRaw._privateEffectProofs.map(([id, proof]) => [id, hashEffectProof(proof)]));
+  delete privateRaw._privateEffectProofs;
+  const privateSafe = normalizeSnapshot(privateRaw);
+  const recipientLink = privateSafe.elements.find(el => el.label === 'Continue');
+  const firstInspection = recipientLink && await wc.executeJavaScript(
+    forgeActionScript(recipientLink.index, 'inspect', 'fixture-private-first', { kind: 'click' }), true);
+  await wc.executeJavaScript(`document.getElementById('recipient-link').href = '/submit?recipient=attacker'`);
+  const secondInspection = recipientLink && await wc.executeJavaScript(
+    forgeActionScript(recipientLink.index, 'inspect', 'fixture-private-second', { kind: 'click' }), true);
+  const before = recipientLink && firstInspection && compareAgentPreview(
+    recipientLink, firstInspection, privateSafe.url, 'click', privateHashes.get(recipientLink.index));
+  const after = recipientLink && secondInspection && compareAgentPreview(
+    recipientLink, secondInspection, privateSafe.url, 'click', privateHashes.get(recipientLink.index));
+  record('C1', 'real Chromium snapshot binds raw link query without exposing either recipient to agent',
+    recipientLink && firstInspection && secondInspection && before.length === 0 &&
+    after.includes('target/effect proof') &&
+    firstInspection.display.destination === secondInspection.display.destination &&
+    !JSON.stringify(privateSafe).includes('alice') &&
+    !JSON.stringify(privateSafe).includes('_privateEffectProofs'),
+    JSON.stringify({ before, after, safeHref: recipientLink && recipientLink.href }));
+
+  await loadAndWait(wc, `http://127.0.0.1:${p}/clean.html`);
+  await wc.executeJavaScript(`(() => { window.__effectClicks = 0;
+    document.body.innerHTML = '<button id="effect" type="button" aria-label="Continue">Original</button>';
+    document.getElementById('effect').onclick = () => window.__effectClicks++;
+  })()`);
+  const effectRaw = await wc.executeJavaScript(forgeSnapshotScript(true), true);
+  const effectButton = effectRaw.elements.find(el => el.label === 'Continue');
+  const effectProof = effectRaw._privateEffectProofs.find(([id]) => id === effectButton.index)[1];
+  const effectHash = hashEffectProof(effectProof);
+  const effectInspect = await wc.executeJavaScript(
+    forgeActionScript(effectButton.index, 'inspect', 'fixture-effect-nonce', { kind: 'click' }), true);
+  await wc.executeJavaScript(`document.getElementById('effect').textContent = 'Changed'`);
+  const changedEffect = await wc.executeJavaScript(forgeActionScript(effectButton.index, 'click', null,
+    { nonce: 'fixture-effect-nonce', descriptor: effectInspect.descriptor, effectProofHash: effectHash }), true);
+  const effectClicks = await wc.executeJavaScript('window.__effectClicks');
+  record('C1', 'real Chromium final click atomically refuses changed private effect after inspection',
+    changedEffect && !changedEffect.ok && changedEffect.reason === 'approval_required_or_stale' && effectClicks === 0,
+    JSON.stringify({ reason: changedEffect && changedEffect.reason, effectClicks }));
+
+  /* Same DOM select produces multiple choice candidates but one node index.
+   * An approved West decision must never silently become East. */
+  await wc.executeJavaScript(`document.body.innerHTML = '<label for="region">Region</label>' +
+    '<select id="region"><option value="east">East</option><option value="west">West</option></select>'`);
+  const selectRaw = await wc.executeJavaScript(forgeSnapshotScript(true), true);
+  const selectHashes = new Map(selectRaw._privateEffectProofs.map(([id, proof]) => [id, hashEffectProof(proof)]));
+  delete selectRaw._privateEffectProofs;
+  const selectSnapshot = normalizeSnapshot(selectRaw);
+  const region = selectSnapshot.elements.filter(el => el.kind === 'select');
+  const selectCriteria = buildQuestions(selectSnapshot).select_target.criteria;
+  const westKey = Object.keys(selectCriteria).find(key => selectCriteria[key].option_value === 'west');
+  const chosenWest = composeDecision({ goal_met: { noul: 0 }, operation: { choice: 'SELECT' },
+    select_target: { choice: westKey } }, selectSnapshot);
+  record('C1', 'real select exposes each option independently and decides West',
+    region.length === 2 && region[0].index === region[1].index &&
+    Object.keys(selectCriteria).filter(key => key !== '(none)').length === 2 &&
+    chosenWest.option_value === 'west' && chosenWest.option_index === 1,
+    JSON.stringify({ region, selectCriteria, chosenWest }));
+  let approvedValue = null;
+  let inspectionIsPrivate = false;
+  const selectRun = await runGoal({ goal: 'Choose West', observe: async () => selectRaw,
+    decide: async () => chosenWest,
+    requestApproval: async ({ action }) => {
+      approvedValue = action.value;
+      const script = forgeActionScript(action.targetIndex, 'inspect', 'west-e2e-proof', { kind: 'select' });
+      inspectionIsPrivate = !script.includes('Choose West') && !script.includes('"west"');
+      const inspection = await wc.executeJavaScript(script, true);
+      return inspection.ok && compareAgentPreview(region[1], inspection, selectSnapshot.url,
+        'select', selectHashes.get(action.targetIndex)).length === 0 &&
+        inspection.descriptor.options[action.optionIndex]?.[0] === action.value;
+    },
+    act: async action => {
+      const inspection = await wc.executeJavaScript(
+        forgeActionScript(action.targetIndex, 'recheck', 'west-e2e-proof', { kind: 'select' }), true);
+      return wc.executeJavaScript(forgeActionScript(action.targetIndex, 'select', action.value,
+        { kind: 'select', value: action.value, optionIndex: action.optionIndex,
+          nonce: 'west-e2e-proof', descriptor: inspection.descriptor,
+          effectProofHash: selectHashes.get(action.targetIndex) }), true);
+    },
+  }, { maxSteps: 1, settleMs: 0 });
+  const selectedRegion = await wc.executeJavaScript('document.getElementById("region").value');
+  record('C1', 'observed West equals approved value and executed DOM selection',
+    approvedValue === 'west' && inspectionIsPrivate && selectRun.history[0]?.value === 'west' &&
+    selectRun.history[0]?.outcome === 'ok' && selectedRegion === 'west',
+    JSON.stringify({ approvedValue, inspectionIsPrivate, history: selectRun.history, selectedRegion }));
+
   /* ---------- Test E (Gate G): prompt injection ---------- */
   await loadAndWait(wc, `http://127.0.0.1:${p}/prompt_injection.html`);
   const raw = await wc.executeJavaScript(IN_PAGE_SCRIPT, true);
@@ -363,6 +561,7 @@ async function main() {
     JSON.stringify(boundary));
   boundaryWin.destroy();
 
+  await runNotebookE2E(wc, `http://127.0.0.1:${p}/clean.html`, scratchProfile, record);
   await runAgentProxyE2E(record);
   await runQuicE2E(record);
 
