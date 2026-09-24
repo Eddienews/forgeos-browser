@@ -3,7 +3,7 @@
 /* Gates I/J + Phases 5/7/15/22/23 — modes, storage planning, permissions,
  * event log, fingerprint posture. */
 const { MODES, describe, isValidMode } = require('../../src/engine/privacy-modes');
-const { sessionPlanFor, captureTabReloadPlan, registrableHost, clearSessionData, STORAGE_TYPES } = require('../../src/engine/storage-manager');
+const { sessionPlanFor, captureTabReloadPlan, registrableHost, clearSessionData, STORAGE_TYPES, containerPartition, CONTAINER_IDS } = require('../../src/engine/storage-manager');
 const { permissionFor, PERMISSION_DEFAULTS, EXPOSURE_MAP } = require('../../src/engine/fingerprint');
 const { EventLog } = require('../../src/engine/event-log');
 const os = require('os');
@@ -37,6 +37,25 @@ module.exports = [
     },
   },
   /* ---- Phase 5: storage isolation ---- */
+  {
+    name: 'named human containers have separate persistent sessions and reject unsafe combinations',
+    gate: 'J',
+    fn(a) {
+      a.deepStrictEqual(CONTAINER_IDS, ['work', 'personal', 'research']);
+      const partitions = CONTAINER_IDS.map(id => containerPartition(id));
+      a.strictEqual(new Set(partitions).size, 3);
+      for (const id of CONTAINER_IDS) {
+        const plan = sessionPlanFor('https://example.com', 'standard', false, id);
+        a.strictEqual(plan.partition, containerPartition(id));
+        a.strictEqual(plan.ephemeral, false);
+        a.strictEqual(plan.restoreOnRestart, true);
+      }
+      a.throws(() => containerPartition('agent-key'), /invalid container/i);
+      a.throws(() => sessionPlanFor('https://example.com', 'strict', false, 'work'), /standard mode/i);
+      a.throws(() => sessionPlanFor('https://example.com', 'ephemeral', false, 'work'), /standard mode/i);
+      a.throws(() => sessionPlanFor('https://example.com', 'standard', true, 'work'), /forget/i);
+    },
+  },
   {
     name: 'standard mode uses the normal (shared) session — no partitions',
     gate: 'I',

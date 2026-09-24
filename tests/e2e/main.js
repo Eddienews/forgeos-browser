@@ -27,6 +27,7 @@ const { normalizeSnapshot } = require('../../src/engine/page-snapshot');
 const { candidatesFor } = require('../../src/engine/typesafe-decider');
 const { createPageWebPreferences } = require('../../src/page-web-preferences');
 const sessionStore = require('../../src/engine/session-store');
+const { containerPartition, sessionPlanFor } = require('../../src/engine/storage-manager');
 const { runAgentProxyE2E } = require('./agent-proxy');
 const { runQuicE2E } = require('./quic');
 
@@ -187,6 +188,30 @@ async function main() {
   await app.whenReady();
   const p = await serve();
   console.log(`e2e server on localhost:${p} and 127.0.0.1:${p}`);
+
+  /* ---------- Named human container cookie isolation ---------- */
+  const containerUrl = `http://127.0.0.1:${p}/cookies.html`;
+  const workPlan = sessionPlanFor(containerUrl, 'standard', false, 'work');
+  const personalPlan = sessionPlanFor(containerUrl, 'standard', false, 'personal');
+  const workJar = session.fromPartition(workPlan.partition);
+  const personalJar = session.fromPartition(personalPlan.partition);
+  await workJar.cookies.set({ url: containerUrl, name: 'container_fixture', value: 'work-only' });
+  const [workCookies, personalCookies] = await Promise.all([
+    session.fromPartition(containerPartition('work')).cookies.get({ url: containerUrl, name: 'container_fixture' }),
+    personalJar.cookies.get({ url: containerUrl, name: 'container_fixture' }),
+  ]);
+  record('CONTAINERS', 'same named container shares jar; different container cannot read its cookie',
+    workCookies.length === 1 && workCookies[0].value === 'work-only' && personalCookies.length === 0,
+    `work=${workCookies.length}, personal=${personalCookies.length}`);
+  await personalJar.cookies.set({ url: containerUrl, name: 'container_fixture', value: 'personal-only' });
+  await workJar.clearStorageData({ origin: new URL(containerUrl).origin, storages: ['cookies'] });
+  const [afterWork, afterPersonal] = await Promise.all([
+    workJar.cookies.get({ url: containerUrl, name: 'container_fixture' }),
+    personalJar.cookies.get({ url: containerUrl, name: 'container_fixture' }),
+  ]);
+  record('CONTAINERS', 'clearing work container does not clear personal',
+    afterWork.length === 0 && afterPersonal.length === 1 && afterPersonal[0].value === 'personal-only',
+    `work=${afterWork.length}, personal=${afterPersonal.length}`);
 
   const PART = 'forge-e2e-' + Date.now();
   const ses = session.fromPartition(PART);

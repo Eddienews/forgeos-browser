@@ -25,6 +25,14 @@
 const crypto = require('crypto');
 const { MODES } = require('./privacy-modes');
 
+// Explicit, non-user-controlled partition names. A page and the agent API
+// cannot choose or attach to a persistent human container.
+const CONTAINER_IDS = Object.freeze(['work', 'personal', 'research']);
+function containerPartition(id) {
+  if (!CONTAINER_IDS.includes(id)) throw new Error('invalid container');
+  return `persist:forge-human-${id}`;
+}
+
 const STORAGE_TYPES = [
   'cookies', 'localstorage', 'indexdb', 'cachestorage', 'serviceworkers',
   'websql', 'shadercache', 'filesystem',
@@ -51,8 +59,15 @@ let nonce = 0;
  *   retainHistory: boolean, restoreOnRestart: boolean }}
  *   partition null → Electron default session (persistent, normal browser jar)
  */
-function sessionPlanFor(host, modeId, forgetOnClose = false) {
+function sessionPlanFor(host, modeId, forgetOnClose = false, containerId = null) {
   const mode = MODES[modeId] || MODES.standard;
+  if (containerId != null) {
+    const partition = containerPartition(containerId);
+    if (mode.id !== 'standard') throw new Error('containers require standard mode');
+    if (forgetOnClose) throw new Error('forget-on-close cannot clear a shared container');
+    return { partition, ephemeral: false, dedicated: true,
+      retainHistory: true, restoreOnRestart: true };
+  }
   const useDedicated = forgetOnClose || mode.perSitePartitions || mode.ephemeral;
   const retention = {
     retainHistory: mode.retainHistory,
@@ -103,5 +118,5 @@ async function clearSessionData(session) {
 
 module.exports = {
   sessionPlanFor, captureTabReloadPlan, clearSessionData,
-  hostOf, registrableHost, STORAGE_TYPES,
+  hostOf, registrableHost, STORAGE_TYPES, containerPartition, CONTAINER_IDS,
 };

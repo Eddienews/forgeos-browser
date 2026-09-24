@@ -73,6 +73,9 @@ body.platform-darwin #bar { padding-left: 78px; }
   white-space: nowrap; overflow: hidden;
 }
 .tab.active { color: var(--fg); border-color: var(--amber-dim); }
+.container-chip { flex: 0 0 auto; border: 1px solid var(--amber-dim); color: var(--amber); border-radius: 3px; font: 10px var(--mono); padding: 1px 3px; }
+.container-personal { border-color: var(--green); color: var(--green); }
+.container-research { border-color: var(--muted); color: var(--fg); }
 .tab .t-title { overflow: hidden; text-overflow: ellipsis; flex: 1; }
 .tab .t-x { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 2px; font-size: 12px; }
 .tab .t-x:hover { color: var(--red); }

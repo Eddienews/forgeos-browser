@@ -22,7 +22,7 @@ const { FilterEngine } = require('./engine/filter-engine');
 const { EventLog } = require('./engine/event-log');
 const { SessionAdapter } = require('./ext/electron-adapter');
 const { PluginRunner } = require('./ext/plugins');
-const { sessionPlanFor, captureTabReloadPlan, clearSessionData } = require('./engine/storage-manager');
+const { sessionPlanFor, captureTabReloadPlan, clearSessionData, containerPartition, CONTAINER_IDS } = require('./engine/storage-manager');
 const { MODES, isValidMode } = require('./engine/privacy-modes');
 const { analyzeAgentView, IN_PAGE_SCRIPT, readPageView } = require('./engine/agent-view');
 const { applyAppLevelHardening } = require('./engine/fingerprint-hardening');
@@ -228,9 +228,10 @@ async function runPluginJob(kind, pageUrl, label) {
 
 function createTab(url = 'about:blank', opts = {}) {
   const id = ++tabSeq;
+  const containerId = opts.agentLease ? null : (opts.containerId || null);
   const plan = opts.agentLease
     ? { partition: opts.agentLease.partition, retainHistory: false, restoreOnRestart: false }
-    : sessionPlanFor(url, modeId, !!opts.forgetOnClose);
+    : sessionPlanFor(url, modeId, !!opts.forgetOnClose, containerId);
   const { session: ses, adapter } = getSessionFor(plan.partition);
   adapter.setMode(modeId);
   adapter.install();
@@ -243,7 +244,7 @@ function createTab(url = 'about:blank', opts = {}) {
   try { wc.setZoomFactor((settings.all().pageZoom || 100) / 100); } catch {}
 
   const tab = {
-    id, view, wc, adapter, partition: plan.partition,
+    id, view, wc, adapter, partition: plan.partition, containerId,
     agentOwned: !!opts.agentLease,
     url, title: '', history: [], index: -1,
     modeId,
@@ -432,7 +433,7 @@ async function closeTab(id, { notify = true, persist = true } = {}) {
     try {
       if (lease) await lease.stop();
     } finally {
-      if (tab.forgetOnClose || tab.modeId === 'ephemeral' || tab.partition) {
+      if (tab.forgetOnClose || tab.modeId === 'ephemeral' || tab.partition && !tab.containerId) {
         try { await clearSessionData(tab.adapter.session); } catch {}
         log.log('INFO', 'site data cleared on tab close', { url: tab.url.slice(0, 200), partition: tab.partition || 'default' });
       }
@@ -667,6 +668,7 @@ function buildState() {
       id: t.id, url: t.url, title: t.title,
       canGoBack: t.index > 0, canGoForward: t.index < t.history.length - 1,
       security: securityFor(t), counts: t.pageCounts, forget: t.forgetOnClose,
+      containerId: t.containerId,
     });
   }
   const totals = { ads: 0, trackers: 0, analytics: 0, thirdParty: 0, params: 0, cookies: 0 };
@@ -729,10 +731,15 @@ function registerIpc() {
     t.wc.reload();
     return true;
   });
-  ipcMain.handle('forge:new-tab', (_e, url) => {
-    const t = createTab(url || 'about:blank');
+  ipcMain.handle('forge:new-tab', (_e, url, containerId) => {
+    if (containerId != null && (!CONTAINER_IDS.includes(containerId) || modeId !== 'standard')) {
+      return { error: 'Containers are available only in Standard mode.' };
+    }
+    // A named container always starts blank. It cannot silently receive a
+    // caller-controlled URL or inherit an existing page's browser context.
+    const t = createTab(containerId ? 'about:blank' : url || 'about:blank', { containerId });
     switchTab(t.id, { focus: true });
-    return { id: t.id };
+    return { id: t.id, containerId: t.containerId };
   });
   ipcMain.handle('forge:close-tab', (_e, id) => closeTab(id));
   ipcMain.handle('forge:switch-tab', (_e, id) => { if (tabs.has(id)) switchTab(id); });
@@ -751,6 +758,7 @@ function registerIpc() {
   ipcMain.handle('forge:clear-session', async () => {
     log.log('INFO', 'clear session requested');
     const todo = new Set(sessions.values());
+    for (const id of CONTAINER_IDS) todo.add(getSessionFor(containerPartition(id)));
     let removed = 0;
     for (const { session: s } of todo) removed += await clearSessionData(s);
     for (const t of tabs.values()) {
@@ -769,6 +777,7 @@ function registerIpc() {
   ipcMain.handle('forge:set-forget', (_e, on) => {
     const t = activeTab();
     if (!t) return false;
+    if (t.containerId) return false; // never wipe a shared named container on one tab close
     t.forgetOnClose = !!on;
     t.restoreOnRestart = t.retainHistory && !t.forgetOnClose;
     persistOpenTabs();
@@ -1028,10 +1037,10 @@ function createChromeWindow() {
   // near-instantly, so the listener must exist before the request starts.
   chromeWin.webContents.once('did-finish-load', () => {
     // Session restore (crash recovery): reopen tabs from the last session.
-    const saved = sessionStore.restoreTabs(getRuntimeBase());
+    const saved = sessionStore.restoreTabRecords(getRuntimeBase());
     if (saved.length) {
-      saved.forEach((u, i) => {
-        const t = createTab(u);
+      saved.forEach((item, i) => {
+        const t = createTab(item.url, { containerId: item.containerId });
         if (i === 0) switchTab(t.id, { focus: false });
       });
       log.log('INFO', 'session restored', { tabs: saved.length });

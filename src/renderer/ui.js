@@ -63,6 +63,13 @@
       const title = document.createElement('span');
       title.className = 't-title';
       title.textContent = t.title || t.url || 'blank';
+      if (t.containerId) {
+        const chip = document.createElement('span');
+        chip.className = `container-chip container-${t.containerId}`;
+        chip.textContent = { work: 'W', personal: 'P', research: 'R' }[t.containerId] || '?';
+        chip.title = `${t.containerId} container`;
+        el.appendChild(chip);
+      }
       const x = document.createElement('button');
       x.className = 't-x';
       x.textContent = '×';
@@ -76,6 +83,13 @@
 
   /* ---------------- actions ---------------- */
   $('btn-newtab').addEventListener('click', () => F.newTab('about:blank'));
+  for (const btn of document.querySelectorAll('[data-container]')) {
+    btn.addEventListener('click', async () => {
+      const result = await F.newTab('about:blank', btn.dataset.container);
+      if (result && result.error) showToast(result.error);
+      else closeMenu();
+    });
+  }
   $('btn-back').addEventListener('click', () => F.back());
   $('btn-fwd').addEventListener('click', () => F.forward());
   $('btn-reload').addEventListener('click', () => F.reload());
@@ -517,8 +531,11 @@
       badge.dataset.secure = t.security.label;
       badge.className = 'badge ' + (t.security.ok ? 'ok' : 'bad') + (badge.classList.contains('friendly') ? ' friendly' : '');
       $('forget-check').checked = t.forget;
+      $('forget-check').disabled = !!t.containerId;
+      $('forget-check').title = t.containerId ? 'Shared container data is retained until Clear session' : '';
     }
     $('mode-select').value = s.mode;
+    for (const btn of document.querySelectorAll('[data-container]')) btn.disabled = s.mode !== 'standard';
     $('mode-hint').textContent = MODE_HINTS[s.mode] || '';
     renderCounters(s);
     renderAuditHealth(s);
