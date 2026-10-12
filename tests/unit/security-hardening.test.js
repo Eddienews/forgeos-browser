@@ -231,6 +231,25 @@ module.exports = [
     },
   },
   {
+    name: 'ad hoc signature files are admitted only for re-signed Apple Silicon bundles',
+    gate: 'K',
+    fn(a) {
+      const { approvedMacMember } = require('../../scripts/package-policy');
+      const app = 'ForgeBrowserLab.app/Contents/';
+      const helper = app + 'Frameworks/ForgeBrowserLab Helper (Renderer).app/Contents/';
+      for (const base of [app, helper]) {
+        a.strictEqual(approvedMacMember(base + '_CodeSignature', true, 'arm64'), true, base);
+        a.strictEqual(approvedMacMember(base + '_CodeSignature/CodeResources', false, 'arm64'), true, base);
+        a.strictEqual(approvedMacMember(base + '_CodeSignature', true, 'x64'), false, base);
+        a.strictEqual(approvedMacMember(base + '_CodeSignature/CodeResources', false, 'x64'), false, base);
+        a.strictEqual(approvedMacMember(base + '_CodeSignature', false, 'arm64'), false, base);
+        a.strictEqual(approvedMacMember(base + '_CodeSignature/CodeResources', true, 'arm64'), false, base);
+        a.strictEqual(approvedMacMember(base + '_CodeSignature/extra.bin', false, 'arm64'), false, base);
+        a.strictEqual(approvedMacMember(base + '_CodeSignature/CodeResources/x', false, 'arm64'), false, base);
+      }
+    },
+  },
+  {
     name: 'private writes are owner-only even over an existing readable file',
     gate: 'K',
     fn(a) {

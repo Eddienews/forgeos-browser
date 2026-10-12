@@ -122,6 +122,12 @@ function approvedMacMember(value, directory, arch) {
   if (p.length === 2) return directory;
   const t = p.slice(2);
   if (t.length === 1 && ['Info.plist', 'PkgInfo', 'CodeResources'].includes(t[0])) return !directory;
+  // Setting Electron fuses patches the framework binary, so Apple Silicon
+  // bundles are re-signed ad hoc. That seals the app and each helper with
+  // exactly one _CodeSignature/CodeResources; Intel bundles are not re-signed.
+  const resigned = arch === 'arm64';
+  if (t[0] === '_CodeSignature') return resigned && (t.length === 1 ? directory :
+    t.length === 2 && t[1] === 'CodeResources' && !directory);
   if (t[0] === 'MacOS') return t.length === 1 ? directory :
     t.length === 2 && t[1] === 'ForgeBrowserLab' && !directory;
   if (t[0] === 'Resources') {
@@ -136,8 +142,9 @@ function approvedMacMember(value, directory, arch) {
     if (t.length === 2) return directory;
     if (t[2] !== 'Contents') return false;
     if (t.length === 3) return directory;
-    if (t.length === 4) return t[3] === 'MacOS' ? directory :
+    if (t.length === 4) return t[3] === 'MacOS' || resigned && t[3] === '_CodeSignature' ? directory :
       ['Info.plist', 'PkgInfo'].includes(t[3]) && !directory;
+    if (t.length === 5 && t[3] === '_CodeSignature') return resigned && t[4] === 'CodeResources' && !directory;
     return t.length === 5 && t[3] === 'MacOS' && t[4] === helper[1] && !directory;
   }
   const framework = /^(Electron Framework|Mantle|ReactiveObjC|Squirrel)\.framework$/.exec(t[1]);
@@ -337,4 +344,4 @@ function verifyPortableArchive(archive, platform, arch, options = {}) {
   return seen.size;
 }
 
-module.exports = { PACKAGE_FILES, PACKAGE_IGNORE_SOURCE, isPackageExcluded, verifyPortableArchive };
+module.exports = { PACKAGE_FILES, PACKAGE_IGNORE_SOURCE, approvedMacMember, isPackageExcluded, verifyPortableArchive };
