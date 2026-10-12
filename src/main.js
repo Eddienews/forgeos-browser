@@ -41,7 +41,7 @@ const { classifyAction, compareAgentPreview, hashEffectProof } = require('./engi
 const { runGoal } = require('./engine/agent-loop');
 const credentialPolicy = require('./engine/credential-policy');
 const { browserViewBounds, popupDecision } = require('./engine/view-layout');
-const { shortcutAction, nextZoom, tabTarget, externalUrls } = require('./engine/desktop-integration');
+const { shortcutAction, nextZoom, tabTarget, externalUrls, closedTabRecord, rememberClosedTab } = require('./engine/desktop-integration');
 const sessionStore = require('./engine/session-store');
 const notebook = require('./engine/research-notebook');
 const { cleanUrlString } = require('./engine/url-cleaner');
@@ -578,6 +578,7 @@ async function changePrivacyMode(nextModeId) {
   const reloadPlan = captureTabReloadPlan(tabs, activeTabId);
   const replacements = [];
   modeId = nextModeId;
+  closedTabs.length = 0; // a mode change must not carry tabs across privacy levels
 
   try {
     for (const item of reloadPlan.items) {
@@ -704,6 +705,29 @@ async function approveAgentNavigation(url) {
 /* Keyboard shortcuts and links from other applications                */
 /* ------------------------------------------------------------------ */
 
+// Tabs the human closed, most recent first, for Ctrl+Shift+T. In memory only.
+const closedTabs = [];
+
+/** A deliberate close by the human: remember it, then close. */
+function closeTabByUser(id) {
+  rememberClosedTab(closedTabs, closedTabRecord(tabs.get(id)));
+  return closeTab(id);
+}
+
+function reopenClosedTab() {
+  const record = closedTabs.shift();
+  if (!record) return false;
+  // A container tab returns to its container; that needs Standard mode.
+  const containerId = record.containerId && CONTAINER_IDS.includes(record.containerId) && modeId === 'standard'
+    ? record.containerId : null;
+  if (record.containerId && !containerId) return reopenClosedTab(); // cannot be restored faithfully: skip it
+  const t = createTab('about:blank', { containerId });
+  switchTab(t.id, { focus: true });
+  navigateIn(t, record.url);
+  log.log('INFO', 'closed tab reopened', { url: record.url.slice(0, 200) });
+  return true;
+}
+
 function focusAddressBar() {
   if (!chromeWin || chromeWin.isDestroyed()) return;
   chromeWin.webContents.focus();
@@ -727,10 +751,11 @@ function runShortcut(action) {
     case 'close-tab': {
       if (!t) return false;
       const last = tabs.size === 1;
-      closeTab(t.id).then(() => { if (last && !agentQuitting && chromeWin && !chromeWin.isDestroyed()) openHumanTab(null); })
+      closeTabByUser(t.id).then(() => { if (last && !agentQuitting && chromeWin && !chromeWin.isDestroyed()) openHumanTab(null); })
         .catch(() => {});
       return true;
     }
+    case 'reopen-tab': return reopenClosedTab();
     case 'focus-address': focusAddressBar(); return true;
     case 'reload': if (t) t.wc.reload(); return !!t;
     case 'back':
@@ -992,7 +1017,7 @@ function registerIpc() {
     switchTab(t.id, { focus: true });
     return { id: t.id, containerId: t.containerId };
   });
-  handle('forge:close-tab', (_e, id) => closeTab(id));
+  handle('forge:close-tab', (_e, id) => closeTabByUser(id));
   handle('forge:switch-tab', (_e, id) => { if (tabs.has(id)) switchTab(id); });
   handle('forge:set-menu-open', (_e, state) => {
     if (!chromeWin || !activeTabId) return false;
@@ -1022,6 +1047,7 @@ function registerIpc() {
       t.adapter.takeDelta();
     }
     downloads.length = 0;
+    closedTabs.length = 0;
     bh.clearHistory();
     sessionStore.clear(getRuntimeBase());
     log.log('INFO', 'clear session complete', { cookiesRemoved: removed });

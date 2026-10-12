@@ -42,7 +42,7 @@ function shortcutAction(input) {
   if (key === 'PageDown' && !shift) return 'next-tab';
   if (key === 'PageUp' && !shift) return 'previous-tab';
   if (input.isAutoRepeat) return key === '=' || key === '+' || key === '-' ? zoomAction(key) : null;
-  if (shift) return key === 'i' ? 'devtools' : key === '+' ? 'zoom-in' : null;
+  if (shift) return key === 'i' ? 'devtools' : key === '+' ? 'zoom-in' : key === 't' ? 'reopen-tab' : null;
   switch (key) {
     case 't': return 'new-tab';
     case 'w': return 'close-tab';
@@ -80,6 +80,33 @@ function tabTarget(action, orderedIds, activeId) {
   return null;
 }
 
+const MAX_CLOSED_TABS = 10;
+
+/**
+ * What to remember about a tab the user just closed, so Ctrl+Shift+T can bring
+ * it back, or null when it must be forgotten. Remembering a tab is a small
+ * history record, so it follows the same rule as history: nothing from an
+ * agent tab, a forget-on-close tab, or a mode that keeps no history, and only
+ * a real http(s) page. The list lives in memory and is never written to disk.
+ */
+function closedTabRecord(tab) {
+  if (!tab || tab.agentOwned || tab.forgetOnClose || tab.retainHistory === false || tab.restoreOnRestart === false) return null;
+  const url = typeof tab.url === 'string' ? tab.url : '';
+  if (url.length > 4096) return null;
+  let parsed;
+  try { parsed = new URL(url); } catch { return null; }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) return null;
+  return { url: parsed.href, containerId: tab.containerId == null ? null : String(tab.containerId) };
+}
+
+/** Push onto the most-recent-first list, keeping at most `limit` entries. */
+function rememberClosedTab(list, record, limit = MAX_CLOSED_TABS) {
+  if (!Array.isArray(list) || !record) return list;
+  list.unshift(record);
+  if (list.length > limit) list.length = limit;
+  return list;
+}
+
 /**
  * Links passed on the command line (a desktop "open with", or a second launch
  * while the browser is running). Only complete http(s) URLs are accepted:
@@ -99,4 +126,7 @@ function externalUrls(argv) {
   return urls;
 }
 
-module.exports = { shortcutAction, nextZoom, tabTarget, externalUrls, MAX_EXTERNAL_URLS };
+module.exports = {
+  shortcutAction, nextZoom, tabTarget, externalUrls, closedTabRecord, rememberClosedTab,
+  MAX_EXTERNAL_URLS, MAX_CLOSED_TABS,
+};

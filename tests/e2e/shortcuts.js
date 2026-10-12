@@ -110,6 +110,43 @@ async function main() {
   check('the handed-over page has no chrome bridge',
     await page(win).executeJavaScript("typeof window.forge === 'undefined' && typeof window.require === 'undefined'"));
 
+  // Ctrl+Shift+T brings back the tab just closed.
+  await ui(win, 'window.forge.newTab()');
+  await ui(win, `window.forge.navigate(${JSON.stringify(origin + '/reopen-me')})`);
+  await until(() => page(win)?.getURL() === origin + '/reopen-me' && !page(win).isLoading());
+  const withReopen = (await state(win)).tabs.length;
+  press(page(win), 'W', ['control']);
+  await until(async () => (await state(win)).tabs.length === withReopen - 1);
+  press(page(win), 'T', ['control', 'shift']);
+  await until(async () => (await state(win)).tabs.length === withReopen);
+  await until(() => page(win)?.getURL() === origin + '/reopen-me' && !page(win).isLoading());
+  check('Ctrl+Shift+T reopens the closed tab at its address', true);
+  press(page(win), 'T', ['control', 'shift']);
+  await sleep(500);
+  check('nothing reopens when no closed tab is remembered', (await state(win)).tabs.length === withReopen);
+
+  // A forget-on-close tab is forgotten: it cannot be brought back.
+  await ui(win, 'window.forge.newTab()');
+  await ui(win, `window.forge.navigate(${JSON.stringify(origin + '/forget-me')})`);
+  await until(() => page(win)?.getURL() === origin + '/forget-me' && !page(win).isLoading());
+  await ui(win, 'window.forge.setForgetOnClose(true)');
+  const withForget = (await state(win)).tabs.length;
+  press(page(win), 'W', ['control']);
+  await until(async () => (await state(win)).tabs.length === withForget - 1);
+  press(page(win), 'T', ['control', 'shift']);
+  await sleep(600);
+  const afterForget = await state(win);
+  check('a forget-on-close tab is not reopened', afterForget.tabs.length === withForget - 1 &&
+    !JSON.stringify(afterForget.tabs).includes('forget-me'));
+
+  // Clearing the session also forgets closed tabs.
+  press(page(win), 'W', ['control']);
+  await until(async () => (await state(win)).tabs.length === withForget - 2);
+  await ui(win, 'window.forge.clearSession()');
+  press(page(win), 'T', ['control', 'shift']);
+  await sleep(600);
+  check('Clear Session forgets closed tabs', (await state(win)).tabs.length === withForget - 2);
+
   // Ctrl+W closes; closing the last tab leaves a fresh blank one, not an empty window.
   let remaining = (await state(win)).tabs.length;
   while (remaining > 1) {

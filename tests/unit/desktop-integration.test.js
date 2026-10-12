@@ -3,7 +3,8 @@
 /* Gate K — desktop behaviour that takes input from pages and other programs. */
 const fs = require('fs');
 const path = require('path');
-const { shortcutAction, nextZoom, tabTarget, externalUrls, MAX_EXTERNAL_URLS } =
+const { shortcutAction, nextZoom, tabTarget, externalUrls, closedTabRecord, rememberClosedTab,
+  MAX_EXTERNAL_URLS, MAX_CLOSED_TABS } =
   require('../../src/engine/desktop-integration');
 
 const root = path.join(__dirname, '../..');
@@ -29,6 +30,7 @@ module.exports = [
         [key('-', ctrl), 'zoom-out'], [key('0', ctrl), 'zoom-reset'],
         [key('F11'), 'fullscreen'], [key('F12'), 'devtools'], [key('I', { control: true, shift: true }), 'devtools'],
         [key('q', ctrl), 'quit'], [key('t', { meta: true }), 'new-tab'],
+        [key('T', { control: true, shift: true }), 'reopen-tab'],
       ];
       for (const [input, action] of expected) a.strictEqual(shortcutAction(input), action, JSON.stringify(input));
     },
@@ -42,7 +44,7 @@ module.exports = [
         key('ArrowLeft'), key('Enter'), key('Backspace'), key(' '), key('F1'), key('F5', { shift: true }),
         key('c', { control: true }), key('v', { control: true }), key('a', { control: true }), key('z', { control: true }),
         key('s', { control: true }), key('t', { control: true, alt: true }), key('ArrowLeft', { alt: true, shift: true }),
-        key('t', { control: true, shift: true }), { type: 'keyUp', key: 't', control: true },
+        key('w', { control: true, shift: true }), { type: 'keyUp', key: 't', control: true },
         { type: 'keyDown', control: true }, null, undefined, {},
       ]) a.strictEqual(shortcutAction(input), null, JSON.stringify(input));
     },
@@ -53,6 +55,7 @@ module.exports = [
     fn(a) {
       const held = { control: true, isAutoRepeat: true };
       for (const k of ['t', 'w', 'r', 'q', 'Tab', '1', '0']) a.strictEqual(shortcutAction(key(k, held)), null, k);
+      a.strictEqual(shortcutAction(key('T', { ...held, shift: true })), null, 'reopen does not repeat');
       a.strictEqual(shortcutAction(key('=', held)), 'zoom-in');
       a.strictEqual(shortcutAction(key('-', held)), 'zoom-out');
     },
@@ -75,6 +78,35 @@ module.exports = [
       a.strictEqual(tabTarget('last-tab', ids, 4), 9);
       a.strictEqual(tabTarget('next-tab', [], 1), null);
       a.strictEqual(tabTarget('reload', ids, 4), null);
+    },
+  },
+  {
+    name: 'a closed tab is remembered only when history would be kept',
+    gate: 'K',
+    fn(a) {
+      const tab = { url: 'https://site.test/a?b=1#c', containerId: null, retainHistory: true, restoreOnRestart: true };
+      a.deepStrictEqual(closedTabRecord(tab), { url: 'https://site.test/a?b=1#c', containerId: null });
+      a.deepStrictEqual(closedTabRecord({ ...tab, containerId: 'work' }), { url: 'https://site.test/a?b=1#c', containerId: 'work' });
+      for (const change of [{ agentOwned: true }, { forgetOnClose: true }, { retainHistory: false }, { restoreOnRestart: false },
+        { url: 'about:blank' }, { url: '' }, { url: undefined }, { url: 'file:///etc/passwd' },
+        { url: 'data:text/html,x' }, { url: 'https://user:pw@site.test/' }, { url: 'https://site.test/' + 'a'.repeat(5000) }])
+        a.strictEqual(closedTabRecord({ ...tab, ...change }), null, JSON.stringify(change).slice(0, 60));
+      a.strictEqual(closedTabRecord(null), null);
+
+      const list = [];
+      rememberClosedTab(list, null);
+      a.strictEqual(list.length, 0, 'a forgotten tab adds nothing');
+      for (let i = 0; i < MAX_CLOSED_TABS + 5; i += 1) rememberClosedTab(list, { url: `https://s${i}.test/`, containerId: null });
+      a.strictEqual(list.length, MAX_CLOSED_TABS);
+      a.strictEqual(list[0].url, `https://s${MAX_CLOSED_TABS + 4}.test/`, 'most recent first');
+
+      const main = read('src/main.js');
+      // Only deliberate human closes are remembered; the list is memory-only and wiped with the session and on mode change.
+      a.strictEqual((main.match(/rememberClosedTab\(/g) || []).length, 1);
+      a.match(main, /handle\('forge:close-tab', \(_e, id\) => closeTabByUser\(id\)\);/);
+      a.match(main, /downloads\.length = 0;\s+closedTabs\.length = 0;/);
+      a.match(main, /modeId = nextModeId;\s+closedTabs\.length = 0;/);
+      a.doesNotMatch(main, /closedTabs[^\n]*(writeFile|JSON\.stringify|sessionStore)/);
     },
   },
   {

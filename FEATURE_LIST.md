@@ -17,8 +17,9 @@ increments. Status legend: `[x]` shipped, `[~]` in progress, `[ ]` planned.
 ## Next — Browser essentials
 
 - [ ] Automatic update notification and an About ForgeOS page.
-- [ ] Advanced tabs: reopen closed, pin, duplicate, mute, group, and restore the
-  previous session.
+- [~] Advanced tabs: reopen closed (Ctrl+Shift+T, merged into main; release
+  pending) and restore the previous session are done; pin, duplicate, mute and
+  group remain planned.
 - [~] Find in page with result count, Ctrl+F/F3 navigation and a chrome-owned search bar (merged into main; release pending).
 - [~] Site permission controls for camera, microphone, location, notifications,
   and clipboard access: per-site Ask/Allow/Block in the site panel and
