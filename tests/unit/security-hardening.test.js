@@ -250,6 +250,31 @@ module.exports = [
     },
   },
   {
+    name: 'user agent and client-hint platform name the real operating system consistently',
+    gate: 'K',
+    fn(a) {
+      const { GENERIC_UA, genericUserAgent, clientHintPlatform, applyAppLevelHardening } =
+        require('../../src/engine/fingerprint-hardening');
+      const expected = { win32: ['Windows NT 10.0; Win64; x64', '"Windows"'],
+        darwin: ['Macintosh; Intel Mac OS X 10_15_7', '"macOS"'], linux: ['X11; Linux x86_64', '"Linux"'] };
+      for (const [platform, [token, hint]] of Object.entries(expected)) {
+        const ua = genericUserAgent(platform, '150.0.1.2');
+        a.strictEqual(ua, `Mozilla/5.0 (${token}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.1.2 Safari/537.36`);
+        a.strictEqual(clientHintPlatform(platform), hint);
+        a.doesNotMatch(ua, /Electron|Forge/i);
+      }
+      a.strictEqual(GENERIC_UA, genericUserAgent(process.platform));
+      a.strictEqual(clientHintPlatform('freebsd'), '"Linux"');
+      // No command-line switch is appended after startup, where it has no effect.
+      const app = { commandLine: { appendSwitch() { throw new Error('unexpected switch'); } } };
+      applyAppLevelHardening(app);
+      a.strictEqual(app.userAgentFallback, GENERIC_UA);
+      const adapter = read('src/ext/electron-adapter.js');
+      a.doesNotMatch(adapter, /'"Windows"'/);
+      a.strictEqual((adapter.match(/= uaPlatform;/g) || []).length, 2);
+    },
+  },
+  {
     name: 'private writes are owner-only even over an existing readable file',
     gate: 'K',
     fn(a) {

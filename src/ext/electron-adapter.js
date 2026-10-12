@@ -29,7 +29,7 @@ const { permissionFor, permissionGrantKey, permissionCheckAllowed } = require('.
 const { MODES } = require('../engine/privacy-modes');
 const settings = require('../engine/settings');
 const allowlist = require('../engine/site-allowlist');
-const { GENERIC_UA } = require('../engine/fingerprint-hardening');
+const { GENERIC_UA, clientHintPlatform } = require('../engine/fingerprint-hardening');
 const { progressPercent } = require('../engine/download-center');
 
 const DOWNLOADS_DIR = path.join(path.dirname(path.dirname(__dirname)), 'downloads');
@@ -109,12 +109,14 @@ class SessionAdapter {
       // suspicious to Google as a wrong value — inject them explicitly.
       const uaFull = `"Chromium";v="${chromeVer}", "Google Chrome";v="${chromeVer}", "Not?A_Brand";v="99"`;
       const uaBrand = `"Not?A_Brand";v="99", "Chromium";v="${chromeVer}"`;
+      // The real operating system: it must agree with what JavaScript exposes.
+      const uaPlatform = clientHintPlatform();
       let foundUA = false, foundMobile = false, foundPlatform = false;
       for (const key of Object.keys(h)) {
         if (/^sec-ch-ua$/i.test(key)) {
           h[key] = uaFull; foundUA = true;
         } else if (/^sec-ch-ua-platform$/i.test(key)) {
-          h[key] = '"Windows"'; foundPlatform = true;
+          h[key] = uaPlatform; foundPlatform = true;
         } else if (/^sec-ch-ua-mobile$/i.test(key)) {
           h[key] = '?0'; foundMobile = true;
         } else if (/^user-agent$/i.test(key)) {
@@ -123,7 +125,7 @@ class SessionAdapter {
       }
       if (!foundUA) h['Sec-CH-UA'] = uaFull;
       if (!foundMobile) h['Sec-CH-UA-Mobile'] = '?0';
-      if (!foundPlatform) h['Sec-CH-UA-Platform'] = '"Windows"';
+      if (!foundPlatform) h['Sec-CH-UA-Platform'] = uaPlatform;
       // Sec-CH-UA-Full-Version-List is checked for consistency too.
       const major = chromeVer.split('.')[0];
       h['Sec-CH-UA-Full-Version-List'] = `"Chromium";v="${chromeVer}", "Google Chrome";v="${chromeVer}", "Not?A_Brand";v="99.0.${major}.5"`;

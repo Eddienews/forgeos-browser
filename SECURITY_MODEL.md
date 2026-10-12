@@ -128,6 +128,11 @@ browser cookies or credentials to bypass YouTube login, age, or bot gates.
 - Settings, history, bookmarks and site exceptions are stored owner-only in
   the user-data directory (next to the executable only in portable mode).
 - External tools started by plugins never inherit the inference key.
+- The User-Agent and `Sec-CH-UA-Platform` name the real operating system, so
+  request headers agree with `navigator.platform` and
+  `navigator.userAgentData`, which no sandbox-safe mechanism can change. The
+  `Sec-CH-UA` brand list still names Google Chrome while JavaScript reports
+  Chromium; that remaining difference is documented, not hidden.
 - TLS validation is never weakened (certificate errors are blocked and logged).
 - `document.cookie`/local storage are not exported by the extraction layer.
 
