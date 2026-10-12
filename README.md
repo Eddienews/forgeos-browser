@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Build](https://github.com/Eddienews/forgeos-browser/actions/workflows/build.yml/badge.svg)](https://github.com/Eddienews/forgeos-browser/actions)
-[![Tests](https://img.shields.io/badge/tests-400%20passing-brightgreen)](https://github.com/Eddienews/forgeos-browser/blob/main/tests/run-tests.js)
+[![Tests](https://img.shields.io/badge/tests-401%20passing-brightgreen)](https://github.com/Eddienews/forgeos-browser/blob/main/tests/run-tests.js)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20·%20macOS%20·%20Linux%20·%20Pi-blue)](https://github.com/Eddienews/forgeos-browser/releases)
 [![Telemetry](https://img.shields.io/badge/telemetry-zero-orange)](https://github.com/Eddienews/forgeos-browser/blob/main/PRIVACY_MODEL.md)
 
@@ -53,7 +53,7 @@ Measured vs Brave/Chrome/Edge on the same machine (see [results/BENCHMARK.md](re
 ```bash
 npm install
 npm start                 # dev
-npm test                  # 400 unit tests
+npm test                  # 401 unit tests
 npm run package           # electron-packager for host platform
 node scripts/make-portable.js   # portable zip
 # cross-platform: node scripts/package.js --platform=linux,darwin --arch=x64,arm64
@@ -112,14 +112,14 @@ Unsigned CI builds: first launch via right-click → Open → Open.
 ```bash
 npm install && npm start
 npm run package
-./dist/ForgeBrowserLab-linux-x64/forge-browser-lab
+./dist/ForgeBrowserLab-linux-x64/ForgeBrowserLab
 ```
 
 **Raspberry Pi (arm64, Pi 4/5)**
 ```bash
 npm install && npm start
 npm run package -- --platform=linux --arch=arm64
-./dist/ForgeBrowserLab-linux-arm64/forge-browser-lab
+./dist/ForgeBrowserLab-linux-arm64/ForgeBrowserLab
 ```
 > armv7l (32-bit Pi) is NOT supported — Electron dropped 32-bit ARM. Use a 64-bit OS (Raspberry Pi OS arm64).
 

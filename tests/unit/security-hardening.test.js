@@ -211,6 +211,26 @@ module.exports = [
     },
   },
   {
+    name: 'packaged binaries disable Node runtime, NODE_OPTIONS and inspector fuses',
+    gate: 'K',
+    fn(a) {
+      const { FuseV1Options, FuseVersion } = require('@electron/fuses');
+      const { fuseConfig, packagedExecutable } = require('../../scripts/package');
+      for (const [plat, arch] of [['linux', 'x64'], ['win32', 'x64'], ['darwin', 'x64'], ['darwin', 'arm64']]) {
+        const config = fuseConfig(plat, arch);
+        a.strictEqual(config.version, FuseVersion.V1);
+        a.strictEqual(config[FuseV1Options.RunAsNode], false);
+        a.strictEqual(config[FuseV1Options.EnableNodeOptionsEnvironmentVariable], false);
+        a.strictEqual(config[FuseV1Options.EnableNodeCliInspectArguments], false);
+        a.strictEqual(config[FuseV1Options.OnlyLoadAppFromAsar], true);
+        a.strictEqual(config.resetAdHocDarwinSignature, plat === 'darwin' && arch === 'arm64');
+      }
+      a.strictEqual(packagedExecutable('out', 'win32'), path.join('out', 'ForgeBrowserLab.exe'));
+      a.strictEqual(packagedExecutable('out', 'linux'), path.join('out', 'ForgeBrowserLab'));
+      a.strictEqual(packagedExecutable('out', 'darwin'), path.join('out', 'ForgeBrowserLab.app'));
+    },
+  },
+  {
     name: 'private writes are owner-only even over an existing readable file',
     gate: 'K',
     fn(a) {
