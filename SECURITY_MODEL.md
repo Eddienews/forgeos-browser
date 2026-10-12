@@ -108,7 +108,11 @@ browser cookies or credentials to bypass YouTube login, age, or bot gates.
 ## Sandboxing and boundaries (Phase 17)
 
 - Page WebContentsViews: `sandbox:true`, `contextIsolation:true`,
-  `nodeIntegration:false`, and no preload; `setWindowOpenHandler` denies.
+  `nodeIntegration:false`, and no preload. `setWindowOpenHandler` always denies
+  a native child window. In a human tab, a link that asks for a new window is
+  reopened as an ordinary ForgeOS tab with no opener relationship, only for an
+  http(s) destination and only right after user input on that tab; agent tabs
+  never open tabs.
   Gate K verifies that remote pages cannot reach Node, Electron,
   `window.forge`, the filesystem, or other tabs.
 - Page-world fingerprint shims are not injected. The previous preload-based
@@ -131,8 +135,11 @@ browser cookies or credentials to bypass YouTube login, age, or bot gates.
 - The User-Agent and `Sec-CH-UA-Platform` name the real operating system, so
   request headers agree with `navigator.platform` and
   `navigator.userAgentData`, which no sandbox-safe mechanism can change. The
-  `Sec-CH-UA` brand list still names Google Chrome while JavaScript reports
-  Chromium; that remaining difference is documented, not hidden.
+  `Sec-CH-UA` brand list repeats the engine's own list (Chromium), learned at
+  startup from the trusted toolbar renderer, and is sent only to secure
+  origins. ForgeOS does not claim to be Google Chrome. Setting
+  `identifyAsChrome: true` in the settings file restores that claim for sites
+  that demand it, at the cost of contradicting `navigator.userAgentData`.
 - TLS validation is never weakened (certificate errors are blocked and logged).
 - `document.cookie`/local storage are not exported by the extraction layer.
 

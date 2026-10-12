@@ -25,7 +25,7 @@ const { PluginRunner } = require('./ext/plugins');
 const { sessionPlanFor, captureTabReloadPlan, clearSessionData, containerPartition, CONTAINER_IDS } = require('./engine/storage-manager');
 const { MODES, isValidMode } = require('./engine/privacy-modes');
 const { analyzeAgentView, IN_PAGE_SCRIPT, readPageView } = require('./engine/agent-view');
-const { applyAppLevelHardening } = require('./engine/fingerprint-hardening');
+const { applyAppLevelHardening, setEngineBrands } = require('./engine/fingerprint-hardening');
 const { requestAction } = require('./engine/permissions');
 const settings = require('./engine/settings');
 const bh = require('./engine/bookmarks-history');
@@ -39,7 +39,7 @@ const { normalizeSnapshot } = require('./engine/page-snapshot');
 const { classifyAction, compareAgentPreview, hashEffectProof } = require('./engine/action-policy');
 const { runGoal } = require('./engine/agent-loop');
 const credentialPolicy = require('./engine/credential-policy');
-const { browserViewBounds } = require('./engine/view-layout');
+const { browserViewBounds, popupDecision } = require('./engine/view-layout');
 const sessionStore = require('./engine/session-store');
 const notebook = require('./engine/research-notebook');
 const { cleanUrlString } = require('./engine/url-cleaner');
@@ -400,9 +400,40 @@ function createTab(url = 'about:blank', opts = {}) {
     log.log('ERROR', 'renderer gone', { reason: details.reason, exitCode: details.exitCode });
   });
 
-  // window.open is denied: no untrusted content opens its own chrome.
+  // No untrusted content opens its own chrome: a native child window is
+  // always denied. A human tab's link that asks for a new window (target=_blank,
+  // window.open) is reopened as an ordinary ForgeOS tab instead, with no opener
+  // relationship, but only right after real user input on that tab. Agent
+  // tabs never open tabs.
+  let lastUserInputAt = 0;
+  wc.on('input-event', (_e, input) => {
+    if (input && (input.type === 'mouseDown' || input.type === 'mouseUp' || input.type === 'keyDown' ||
+        input.type === 'rawKeyDown' || input.type === 'gestureTap')) lastUserInputAt = Date.now();
+  });
   wc.setWindowOpenHandler(({ url }) => {
-    log.log('DENY', 'window.open blocked', { url: url.slice(0, 200) });
+    const decision = popupDecision({
+      url, agentOwned: tab.agentOwned, closing: !!tab.closing, active: activeTabId === tab.id,
+      msSinceUserInput: Date.now() - lastUserInputAt, openTabs: tabs.size,
+    });
+    if (decision.open) {
+      lastUserInputAt = 0; // one tab per user action
+      log.log('ALLOW', 'link opened in new tab', { url: url.slice(0, 200) });
+      // After this handler returns: never create a view inside the callback.
+      setImmediate(() => {
+        if (tab.closing || !tabs.has(tab.id)) return;
+        try {
+          const opened = createTab('about:blank', {
+            containerId: tab.containerId, forgetOnClose: tab.forgetOnClose && !tab.containerId,
+          });
+          switchTab(opened.id, { focus: true });
+          navigateIn(opened, decision.url);
+        } catch (error) {
+          log.log('ERROR', 'new tab from link failed', { error: String(error).slice(0, 120) });
+        }
+      });
+    } else {
+      log.log('DENY', 'window.open blocked', { url: String(url).slice(0, 200), reason: decision.reason });
+    }
     return { action: 'deny' };
   });
 
@@ -1002,6 +1033,17 @@ function registerIpc() {
       const fieldSensitive = classifyField({ type: probe.type, name: probe.name, id: probe.id }).sensitive;
       const gate = await approveAction('CLICK_ELEMENT', { selector, tag: probe.tag, type: probe.type, formAction: probe.formAction, fieldSensitive, url: t.url });
       if (gate.verdict !== 'ALLOW') return gate;
+      // This demo acts on the human's own page, outside the isolated agent
+      // tab, so even a click the policy allows is confirmed by the human.
+      if (!chromeWin || chromeWin.isDestroyed()) return { verdict: 'DENY', reason: 'no browser window to confirm' };
+      const confirmation = await dialog.showMessageBox(chromeWin, {
+        type: 'question', title: 'ForgeOS Browser — demo click',
+        message: 'Click this element on the current page?',
+        detail: `Element: ${String(selector).slice(0, 200)}\nPage: ${String(t.url).slice(0, 200)}`,
+        buttons: ['Cancel', 'Click'], defaultId: 0, cancelId: 0, noLink: true,
+      });
+      if (confirmation.response !== 1 || activeTab() !== t || t.wc.isDestroyed())
+        return { verdict: 'DENY', reason: 'click not confirmed by the human' };
       t.wc.sendInputEvent({ type: 'mouseDown', x: Math.round(probe.x), y: Math.round(probe.y), button: 'left', clickCount: 1 });
       t.wc.sendInputEvent({ type: 'mouseUp', x: Math.round(probe.x), y: Math.round(probe.y), button: 'left', clickCount: 1 });
       log.log('ALLOW', 'agent click dispatched', { selector, url: t.url.slice(0, 200) });
@@ -1208,7 +1250,24 @@ function createChromeWindow() {
   chromeWin.on('closed', () => { chromeWin = null; });
   // Attach the loader handler BEFORE loadFile: file:// may finish loading
   // near-instantly, so the listener must exist before the request starts.
-  chromeWin.webContents.once('did-finish-load', () => {
+  chromeWin.webContents.once('did-finish-load', async () => {
+    // Learn the engine's client-hint brands from this trusted renderer before
+    // any page loads, so request headers repeat what pages read in JavaScript.
+    try {
+      const reported = await Promise.race([
+        chromeWin.webContents.executeJavaScript(`navigator.userAgentData
+          ? navigator.userAgentData.getHighEntropyValues(['fullVersionList']).then((v) => ({
+              brands: navigator.userAgentData.brands.map((b) => ({ brand: b.brand, version: b.version })),
+              fullVersionList: (v.fullVersionList || []).map((b) => ({ brand: b.brand, version: b.version })),
+            }))
+          : null`),
+        new Promise((resolve) => setTimeout(() => resolve(null), 2000)),
+      ]);
+      log.log('INFO', 'engine client-hint brands ' + (setEngineBrands(reported) ? 'learned' : 'unavailable; brand hints omitted'));
+    } catch {
+      log.log('WARN', 'engine client-hint brands unavailable; brand hints omitted');
+    }
+    if (!chromeWin || chromeWin.isDestroyed()) return;
     // Session restore (crash recovery): reopen tabs from the last session.
     // Named persistent containers are a Standard-mode feature. A later strict
     // startup must not fail while reading an older Standard session file.

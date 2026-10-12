@@ -29,7 +29,7 @@ const { permissionFor, permissionGrantKey, permissionCheckAllowed } = require('.
 const { MODES } = require('../engine/privacy-modes');
 const settings = require('../engine/settings');
 const allowlist = require('../engine/site-allowlist');
-const { GENERIC_UA, clientHintPlatform } = require('../engine/fingerprint-hardening');
+const { GENERIC_UA, clientHintPlatform, engineClientHints, sendsClientHints } = require('../engine/fingerprint-hardening');
 const { progressPercent } = require('../engine/download-center');
 
 const DOWNLOADS_DIR = path.join(path.dirname(path.dirname(__dirname)), 'downloads');
@@ -58,6 +58,45 @@ function safeFileName(name) {
 // A warning label only. Whether a file may be opened is decided by the
 // allowlist in download-center.js, never by this list.
 const EXECUTABLE_RE = /\.(exe|msi|msix|appx|bat|cmd|com|scr|ps1|vbs|vbe|js|jse|wsf|wsh|hta|cpl|msc|scf|lnk|url|jar|apk|dmg|pkg|app|command|sh|run|bin|desktop|appimage|deb|rpm|py|pl|rb|pif|reg|cer|iso|svg)$/i;
+
+const CLIENT_HINT_RE = /^sec-ch-ua(?:-mobile|-platform|-full-version-list)?$/i;
+
+/**
+ * Rewrite the identity headers of one request.
+ *
+ * Default: the brand list is the engine's own, learned at startup. Until it is
+ * known, no brand hint is sent rather than a guessed one.
+ *
+ * settings.identifyAsChrome === true is an explicit compatibility switch: it
+ * names Google Chrome in the brand list, which some sign-in pages require.
+ * That contradicts navigator.userAgentData and is off by default.
+ */
+function rewriteIdentityHeaders(requestHeaders, url, currentSettings = {}, chromeVersion = process.versions.chrome || '') {
+  const headers = {};
+  const hadFullList = Object.keys(requestHeaders || {}).some((key) => /^sec-ch-ua-full-version-list$/i.test(key));
+  for (const [key, value] of Object.entries(requestHeaders || {})) {
+    if (CLIENT_HINT_RE.test(key)) continue; // rebuilt below, or deliberately omitted
+    headers[key] = /^user-agent$/i.test(key) ? GENERIC_UA : value;
+  }
+  if (!sendsClientHints(url)) return headers;
+
+  if (currentSettings.identifyAsChrome === true) {
+    const major = chromeVersion.split('.')[0];
+    headers['Sec-CH-UA'] = `"Chromium";v="${major}", "Google Chrome";v="${major}", "Not?A_Brand";v="99"`;
+    headers['Sec-CH-UA-Full-Version-List'] =
+      `"Chromium";v="${chromeVersion}", "Google Chrome";v="${chromeVersion}", "Not?A_Brand";v="99.0.0.0"`;
+  } else {
+    const engine = engineClientHints();
+    if (!engine) return headers;
+    headers['Sec-CH-UA'] = engine.brands;
+    // A high-entropy hint: only answered when the site asked for it.
+    if (hadFullList && engine.fullVersionList) headers['Sec-CH-UA-Full-Version-List'] = engine.fullVersionList;
+  }
+  headers['Sec-CH-UA-Mobile'] = '?0';
+  // The real operating system: it must agree with what JavaScript exposes.
+  headers['Sec-CH-UA-Platform'] = clientHintPlatform();
+  return headers;
+}
 
 /** Electron's synchronous message box returns the selected button index. */
 function permissionDialogAllowed(buttonIndex) {
@@ -98,38 +137,13 @@ class SessionAdapter {
     const { session, engine, log } = this;
     const self = this;
 
-    // Google sign-in anti-bot: rewrite Sec-CH-UA client hints to match our
-    // generic Chrome UA (Electron injects 'Electron/<ver>' into these headers,
-    // which triggers "This browser or app may not be secure").
+    // Request identity. Electron sends no Sec-CH-UA client hints, and puts
+    // "Electron/<ver>" in the User-Agent. Every request gets the generic UA;
+    // secure origins also get client hints that repeat what the engine reports
+    // to JavaScript (navigator.userAgentData), so headers and page-visible
+    // values never disagree.
     session.webRequest.onBeforeSendHeaders({ urls: ['*://*/*'] }, (details, cb2) => {
-      const h = details.requestHeaders;
-      const chromeVer = process.versions.chrome || '';
-      // Real Chrome ALWAYS sends Sec-CH-UA hints on navigations; Electron 43
-      // omits them entirely (verified by header capture). Their ABSENCE is as
-      // suspicious to Google as a wrong value — inject them explicitly.
-      const uaFull = `"Chromium";v="${chromeVer}", "Google Chrome";v="${chromeVer}", "Not?A_Brand";v="99"`;
-      const uaBrand = `"Not?A_Brand";v="99", "Chromium";v="${chromeVer}"`;
-      // The real operating system: it must agree with what JavaScript exposes.
-      const uaPlatform = clientHintPlatform();
-      let foundUA = false, foundMobile = false, foundPlatform = false;
-      for (const key of Object.keys(h)) {
-        if (/^sec-ch-ua$/i.test(key)) {
-          h[key] = uaFull; foundUA = true;
-        } else if (/^sec-ch-ua-platform$/i.test(key)) {
-          h[key] = uaPlatform; foundPlatform = true;
-        } else if (/^sec-ch-ua-mobile$/i.test(key)) {
-          h[key] = '?0'; foundMobile = true;
-        } else if (/^user-agent$/i.test(key)) {
-          h[key] = GENERIC_UA; // enforce on every request, not just fallback
-        }
-      }
-      if (!foundUA) h['Sec-CH-UA'] = uaFull;
-      if (!foundMobile) h['Sec-CH-UA-Mobile'] = '?0';
-      if (!foundPlatform) h['Sec-CH-UA-Platform'] = uaPlatform;
-      // Sec-CH-UA-Full-Version-List is checked for consistency too.
-      const major = chromeVer.split('.')[0];
-      h['Sec-CH-UA-Full-Version-List'] = `"Chromium";v="${chromeVer}", "Google Chrome";v="${chromeVer}", "Not?A_Brand";v="99.0.${major}.5"`;
-      cb2({ requestHeaders: h });
+      cb2({ requestHeaders: rewriteIdentityHeaders(details.requestHeaders, details.url, settings.all()) });
     });
 
     session.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, callback) => {
@@ -413,3 +427,4 @@ class SessionAdapter {
 }
 
 module.exports = { SessionAdapter, safeFileName, permissionDialogAllowed, EXECUTABLE_RE, DOWNLOADS_DIR };
+module.exports.rewriteIdentityHeaders = rewriteIdentityHeaders;
