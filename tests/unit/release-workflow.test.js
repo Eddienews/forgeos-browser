@@ -339,7 +339,7 @@ module.exports = [
       a.match(workflow, /needs: build/);
       a.match(fs.readFileSync(path.join(__dirname, '../e2e/agent-proxy.js'), 'utf8'),
         /agent WebRTC TURN\/TCP cannot directly reach loopback/);
-      a.match(workflow, /actions\/setup-python@v5/);
+      a.match(workflow, /actions\/setup-python@[0-9a-f]{40} # v5/);
       a.match(workflow, /aioquic==1\.3\.0/);
       a.match(workflow, /PYTHONPATH:.*forge-quic-site/);
       a.match(fs.readFileSync(path.join(__dirname, '../e2e/main.js'), 'utf8'), /await runQuicE2E\(record\)/);

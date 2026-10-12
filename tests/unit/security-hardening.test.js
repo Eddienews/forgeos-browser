@@ -275,6 +275,15 @@ module.exports = [
     },
   },
   {
+    name: 'every GitHub Action is pinned to a full commit SHA',
+    gate: 'K',
+    fn(a) {
+      const workflow = read('.github/workflows/build.yml');
+      a.ok((workflow.match(/uses:\s+\S+@[0-9a-f]{40} # v\d+/g) || []).length >= 7);
+      a.doesNotMatch(workflow, /uses:\s+\S+@(?![0-9a-f]{40}\b)/);
+    },
+  },
+  {
     name: 'private writes are owner-only even over an existing readable file',
     gate: 'K',
     fn(a) {
