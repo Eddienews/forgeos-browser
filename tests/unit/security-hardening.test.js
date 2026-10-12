@@ -10,6 +10,7 @@ const Module = require('module');
 const { permissionCheckAllowed, permissionGrantKey } = require('../../src/engine/fingerprint');
 const { isSafeToOpen } = require('../../src/engine/download-center');
 const { resolveDataDir, dataFile, writePrivateAtomic } = require('../../src/engine/settings');
+const { childEnvironment } = require('../../src/ext/plugins');
 
 const root = path.join(__dirname, '../..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
@@ -195,6 +196,18 @@ module.exports = [
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
       }
+    },
+  },
+  {
+    name: 'external download tools never inherit the inference key',
+    gate: 'K',
+    fn(a) {
+      const env = childEnvironment({ ytdlp: path.join('/opt', 'tools', 'yt-dlp') },
+        { PATH: '/usr/bin', HOME: '/home/u', FORGE_TYPESAFE_API_KEY: 'sk-secret-value-123' });
+      a.strictEqual('FORGE_TYPESAFE_API_KEY' in env, false);
+      a.strictEqual(env.HOME, '/home/u');
+      a.strictEqual(env.PATH, [path.join('/opt', 'tools'), '/usr/bin'].join(path.delimiter));
+      a.doesNotMatch(JSON.stringify(env), /sk-secret-value-123/);
     },
   },
   {

@@ -94,7 +94,10 @@ and a non-sensitive error code), never the audit path or event content.
 
 Downloads go to `ForgeBrowserLab/downloads/` and are **never executed
 automatically**. The UI shows filename, source domain, size, content type, and
-state; unknown executables are marked.
+state; unknown executables are marked. "Open" hands a file to the operating
+system only when its extension is on an allowlist of inert document and media
+types; every other download is reveal-only, because a list of dangerous
+extensions cannot be complete across three platforms.
 
 YouTube plugin jobs accept only the active tab's validated YouTube URL. Human
 approval completes before tool discovery, directory creation, external process
@@ -112,6 +115,19 @@ browser cookies or credentials to bypass YouTube login, age, or bot gates.
   implementation required disabling sandbox and context isolation, while
   post-load injection interfered with later Chromium navigations. ForgeOS keeps
   the stronger trust boundary and documents engine-dependent entropy honestly.
+- Permission *checks* follow the same defaults as permission requests. Electron
+  answers every check with "granted" when no check handler is installed, so
+  `navigator.permissions.query` and check-only APIs are answered explicitly:
+  ALLOW is granted, DENY and unknown are not, and ASK is granted only to an
+  origin the user approved in the current session. Because the check is
+  boolean, pages see `denied` rather than `prompt` before approval. Serial, HID
+  and USB devices are never pre-granted.
+- The toolbar and Control Center run in their own session, separate from web
+  content, under a CSP with no inline script. Every IPC channel refuses any
+  sender other than the main frame of one of those two windows.
+- Settings, history, bookmarks and site exceptions are stored owner-only in
+  the user-data directory (next to the executable only in portable mode).
+- External tools started by plugins never inherit the inference key.
 - TLS validation is never weakened (certificate errors are blocked and logged).
 - `document.cookie`/local storage are not exported by the extraction layer.
 
