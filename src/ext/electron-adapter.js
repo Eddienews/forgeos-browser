@@ -7,6 +7,8 @@
  *  - onHeadersReceived → Set-Cookie policy (third-party / tracking /
  *                       persistent-by-mode cookies stripped)
  *  - setPermissionRequestHandler → Phase 15 defaults, ASK via dialog
+ *  - setPermissionCheckHandler / setDevicePermissionHandler → the same
+ *                       defaults for checks; devices are never pre-granted
  *  - will-download    → Phase 13 laboratory directory + metadata, never
  *                       auto-executed
  *
@@ -23,7 +25,7 @@ const { dialog, webContents } = require('electron');
 const { decideRequest } = require('../engine/network-policy');
 const { filterSetCookieHeaders } = require('../engine/cookie-policy');
 const { cleanUrl } = require('../engine/url-cleaner');
-const { permissionFor } = require('../engine/fingerprint');
+const { permissionFor, permissionGrantKey, permissionCheckAllowed } = require('../engine/fingerprint');
 const { MODES } = require('../engine/privacy-modes');
 const settings = require('../engine/settings');
 const allowlist = require('../engine/site-allowlist');
@@ -53,7 +55,9 @@ function safeFileName(name) {
   return base || 'download';
 }
 
-const EXECUTABLE_RE = /\.(exe|msi|bat|cmd|com|scr|ps1|vbs|jar|apk|dmg|sh|bin|pif|reg|cer|iso|svg)$/i;
+// A warning label only. Whether a file may be opened is decided by the
+// allowlist in download-center.js, never by this list.
+const EXECUTABLE_RE = /\.(exe|msi|msix|appx|bat|cmd|com|scr|ps1|vbs|vbe|js|jse|wsf|wsh|hta|cpl|msc|scf|lnk|url|jar|apk|dmg|pkg|app|command|sh|run|bin|desktop|appimage|deb|rpm|py|pl|rb|pif|reg|cer|iso|svg)$/i;
 
 /** Electron's synchronous message box returns the selected button index. */
 function permissionDialogAllowed(buttonIndex) {
@@ -82,6 +86,8 @@ class SessionAdapter {
     this.downloadsDir = opts.downloadsDir || DOWNLOADS_DIR;
     this.downloadItems = new Map();
     this.downloadSeq = 0;
+    // Origins the user approved through the ASK dialog, for this session only.
+    this.permissionGrants = new Set();
     this.counters = { ads: 0, trackers: 0, analytics: 0, thirdParty: 0, params: 0, cookies: 0, allowed: 0 };
     this.snapshot = { ...this.counters };
     this.installed = false;
@@ -244,6 +250,13 @@ class SessionAdapter {
           log.log(allowed ? 'ALLOW' : 'DENY', `${permission} permission ${allowed ? 'granted' : 'denied'}`, {
             permission, from: details.requestingUrl || '',
           });
+          let requester = details.requestingUrl;
+          try { requester = requester || webContents.getURL(); } catch {}
+          const grant = permissionGrantKey(requester, permission);
+          if (grant) {
+            if (allowed) self.permissionGrants.add(grant);
+            else self.permissionGrants.delete(grant);
+          }
           callback(allowed);
           return;
         }
@@ -252,6 +265,16 @@ class SessionAdapter {
       }
       callback(true);
     });
+
+    // Without a check handler Electron answers every permission check with
+    // "granted", so navigator.permissions.query and check-only APIs (sensors,
+    // idle detection, local fonts, Notification.permission) bypass the policy
+    // above. Checks follow the same defaults; ASK is true only after approval.
+    session.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) =>
+      permissionCheckAllowed(permission, self.modeId,
+        requestingOrigin || (details && details.requestingUrl) || '', self.permissionGrants));
+    // Serial, HID and USB devices are never granted without a chooser.
+    session.setDevicePermissionHandler(() => false);
 
     session.on('will-download', (event, item) => {
       const url = item.getURL();
@@ -363,6 +386,8 @@ class SessionAdapter {
     if (!item) return false;
     try { item.cancel(); return true; } catch { return false; }
   }
+
+  clearPermissionGrants() { this.permissionGrants.clear(); }
 
   resetCounters() { this.counters = { ads: 0, trackers: 0, analytics: 0, thirdParty: 0, params: 0, cookies: 0, allowed: 0 }; }
 

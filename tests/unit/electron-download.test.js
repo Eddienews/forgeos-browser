@@ -26,6 +26,8 @@ function fixture(dir, window) {
     onBeforeSendHeaders() {}, onBeforeRequest() {}, onHeadersReceived() {},
   };
   session.setPermissionRequestHandler = () => {};
+  session.setPermissionCheckHandler = () => {};
+  session.setDevicePermissionHandler = () => {};
   const records = [];
   const log = { log() {} };
   const adapter = new SessionAdapter({ session, engine: {}, log, modeId: 'standard',

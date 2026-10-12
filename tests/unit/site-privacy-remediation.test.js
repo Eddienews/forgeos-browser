@@ -22,7 +22,8 @@ function adapterFixture() {
   const ses = { webRequest: {
     onBeforeSendHeaders() {}, onBeforeRequest(_filter, fn) { handlers.before = fn; },
     onHeadersReceived(_filter, fn) { handlers.headers = fn; },
-  }, setPermissionRequestHandler() {}, on() {} };
+  }, setPermissionRequestHandler() {}, setPermissionCheckHandler() {},
+    setDevicePermissionHandler() {}, on() {} };
   const engine = { classifyRequest({ url }) { return { category: 'ADVERTISING', filterDecision: 'block', matchedKind: 'hostname', matchedRule: 'fixture', firstParty: false }; } };
   const adapter = new SessionAdapter({ session: ses, engine, log: { log() {} }, modeId: 'standard' });
   adapter.install();
@@ -43,10 +44,14 @@ function allowlistFixture(files = new Map()) {
     writeFileSync(p, value) { calls.push(['write', p]); if (p.endsWith(fail) && fail) throw new Error('EIO fixture write'); files.set(p, value); },
     renameSync(from, to) { calls.push(['rename', to]); if (to.endsWith(fail) && fail) throw new Error('EIO fixture rename'); files.set(to, files.get(from)); files.delete(from); },
     unlinkSync(p) { files.delete(p); },
+    chmodSync() {},
   };
   const module = { exports: {} };
-  vm.runInNewContext(source, { require: name => name === 'fs' ? fakeFs : require(name), module,
-    __dirname: path.join(__dirname, '../../src/engine'), process }, { filename: 'site-allowlist.js' });
+  vm.runInNewContext(source, {
+    // Relative requires resolve from the module's own directory, as in Node.
+    require: name => name === 'fs' ? fakeFs
+      : require(name.startsWith('.') ? path.join(__dirname, '../../src/engine', name) : name),
+    module, __dirname: path.join(__dirname, '../../src/engine'), process }, { filename: 'site-allowlist.js' });
   return { api: module.exports, files, calls, setFailure: x => { fail = x; } };
 }
 
