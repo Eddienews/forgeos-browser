@@ -40,6 +40,24 @@
           <label class="menu-row check"><input type="checkbox" id="site-cred-check" />
             <span>Allow sign-in here (risky)</span></label>
           <div class="menu-hint">Requests from an allowlisted host pass unfiltered. Sign-in exceptions weaken the credential warning and can be reversed here.</div>
+          <div class="menu-title site-perm-title">Permissions for this site</div>
+          <label class="menu-row"><span>Camera and microphone</span>
+            <select id="site-perm-media" data-permission="media">
+              <option value="ask">Ask</option><option value="allow">Allow</option><option value="deny">Block</option>
+            </select></label>
+          <label class="menu-row"><span>Location</span>
+            <select id="site-perm-geolocation" data-permission="geolocation">
+              <option value="ask">Ask</option><option value="allow">Allow</option><option value="deny">Block</option>
+            </select></label>
+          <label class="menu-row"><span>Notifications</span>
+            <select id="site-perm-notifications" data-permission="notifications">
+              <option value="ask">Ask</option><option value="allow">Allow</option><option value="deny">Block</option>
+            </select></label>
+          <label class="menu-row"><span>Read clipboard</span>
+            <select id="site-perm-clipboard-read" data-permission="clipboard-read">
+              <option value="ask">Ask</option><option value="allow">Allow</option><option value="deny">Block</option>
+            </select></label>
+          <div class="menu-hint" id="site-perm-hint">Ask shows a prompt each time. A site can only see that a permission is available after you allow it.</div>
           <button id="site-clear" type="button" class="site-clear">Clear this origin's data…</button>
           <div class="menu-hint">Shared session: origin storage only; cookies and cache stay to protect other origins. Dedicated session: host-only cookies and cache also clear. Domain cookies stay.</div>
           <div class="menu-hint" id="site-result" role="status"></div>

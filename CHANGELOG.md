@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+- Per-site permission controls in the site panel: Ask, Allow, or Block for camera and microphone, location, notifications, and clipboard read. The permission prompt can also remember "Always allow" or "Never allow" for the site.
+
+### Limits
+- Remembered choices apply to the exact origin in the top-level page only, in Standard mode, and never to agent-owned tabs. Embedded frames always prompt.
+- A site that checks a permission before requesting it still sees `denied` until you choose Allow, because the engine offers no "prompt" answer.
+
 ## [0.16.0] - 2026-09-24
 
 ### Added

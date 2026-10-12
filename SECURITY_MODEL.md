@@ -126,6 +126,13 @@ browser cookies or credentials to bypass YouTube login, age, or bot gates.
   origin the user approved in the current session. Because the check is
   boolean, pages see `denied` rather than `prompt` before approval. Serial, HID
   and USB devices are never pre-granted.
+- The user can remember Allow or Block per site for camera and microphone,
+  location, notifications, and clipboard read. A remembered choice is keyed to
+  the exact origin, applies only when that site is the top-level page, never
+  overrides a mode that denies the permission, and is neither read nor written
+  by agent-owned sessions. "Always allow" set from the site panel requires a
+  native confirmation; the origin always comes from the live tab, never from
+  the renderer.
 - The toolbar and Control Center run in their own session, separate from web
   content, under a CSP with no inline script. Every IPC channel refuses any
   sender other than the main frame of one of those two windows.

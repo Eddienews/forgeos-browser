@@ -261,6 +261,19 @@
   let siteMenuOrigin = '';
   let siteContext = '';
   let siteRequest = 0;
+  const SITE_PERMISSIONS = ['media', 'geolocation', 'notifications', 'clipboard-read'];
+  const sitePermissionControl = (permission) => $('site-perm-' + permission);
+  function showSitePermissions(info) {
+    const states = new Map((info.permissions || []).map((p) => [p.permission, p.state]));
+    for (const permission of SITE_PERMISSIONS) {
+      const control = sitePermissionControl(permission);
+      control.value = states.get(permission) || 'ask';
+      control.disabled = false;
+    }
+    $('site-perm-hint').textContent = info.permissionsActive === false
+      ? 'This privacy mode blocks these permissions. Remembered choices apply again in Standard mode.'
+      : 'Ask shows a prompt each time. A site can only see that a permission is available after you allow it.';
+  }
   function currentSiteContext() {
     const t = state && state.tabs.find(x => x.id === state.activeTabId);
     return t ? `${t.id}:${t.url}` : '';
@@ -289,6 +302,7 @@
     $('site-session-counts').textContent = `Session: ${info.sessionCounts.ads} ads · ${info.sessionCounts.trackers} trackers · ${info.sessionCounts.allowed} passed`;
     $('site-allow-check').checked = info.allowed;
     $('site-cred-check').checked = info.credentialAllowed;
+    showSitePermissions(info);
     $('site-result').textContent = info.credentialsGloballyAllowed ? 'Global credential policy is already disabled; this site switch cannot restore it.' : '';
     siteMenu.classList.remove('hidden');
     reserveSpaceFor(siteMenu);
@@ -322,6 +336,32 @@
   }
   $('site-allow-check').addEventListener('change', (e) => changeSiteException('blocking', e.target.checked, e.target));
   $('site-cred-check').addEventListener('change', (e) => changeSiteException('credentials', e.target.checked, e.target));
+  async function changeSitePermission(permission, control) {
+    const wanted = control.value;
+    control.disabled = true;
+    const context = currentSiteContext(), origin = siteMenuOrigin;
+    try {
+      const info = await F.sitePrivacy();
+      if (!info || info.origin !== origin || context !== currentSiteContext() || siteMenu.classList.contains('hidden'))
+        throw new Error('Active site changed.');
+      const r = await F.sitePermission(permission, wanted);
+      if (!r.ok) throw new Error(r.reason || 'Permission not changed.');
+      if (context === currentSiteContext() && origin === siteMenuOrigin) {
+        showSitePermissions(r.site);
+        $('site-result').textContent = '';
+      }
+    } catch (error) {
+      if (context === currentSiteContext() && origin === siteMenuOrigin) {
+        // Show what is actually stored, never the choice that was not applied.
+        try { const info = await F.sitePrivacy(); if (info && info.origin === origin) showSitePermissions(info); } catch {}
+        $('site-result').textContent = String(error.message || error);
+      }
+    } finally { control.disabled = false; }
+  }
+  for (const permission of SITE_PERMISSIONS) {
+    const control = sitePermissionControl(permission);
+    control.addEventListener('change', () => changeSitePermission(permission, control));
+  }
   $('site-clear').addEventListener('click', async () => {
     const button = $('site-clear'); button.disabled = true;
     try {

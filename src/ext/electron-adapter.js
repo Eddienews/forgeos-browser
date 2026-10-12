@@ -100,7 +100,19 @@ function rewriteIdentityHeaders(requestHeaders, url, currentSettings = {}, chrom
 
 /** Electron's synchronous message box returns the selected button index. */
 function permissionDialogAllowed(buttonIndex) {
-  return buttonIndex === 1;
+  // 1 = allow (this session), 2 = always allow on this site.
+  return buttonIndex === 1 || buttonIndex === 2;
+}
+
+/** Human-readable name for the approval dialog. */
+function permissionLabel(permission, details = {}) {
+  if (permission === 'media') {
+    const types = Array.isArray(details.mediaTypes) ? details.mediaTypes : [];
+    const wants = [types.includes('video') && 'Camera', types.includes('audio') && 'Microphone'].filter(Boolean);
+    return wants.length ? wants.join(' and ') + ' access' : 'Camera or microphone access';
+  }
+  const names = { geolocation: 'Location access', notifications: 'Notifications', 'clipboard-read': 'Clipboard read access' };
+  return names[permission] || `“${permission}” permission`;
 }
 
 class SessionAdapter {
@@ -127,6 +139,9 @@ class SessionAdapter {
     this.downloadSeq = 0;
     // Origins the user approved through the ASK dialog, for this session only.
     this.permissionGrants = new Set();
+    // Remembered per-site decisions. Null for agent-owned sessions: an agent
+    // tab never inherits, and never records, the human's site permissions.
+    this.sitePermissions = opts.sitePermissions || null;
     this.counters = { ads: 0, trackers: 0, analytics: 0, thirdParty: 0, params: 0, cookies: 0, allowed: 0 };
     this.snapshot = { ...this.counters };
     this.installed = false;
@@ -244,6 +259,7 @@ class SessionAdapter {
 
     session.setPermissionRequestHandler((webContents, permission, callback, details) => {
       if (!permission) { callback(false); return; }
+      details = details || {};
       const decision = permissionFor(permission, self.modeId);
       if (decision === 'DENY') {
         log.log('DENY', 'permission denied', { permission, from: details.requestingUrl || '' });
@@ -251,27 +267,52 @@ class SessionAdapter {
         return;
       }
       if (decision === 'ASK') {
+        let requester = details.requestingUrl;
+        try { requester = requester || webContents.getURL(); } catch {}
+        const grant = permissionGrantKey(requester, permission);
+        // A remembered decision belongs to the site the user is visiting. An
+        // embedded frame never inherits it and can never create one.
+        const store = details.isMainFrame === true ? self.sitePermissions : null;
+        const remembered = store ? store.get(requester, permission) : null;
+        if (remembered === 'allow' || remembered === 'deny') {
+          const allowed = remembered === 'allow';
+          log.log(allowed ? 'ALLOW' : 'DENY', `${permission} permission ${allowed ? 'granted' : 'denied'} by remembered site decision`, {
+            permission, from: requester || '',
+          });
+          callback(allowed);
+          return;
+        }
         const win = self.getChromeWindow();
         if (win) {
+          const rememberable = !!store && store.isManaged(permission) && !!store.siteOrigin(requester);
           const selectedButton = dialog.showMessageBoxSync(win, {
             type: 'question',
             title: 'Forge Browser Lab — permission request',
-            message: `“${permission}” permission requested by ${details.requestingUrl || 'a page'}`,
-            detail: 'Granting exposes this capability to the website. Recommendation: Deny unless you trust the site.',
-            buttons: ['Deny', 'Allow'],
+            message: `${permissionLabel(permission, details)} requested by ${details.requestingUrl || 'a page'}`,
+            detail: 'Granting exposes this capability to the website. Recommendation: Deny unless you trust the site.' +
+              (rememberable ? ' A remembered choice can be changed from the site badge.' : ''),
+            buttons: rememberable
+              ? ['Deny', 'Allow this session', 'Always allow on this site', 'Never allow on this site']
+              : ['Deny', 'Allow'],
             defaultId: 0,
             cancelId: 0,
+            noLink: true,
           });
-          const allowed = permissionDialogAllowed(selectedButton);
+          // The two-button dialog has no "always" choice: only index 1 allows.
+          const allowed = rememberable ? permissionDialogAllowed(selectedButton) : selectedButton === 1;
           log.log(allowed ? 'ALLOW' : 'DENY', `${permission} permission ${allowed ? 'granted' : 'denied'}`, {
             permission, from: details.requestingUrl || '',
           });
-          let requester = details.requestingUrl;
-          try { requester = requester || webContents.getURL(); } catch {}
-          const grant = permissionGrantKey(requester, permission);
           if (grant) {
             if (allowed) self.permissionGrants.add(grant);
             else self.permissionGrants.delete(grant);
+          }
+          if (rememberable && (selectedButton === 2 || selectedButton === 3)) {
+            const saved = store.set(requester, permission, selectedButton === 2 ? 'allow' : 'deny');
+            // An unsaved choice still holds for this request; it is simply not remembered.
+            log.log(saved.ok ? 'INFO' : 'ERROR', 'site permission ' + (saved.ok ? 'remembered' : 'not saved'), {
+              permission, state: selectedButton === 2 ? 'allow' : 'deny', from: requester || '',
+            });
           }
           callback(allowed);
           return;
@@ -285,10 +326,18 @@ class SessionAdapter {
     // Without a check handler Electron answers every permission check with
     // "granted", so navigator.permissions.query and check-only APIs (sensors,
     // idle detection, local fonts, Notification.permission) bypass the policy
-    // above. Checks follow the same defaults; ASK is true only after approval.
-    session.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) =>
-      permissionCheckAllowed(permission, self.modeId,
-        requestingOrigin || (details && details.requestingUrl) || '', self.permissionGrants));
+    // above. Checks follow the same defaults; ASK is true only after approval
+    // in this session or a remembered "allow" for the top-level site.
+    session.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) => {
+      const origin = requestingOrigin || (details && details.requestingUrl) || '';
+      if (permissionFor(permission, self.modeId) === 'ASK' && self.sitePermissions &&
+          details && details.isMainFrame === true) {
+        const remembered = self.sitePermissions.get(origin, permission);
+        if (remembered === 'allow') return true;
+        if (remembered === 'deny') return false;
+      }
+      return permissionCheckAllowed(permission, self.modeId, origin, self.permissionGrants);
+    });
     // Serial, HID and USB devices are never granted without a chooser.
     session.setDevicePermissionHandler(() => false);
 
@@ -405,6 +454,12 @@ class SessionAdapter {
 
   clearPermissionGrants() { this.permissionGrants.clear(); }
 
+  /** Forget this session's approval for one site, when the user resets or blocks it. */
+  revokePermissionGrant(urlOrOrigin, permission) {
+    const key = permissionGrantKey(urlOrOrigin, permission);
+    return !!key && this.permissionGrants.delete(key);
+  }
+
   resetCounters() { this.counters = { ads: 0, trackers: 0, analytics: 0, thirdParty: 0, params: 0, cookies: 0, allowed: 0 }; }
 
   /** Session totals (never reset until clear session). */
@@ -426,5 +481,5 @@ class SessionAdapter {
   }
 }
 
-module.exports = { SessionAdapter, safeFileName, permissionDialogAllowed, EXECUTABLE_RE, DOWNLOADS_DIR };
+module.exports = { SessionAdapter, safeFileName, permissionDialogAllowed, permissionLabel, EXECUTABLE_RE, DOWNLOADS_DIR };
 module.exports.rewriteIdentityHeaders = rewriteIdentityHeaders;

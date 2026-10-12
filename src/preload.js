@@ -49,6 +49,7 @@ const api = {
   sitePrivacy: () => ipcRenderer.invoke('forge:site-privacy'),
   siteException: (kind, enabled) => ipcRenderer.invoke('forge:site-exception', kind, enabled),
   siteClear: () => ipcRenderer.invoke('forge:site-clear'),
+  sitePermission: (permission, state) => ipcRenderer.invoke('forge:site-permission', permission, state),
   presetsList: () => ipcRenderer.invoke('forge:presets-list'),
   presetApply: (name) => ipcRenderer.invoke('forge:preset-apply', name),
   presetRevoke: (name) => ipcRenderer.invoke('forge:preset-revoke', name),
