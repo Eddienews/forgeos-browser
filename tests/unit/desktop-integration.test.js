@@ -7,7 +7,8 @@ const { shortcutAction, nextZoom, tabTarget, externalUrls, MAX_EXTERNAL_URLS } =
   require('../../src/engine/desktop-integration');
 
 const root = path.join(__dirname, '../..');
-const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
+// Normalize line endings: Windows checkouts may use CRLF for text files.
+const read = (file) => fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
 const key = (k, mods = {}) => ({ type: 'keyDown', key: k, ...mods });
 
 module.exports = [
