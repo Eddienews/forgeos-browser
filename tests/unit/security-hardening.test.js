@@ -312,7 +312,8 @@ module.exports = [
       // Scheduled, read-only, and wired to the same check.
       const nightly = read('.github/workflows/nightly.yml');
       a.match(nightly, /schedule:\s+- cron: '\d+ \d+ \* \* \*'/);
-      a.match(nightly, /permissions:\s+contents: read\n/);
+      // \s, not \n: Windows checkouts use CRLF line endings.
+      a.match(nightly, /permissions:\s+contents: read\s+jobs:/);
       a.match(nightly, /run: npm run check:electron/);
       a.match(nightly, /run: npm audit --audit-level=high/);
       a.match(read('.github/dependabot.yml'), /package-ecosystem: npm[\s\S]+interval: daily/);
