@@ -17,6 +17,7 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const asar = require('@electron/asar');
+const { flipFuses, FuseVersion, FuseV1Options } = require('@electron/fuses');
 const { PACKAGE_FILES, PACKAGE_IGNORE_SOURCE } = require('./package-policy');
 
 const ROOT = path.join(__dirname, '..');
@@ -91,7 +92,28 @@ function verifyPackageArchive(archivePath, sourceRoot = ROOT) {
   return leaves;
 }
 
-function main() {
+// Electron fuses are switches burned into the packaged binary. Without them
+// the shipped executable doubles as a general Node.js runtime and debugger
+// target for any local process, and will run application code placed beside
+// app.asar instead of the verified archive.
+function fuseConfig(plat, arch) {
+  return {
+    version: FuseVersion.V1,
+    // Re-sign after patching: Apple Silicon refuses a modified unsigned binary.
+    resetAdHocDarwinSignature: plat === 'darwin' && arch === 'arm64',
+    [FuseV1Options.RunAsNode]: false,
+    [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
+    [FuseV1Options.EnableNodeCliInspectArguments]: false,
+    [FuseV1Options.OnlyLoadAppFromAsar]: true,
+  };
+}
+
+function packagedExecutable(outDir, plat) {
+  if (plat === 'darwin') return path.join(outDir, 'ForgeBrowserLab.app');
+  return path.join(outDir, plat === 'win32' ? 'ForgeBrowserLab.exe' : 'ForgeBrowserLab');
+}
+
+async function main() {
 for (const plat of requestedPlatforms) {
   // Cross-build guard: darwin requires a darwin host
   if (plat === 'darwin' && hostPlatform !== 'darwin') {
@@ -121,6 +143,8 @@ for (const plat of requestedPlatforms) {
       plat === 'darwin' ? 'ForgeBrowserLab.app/Contents/Resources/app.asar' : 'resources/app.asar');
     const members = verifyPackageArchive(archivePath);
     console.log(`Verified app.asar: ${members.length} approved runtime files`);
+    await flipFuses(packagedExecutable(path.join(ROOT, 'dist', outName), plat), fuseConfig(plat, arch));
+    console.log('Hardened Electron fuses: RunAsNode, NODE_OPTIONS and inspector arguments off; app.asar only');
     console.log(`OK: dist/${outName}`);
   }
 }
@@ -129,5 +153,5 @@ console.log('\nNext (optional): npm run package:portable to zip the result.');
 console.log('NOTE: macOS bundles cannot be produced from Windows or Linux.');
 }
 
-if (require.main === module) main();
-module.exports = { verifyPackageArchive };
+if (require.main === module) main().catch((error) => { console.error(error); process.exit(1); });
+module.exports = { verifyPackageArchive, fuseConfig, packagedExecutable };

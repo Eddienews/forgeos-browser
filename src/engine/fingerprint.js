@@ -65,8 +65,33 @@ function permissionFor(permission, modeId) {
   return actual;
 }
 
+/** Stable key for one site's explicit grant. Opaque origins never match. */
+function permissionGrantKey(urlOrOrigin, permission) {
+  try {
+    const origin = new URL(String(urlOrOrigin)).origin;
+    return origin && origin !== 'null' && permission ? `${origin} ${permission}` : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Answer a permission *check* (navigator.permissions.query and every API that
+ * only checks). Electron reports "granted" for everything when no check
+ * handler exists, so the policy must be stated here as well as on requests:
+ * ALLOW is granted, DENY and unknown are not, and ASK is granted only to an
+ * origin the user approved in this session.
+ */
+function permissionCheckAllowed(permission, modeId, requestingOrigin, grants) {
+  const decision = permissionFor(permission, modeId);
+  if (decision === 'ALLOW') return true;
+  if (decision !== 'ASK') return false;
+  const key = permissionGrantKey(requestingOrigin, permission);
+  return !!key && !!grants && grants.has(key);
+}
+
 function exposureReport(modeId) {
   return EXPOSURE_MAP.map((e) => ({ channel: e.channel, mitigation: e.mitigation }));
 }
 
-module.exports = { EXPOSURE_MAP, PERMISSION_DEFAULTS, permissionFor, exposureReport };
+module.exports = { EXPOSURE_MAP, PERMISSION_DEFAULTS, permissionFor, permissionGrantKey, permissionCheckAllowed, exposureReport };

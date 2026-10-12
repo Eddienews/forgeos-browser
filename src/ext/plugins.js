@@ -14,6 +14,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const settings = require('../engine/settings');
+const { ENV_VAR: INFERENCE_KEY_ENV } = require('../engine/agent-provider');
 const {
   buildYtDlpArgs,
   classifyYtDlpError,
@@ -51,13 +52,15 @@ function boundedOutput(lines) {
   return lines.slice(-40).join('\n').slice(-8000);
 }
 
-function childEnvironment(toolchain) {
+function childEnvironment(toolchain, env = process.env) {
   const toolDirs = [toolchain.ytdlp, toolchain.ffmpeg, toolchain.jsRuntime && toolchain.jsRuntime.path]
     .filter(Boolean)
     .map((file) => path.dirname(file));
+  // The user's inference key belongs to the agent loop, never to an external tool.
+  const { [INFERENCE_KEY_ENV]: _inferenceKey, ...inherited } = env;
   return {
-    ...process.env,
-    PATH: [...new Set([...toolDirs, process.env.PATH || ''])].join(path.delimiter),
+    ...inherited,
+    PATH: [...new Set([...toolDirs, env.PATH || ''])].join(path.delimiter),
   };
 }
 
@@ -273,6 +276,7 @@ class PluginRunner {
 
 module.exports = {
   PluginRunner,
+  childEnvironment,
   DOWNLOADS_DIR,
   extractVideoId,
   resolveDownloadsDir,

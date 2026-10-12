@@ -46,4 +46,23 @@ function isExistingPathInside(baseDir, candidate, fsImpl = fs) {
   }
 }
 
-module.exports = { isExistingPathInside, isPathInside, progressPercent, upsertDownload };
+// "Open" hands a file to the operating system's default handler. A list of
+// dangerous extensions can never be complete across three platforms, so only
+// inert document and media types may be opened; everything else is reveal-only.
+const OPENABLE_EXTENSIONS = new Set([
+  'txt', 'md', 'csv', 'log', 'vtt', 'srt', 'pdf', 'epub',
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp',
+  'mp4', 'm4v', 'mkv', 'webm', 'mov',
+  'mp3', 'm4a', 'aac', 'wav', 'ogg', 'opus', 'flac',
+]);
+
+function isSafeToOpen(filePath) {
+  const name = path.basename(String(filePath || ''));
+  // Windows ignores trailing dots and spaces when choosing a handler.
+  if (!name || /[. ]$/.test(name)) return false;
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0) return false;
+  return OPENABLE_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
+}
+
+module.exports = { isExistingPathInside, isPathInside, isSafeToOpen, progressPercent, upsertDownload };

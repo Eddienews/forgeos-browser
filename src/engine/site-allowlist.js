@@ -14,11 +14,11 @@
 const fs = require('fs');
 const path = require('path');
 
-const IS_PACKAGED = __dirname.includes('app.asar');
-const BASE = IS_PACKAGED
-  ? path.dirname(process.execPath)
-  : path.join(__dirname, '..', '..');
-const FILE = path.join(BASE, 'forge-allowlist.json');
+const { dataFile } = require('./settings');
+
+// Resolve the metadata file first so both legacy files migrate together.
+dataFile('forge-allowlist.json.presets');
+const FILE = dataFile('forge-allowlist.json');
 
 /** Provider ecosystems: one user decision → all essential hosts released. */
 const TRUST_PRESETS = {
@@ -61,7 +61,8 @@ function loadPresets() {
 function writeAtomic(file, text) {
   const tmp = file + '.tmp';
   try {
-    fs.writeFileSync(tmp, text, 'utf8');
+    fs.writeFileSync(tmp, text, { encoding: 'utf8', mode: 0o600 });
+    if (process.platform !== 'win32') fs.chmodSync(tmp, 0o600);
     fs.renameSync(tmp, file);
   } catch (error) {
     try { fs.unlinkSync(tmp); } catch {}
