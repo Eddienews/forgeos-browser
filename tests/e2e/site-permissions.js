@@ -63,6 +63,13 @@ async function main() {
 
     await ui(win, "(document.querySelector('.badge') || document.getElementById('security-badge')).click()");
     await until(() => ui(win, "!document.getElementById('site-menu').classList.contains('hidden')"));
+    const bounds = await ui(win, `(() => {
+      const r = document.getElementById('site-menu').getBoundingClientRect();
+      const c = document.getElementById('site-perm-clipboard-read').getBoundingClientRect();
+      return { left: r.left, right: r.right, controlRight: c.right, width: window.innerWidth };
+    })()`);
+    check('site panel and its controls stay inside the window',
+      bounds.left >= 0 && bounds.right <= bounds.width && bounds.controlRight <= bounds.width, JSON.stringify(bounds));
     check('site panel lists every managed permission as Ask', await ui(win,
       "['media','geolocation','notifications','clipboard-read'].every(p => document.getElementById('site-perm-' + p).value === 'ask')"));
 
