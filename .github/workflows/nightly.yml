@@ -1,0 +1,42 @@
+name: Nightly security check
+
+# A browser must not drift behind its engine. This runs every day even when
+# nothing was pushed, and turns red (GitHub notifies the maintainer) when:
+#   - Electron, and so Chromium, has a newer release on the pinned line;
+#   - the pinned Electron major is no longer supported;
+#   - a dependency gained a published high-severity advisory;
+#   - the unit suite no longer passes on a fresh install.
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Electron and Chromium are current
+        run: npm run check:electron
+
+      - name: No high-severity advisories
+        if: always()
+        run: npm audit --audit-level=high
+
+      - name: Unit tests
+        if: always()
+        run: npm test

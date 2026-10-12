@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Maintenance and trust
+- Dependabot checks Electron and the build dependencies daily and opens pull requests.
+- A nightly workflow fails when Electron is behind its release line, when the pinned major is unsupported, or when a high-severity advisory is published.
+- Added `SECURITY.md` with private vulnerability reporting, scope, and response intentions.
+
 ## [0.16.0] - 2026-09-24
 
 ### Added
