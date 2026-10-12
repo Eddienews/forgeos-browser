@@ -1,7 +1,7 @@
 /*
  * bookmarks-history.js — local bookmarks + session history for ForgeOS
- * Browser (v0.2). Local-first: JSON file next to the exe when packaged,
- * project root in dev. Never leaves the machine; no sync, no telemetry.
+ * Browser (v0.2). Local-first: JSON file in the user-data directory when
+ * packaged, project root in dev. Never leaves the machine; no sync, no telemetry.
  *
  * Bookmarks : [{ id, title, url, addedAt }]           (persistent)
  * History   : [{ id, title, url, visitedAt }]          (session-scoped ring,
@@ -12,13 +12,10 @@
 const fs = require('fs');
 const path = require('path');
 
-const IS_PACKAGED = __dirname.includes('app.asar');
-const BASE = IS_PACKAGED
-  ? path.dirname(process.execPath)
-  : path.join(__dirname, '..', '..');
+const { dataFile, writePrivateAtomic } = require('./settings');
 
-const BOOKMARKS_FILE = path.join(BASE, 'forge-bookmarks.json');
-const HISTORY_FILE = path.join(BASE, 'forge-history.json');
+const BOOKMARKS_FILE = dataFile('forge-bookmarks.json');
+const HISTORY_FILE = dataFile('forge-history.json');
 
 const HISTORY_CAP = 500;
 
@@ -27,9 +24,8 @@ function readJson(file, fallback) {
 }
 
 function writeJsonAtomic(file, data) {
-  const tmp = file + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
-  fs.renameSync(tmp, file);
+  // Browsing history is private: owner-only, never world-readable.
+  writePrivateAtomic(file, JSON.stringify(data, null, 2));
 }
 
 let idSeq = Date.now();

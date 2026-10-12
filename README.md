@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Build](https://github.com/Eddienews/forgeos-browser/actions/workflows/build.yml/badge.svg)](https://github.com/Eddienews/forgeos-browser/actions)
-[![Tests](https://img.shields.io/badge/tests-169%20passing-brightgreen)](https://github.com/Eddienews/forgeos-browser/blob/main/tests/run-tests.js)
+[![Tests](https://img.shields.io/badge/tests-404%20passing-brightgreen)](https://github.com/Eddienews/forgeos-browser/blob/main/tests/run-tests.js)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20·%20macOS%20·%20Linux%20·%20Pi-blue)](https://github.com/Eddienews/forgeos-browser/releases)
 [![Telemetry](https://img.shields.io/badge/telemetry-zero-orange)](https://github.com/Eddienews/forgeos-browser/blob/main/PRIVACY_MODEL.md)
 
@@ -29,7 +29,7 @@ Mainstream browsers treat AI as a surface feature. ForgeOS Browser treats the ag
 - 🔑 **Bring your own inference key** (Settings → AI Agent) — the `/task` loop runs on a built-in offline decider with no key at all; paste a [TypeSafe (Jev)](https://console.typesafe.ai/settings/keys) key and each step is instead decided by the model (`jev-latest`), one request per step, with the answer chosen from the page rather than generated. Stored in its own file, never in settings; never logged, never returned by any endpoint. A provider failure degrades to the offline decider instead of failing the run
 - ⚙️ **Trust presets** — one decision releases a whole provider ecosystem (Google, Microsoft, Apple, Social), reversible
 - 🔐 **No-credentials policy** — identity-provider sign-in is intercepted with an honest notice; credentials stay in your main browser
-- 🕵️ **Zero telemetry** — nothing leaves the machine, ever; Settings shows only aggregate local-audit health
+- 🕵️ **Zero telemetry** — ForgeOS sends nothing about you anywhere; Settings shows only aggregate local-audit health. The one opt-in exception is your own inference key: with it set, each `/task` step sends the filtered page observation to that provider
 
 ## Security model
 
@@ -53,7 +53,7 @@ Measured vs Brave/Chrome/Edge on the same machine (see [results/BENCHMARK.md](re
 ```bash
 npm install
 npm start                 # dev
-npm test                  # 227 unit tests
+npm test                  # 404 unit tests
 npm run package           # electron-packager for host platform
 node scripts/make-portable.js   # portable zip
 # cross-platform: node scripts/package.js --platform=linux,darwin --arch=x64,arm64
@@ -112,14 +112,14 @@ Unsigned CI builds: first launch via right-click → Open → Open.
 ```bash
 npm install && npm start
 npm run package
-./dist/ForgeBrowserLab-linux-x64/forge-browser-lab
+./dist/ForgeBrowserLab-linux-x64/ForgeBrowserLab
 ```
 
 **Raspberry Pi (arm64, Pi 4/5)**
 ```bash
 npm install && npm start
 npm run package -- --platform=linux --arch=arm64
-./dist/ForgeBrowserLab-linux-arm64/forge-browser-lab
+./dist/ForgeBrowserLab-linux-arm64/ForgeBrowserLab
 ```
 > armv7l (32-bit Pi) is NOT supported — Electron dropped 32-bit ARM. Use a 64-bit OS (Raspberry Pi OS arm64).
 

@@ -47,7 +47,7 @@ const { classifyField } = require('./engine/sensitive-fields');
 const { createPageWebPreferences } = require('./page-web-preferences');
 const agentProvider = require('./engine/agent-provider');
 const { DARK_SCROLLBAR_CSS, supportsPageAppearance } = require('./engine/page-appearance');
-const { isExistingPathInside, upsertDownload } = require('./engine/download-center');
+const { isExistingPathInside, isSafeToOpen, upsertDownload } = require('./engine/download-center');
 const { pageProcessingPolicy } = require('./engine/page-processing-policy');
 const { FindInPage } = require('./engine/find-in-page');
 const { siteSnapshot, clearOriginData } = require('./engine/site-privacy');
@@ -57,6 +57,9 @@ const FIND_H = 42; // must match renderer CSS --find-h
 let menuRightInset = 0;
 const APP_ROOT = __dirname;
 const RENDERER = path.join(APP_ROOT, 'renderer', 'index.html');
+// The toolbar and Control Center never share a session with web content: the
+// page adapter owns the default session's single webRequest listener slots.
+const CHROME_UI_PARTITION = 'forge-chrome-ui';
 
 // Runtime-writable dirs: use app.getPath('userData') when packaged (OS-sanctioned
 // config location). A .portable marker file next to the executable overrides to
@@ -163,7 +166,9 @@ function getSessionFor(partitionKey) {
 }
 
 function pushDownload(record) {
-  const saved = upsertDownload(downloads, record, 50);
+  const saved = upsertDownload(downloads, {
+    ...record, openable: isSafeToOpen(record.path || record.filename),
+  }, 50);
   if (saved) sendToChrome('forge:download', saved);
   return saved;
 }
@@ -693,6 +698,7 @@ function togglePanels(section = null) {
     backgroundColor: '#14110d',
     webPreferences: {
       preload: path.join(APP_ROOT, 'preload.js'),
+      partition: CHROME_UI_PARTITION,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -767,15 +773,27 @@ function humanNotebookTab() {
 }
 
 function registerIpc() {
+  // Every channel is chrome-only. Page views have no preload, so a message
+  // from anywhere but the main frame of the toolbar or Control Center window
+  // is forged; refuse it before the handler sees its arguments.
+  const trustedSender = (event) => [chromeWin, panelWin].some((w) => w && !w.isDestroyed() &&
+    event.sender === w.webContents && event.senderFrame === w.webContents.mainFrame);
+  const handle = (channel, listener) => ipcMain.handle(channel, (event, ...args) => {
+    if (!trustedSender(event)) {
+      log.log('DENY', 'ipc from untrusted sender refused', { channel });
+      throw new Error('ForgeOS IPC is chrome-only');
+    }
+    return listener(event, ...args);
+  });
   // Only the trusted toolbar renderer may drive search. Untrusted page views
   // have no preload, and a forged IPC message from a page is rejected too.
   const isChrome = (event) => !!chromeWin && !chromeWin.isDestroyed() &&
     event.sender === chromeWin.webContents &&
     event.senderFrame === chromeWin.webContents.mainFrame;
-  ipcMain.handle('forge:find-open', (event) => isChrome(event) && pageFind.open(activeTab()));
-  ipcMain.handle('forge:find-search', (event, query, direction) =>
+  handle('forge:find-open', (event) => isChrome(event) && pageFind.open(activeTab()));
+  handle('forge:find-search', (event, query, direction) =>
     isChrome(event) && pageFind.search(activeTab(), query, direction));
-  ipcMain.handle('forge:find-close', (event) => {
+  handle('forge:find-close', (event) => {
     if (!isChrome(event)) return false;
     pageFind.close();
     return true;
@@ -785,8 +803,8 @@ function registerIpc() {
       e.sender === w.webContents && e.senderFrame === w.webContents.mainFrame))
       throw new Error('Notebook is chrome-only');
   };
-  ipcMain.handle('forge:notebook-list', e => { fromChrome(e); return notebook.load(getNotebookBase()); });
-  ipcMain.handle('forge:notebook-capture', async e => {
+  handle('forge:notebook-list', e => { fromChrome(e); return notebook.load(getNotebookBase()); });
+  handle('forge:notebook-capture', async e => {
     fromChrome(e);
     const t = humanNotebookTab();
     const id = t.id, url = t.wc.getURL();
@@ -795,10 +813,10 @@ function registerIpc() {
         !selection || selection.url !== url) throw new Error('No safe selected excerpt on active human page');
     return notebook.addSource(getNotebookBase(), selection);
   });
-  ipcMain.handle('forge:notebook-notes', (e, notes) => { fromChrome(e); return notebook.saveNotes(getNotebookBase(), notes); });
-  ipcMain.handle('forge:notebook-compare', (e, ids) => { fromChrome(e); return notebook.setComparison(getNotebookBase(), ids); });
-  ipcMain.handle('forge:notebook-remove', (e, id) => { fromChrome(e); return notebook.removeSource(getNotebookBase(), id); });
-  ipcMain.handle('forge:notebook-export', async e => {
+  handle('forge:notebook-notes', (e, notes) => { fromChrome(e); return notebook.saveNotes(getNotebookBase(), notes); });
+  handle('forge:notebook-compare', (e, ids) => { fromChrome(e); return notebook.setComparison(getNotebookBase(), ids); });
+  handle('forge:notebook-remove', (e, id) => { fromChrome(e); return notebook.removeSource(getNotebookBase(), id); });
+  handle('forge:notebook-export', async e => {
     fromChrome(e);
     const choice = await dialog.showSaveDialog(panelWin && !panelWin.isDestroyed() ? panelWin : chromeWin, {
       title: 'Export local research notebook',
@@ -809,7 +827,7 @@ function registerIpc() {
     if (path.extname(choice.filePath).toLowerCase() !== '.txt') throw new Error('Export requires a .txt destination');
     return notebook.exportTo(getNotebookBase(), choice.filePath);
   });
-  ipcMain.handle('forge:navigate', (_e, url) => {
+  handle('forge:navigate', (_e, url) => {
     const t = activeTab();
     if (!t) return null;
     if (t.agentOwned) {
@@ -820,27 +838,27 @@ function registerIpc() {
     }
     return navigateIn(t, url);
   });
-  ipcMain.handle('forge:back', () => {
+  handle('forge:back', () => {
     const t = activeTab();
     if (!t || t.index <= 0) return false;
     t.index -= 1;
     t.wc.goBack();
     return true;
   });
-  ipcMain.handle('forge:forward', () => {
+  handle('forge:forward', () => {
     const t = activeTab();
     if (!t || t.index >= t.history.length - 1) return false;
     t.index += 1;
     t.wc.goForward();
     return true;
   });
-  ipcMain.handle('forge:reload', () => {
+  handle('forge:reload', () => {
     const t = activeTab();
     if (!t) return false;
     t.wc.reload();
     return true;
   });
-  ipcMain.handle('forge:new-tab', (_e, url, containerId) => {
+  handle('forge:new-tab', (_e, url, containerId) => {
     if (containerId != null && (!CONTAINER_IDS.includes(containerId) || modeId !== 'standard')) {
       return { error: 'Containers are available only in Standard mode.' };
     }
@@ -850,26 +868,29 @@ function registerIpc() {
     switchTab(t.id, { focus: true });
     return { id: t.id, containerId: t.containerId };
   });
-  ipcMain.handle('forge:close-tab', (_e, id) => closeTab(id));
-  ipcMain.handle('forge:switch-tab', (_e, id) => { if (tabs.has(id)) switchTab(id); });
-  ipcMain.handle('forge:set-menu-open', (_e, state) => {
+  handle('forge:close-tab', (_e, id) => closeTab(id));
+  handle('forge:switch-tab', (_e, id) => { if (tabs.has(id)) switchTab(id); });
+  handle('forge:set-menu-open', (_e, state) => {
     if (!chromeWin || !activeTabId) return false;
     const open = typeof state === 'object' ? !!state.open : !!state;
     menuRightInset = open ? Math.max(0, Number(state && state.rightInset) || 0) : 0;
     layoutActiveView();
     return true;
   });
-  ipcMain.handle('forge:set-mode', (_e, m) => changePrivacyMode(m));
-  ipcMain.handle('forge:toggle-panel', (_e, section) => {
+  handle('forge:set-mode', (_e, m) => changePrivacyMode(m));
+  handle('forge:toggle-panel', (_e, section) => {
     togglePanels(section === 'downloads' ? 'downloads' : null);
     return true;
   });
-  ipcMain.handle('forge:clear-session', async () => {
+  handle('forge:clear-session', async () => {
     log.log('INFO', 'clear session requested');
     const todo = new Set(sessions.values());
     for (const id of CONTAINER_IDS) todo.add(getSessionFor(containerPartition(id)));
     let removed = 0;
-    for (const { session: s } of todo) removed += await clearSessionData(s);
+    for (const { session: s, adapter } of todo) {
+      removed += await clearSessionData(s);
+      adapter.clearPermissionGrants();
+    }
     for (const t of tabs.values()) {
       t.history = []; t.index = -1; t.lastAgentView = null;
       t.pageCounts = { ads: 0, trackers: 0, analytics: 0, thirdParty: 0, params: 0, cookies: 0 };
@@ -883,7 +904,7 @@ function registerIpc() {
     sendState();
     return true;
   });
-  ipcMain.handle('forge:set-forget', (_e, on) => {
+  handle('forge:set-forget', (_e, on) => {
     const t = activeTab();
     if (!t) return false;
     if (t.containerId) return false; // never wipe a shared named container on one tab close
@@ -894,14 +915,14 @@ function registerIpc() {
     sendState();
     return true;
   });
-  ipcMain.handle('forge:open-devtools', (_e, id) => {
+  handle('forge:open-devtools', (_e, id) => {
     const t = tabs.get(id) || activeTab();
     if (t) t.wc.openDevTools({ mode: 'detach' });
   });
-  ipcMain.handle('forge:agent-view', () => activeTab()?.lastAgentView || null);
-  ipcMain.handle('forge:read-page', () => readPageView(activeTab()?.lastAgentView || null));
-  ipcMain.handle('forge:get-links', () => (activeTab()?.lastAgentView?.content.links) || []);
-  ipcMain.handle('forge:security-status', () => {
+  handle('forge:agent-view', () => activeTab()?.lastAgentView || null);
+  handle('forge:read-page', () => readPageView(activeTab()?.lastAgentView || null));
+  handle('forge:get-links', () => (activeTab()?.lastAgentView?.content.links) || []);
+  handle('forge:security-status', () => {
     const t = activeTab();
     return t ? { url: t.url, security: securityFor(t), counts: t.pageCounts, injection: t.lastAgentView?.security || null, mode: modeId } : null;
   });
@@ -917,8 +938,8 @@ function registerIpc() {
       h => settings.all().credentialOptIn?.[h] === true, tab.adapter.counters);
     return info && { ...info, credentialsGloballyAllowed: settings.all().allowCredentials === true };
   };
-  ipcMain.handle('forge:site-privacy', siteStatus);
-  ipcMain.handle('forge:site-exception', async (event, kind, enabled) => {
+  handle('forge:site-privacy', siteStatus);
+  handle('forge:site-exception', async (event, kind, enabled) => {
     const tab = humanSite(event), status = siteStatus(event);
     if (!tab || !status || typeof enabled !== 'boolean' || !['blocking', 'credentials'].includes(kind))
       return { ok: false, reason: 'No active human HTTP(S) site or invalid action.' };
@@ -950,7 +971,7 @@ function registerIpc() {
     sendState();
     return { ok: true, site: siteStatus(event) };
   });
-  ipcMain.handle('forge:site-clear', async (event) => {
+  handle('forge:site-clear', async (event) => {
     const tab = humanSite(event), status = siteStatus(event);
     if (!tab || !status) return { ok: false, reason: 'No active human HTTP(S) site.' };
     const result = await clearOriginData({ tab, current: activeTab, tabs: [...tabs.values()],
@@ -966,8 +987,8 @@ function registerIpc() {
     log.log(result.ok ? 'INFO' : 'DENY', 'site origin clear', { origin: status.origin, ok: result.ok });
     return result;
   });
-  ipcMain.handle('forge:get-state', () => buildState());
-  ipcMain.handle('forge:click', async (_e, selector) => {
+  handle('forge:get-state', () => buildState());
+  handle('forge:click', async (_e, selector) => {
     const t = activeTab();
     if (!t || !selector) return { verdict: 'DENY', reason: 'no active tab or selector' };
     try {
@@ -989,11 +1010,11 @@ function registerIpc() {
       return { verdict: 'DENY', reason: 'click failed: ' + String(e).slice(0, 120) };
     }
   });
-  ipcMain.handle('forge:request-action', (_e, action, details) => approveAction(action, details || {}));
+  handle('forge:request-action', (_e, action, details) => approveAction(action, details || {}));
 
   // Plugins (⬇ video / ✎ transcript): URL comes from the ACTIVE tab only;
   // the action passes the permission gate before yt-dlp ever starts.
-  ipcMain.handle('forge:plugin', (_e, kind) => {
+  handle('forge:plugin', (_e, kind) => {
     if (kind !== 'video' && kind !== 'transcript') {
       return { state: 'error', error: 'Unsupported plugin action.' };
     }
@@ -1003,36 +1024,37 @@ function registerIpc() {
     }
     return runPluginJob(kind, t.url, t.title);
   });
-  ipcMain.handle('forge:plugin-cancel', (_e, jobId) => plugins.cancel(jobId));
-  ipcMain.handle('forge:download-cancel', (_e, id) => {
+  handle('forge:plugin-cancel', (_e, jobId) => plugins.cancel(jobId));
+  handle('forge:download-cancel', (_e, id) => {
     if (plugins.cancel(id)) return true;
     for (const entry of sessions.values()) {
       if (entry.adapter.cancelDownload(id)) return true;
     }
     return false;
   });
-  ipcMain.handle('forge:download-retry', (_e, id) => {
+  handle('forge:download-retry', (_e, id) => {
     const record = downloads.find((item) => item.id === id);
     if (!record || record.kind !== 'plugin' || !record.retryable || !record.url) {
       return { state: 'error', error: 'This download cannot be retried.' };
     }
     return runPluginJob(record.pluginKind, record.url, record.filename);
   });
-  ipcMain.handle('forge:download-open', async (_e, id) => {
+  handle('forge:download-open', async (_e, id) => {
     const record = downloads.find((item) => item.id === id);
-    if (!record || record.executable || !isExistingPathInside(DL_DIR(), record.path)) return false;
+    if (!record || record.executable || !isSafeToOpen(record.path) ||
+        !isExistingPathInside(DL_DIR(), record.path)) return false;
     const error = await shell.openPath(record.path);
     return !error;
   });
-  ipcMain.handle('forge:download-reveal', (_e, id) => {
+  handle('forge:download-reveal', (_e, id) => {
     const record = downloads.find((item) => item.id === id);
     if (!record || !isExistingPathInside(DL_DIR(), record.path)) return false;
     shell.showItemInFolder(record.path);
     return true;
   });
   // Settings: load all / patch subset; the adapter reads them live per request.
-  ipcMain.handle('forge:settings-get', () => settings.all());
-  ipcMain.handle('forge:settings-set', (_e, patch) => {
+  handle('forge:settings-get', () => settings.all());
+  handle('forge:settings-set', (_e, patch) => {
     // Credential exceptions are only changed by the active-human-site IPC.
     if (!patch || typeof patch !== 'object' || Array.isArray(patch) ||
         Object.hasOwn(patch, 'credentialOptIn') || Object.hasOwn(patch, 'allowCredentials'))
@@ -1041,13 +1063,13 @@ function registerIpc() {
     if (res.ok) log.log('INFO', 'settings updated', { keys: Object.keys(patch || {}).join(',') });
     return res;
   });
-  ipcMain.handle('forge:version', () => app.getVersion());
+  handle('forge:version', () => app.getVersion());
   /* ---- agent inference key (v0.11): the user's own, never the project's ----
    * The key is written to its own 0600 file, never to settings.json, and it is
    * never logged or echoed back: the renderer only ever learns whether one
    * exists and a masked hint. */
-  ipcMain.handle('forge:agent-key-status', () => agentProvider.status(getRuntimeBase()));
-  ipcMain.handle('forge:agent-key-set', (_e, payload) => {
+  handle('forge:agent-key-status', () => agentProvider.status(getRuntimeBase()));
+  handle('forge:agent-key-set', (_e, payload) => {
     const provider = (payload && payload.provider) || 'typesafe';
     const result = agentProvider.saveKey(getRuntimeBase(), provider, payload && payload.key);
     // Note what happened, never what was written.
@@ -1055,33 +1077,33 @@ function registerIpc() {
     else log.log('DENY', 'agent inference key rejected', { provider, reason: String(result.reason || '').slice(0, 120) });
     return result;
   });
-  ipcMain.handle('forge:agent-key-clear', () => {
+  handle('forge:agent-key-clear', () => {
     const result = agentProvider.clearKey(getRuntimeBase());
     if (result.ok) log.log('INFO', 'agent inference key removed', { removed: !!result.removed });
     return result;
   });
-  ipcMain.handle('forge:ytdlp-status', () => {
+  handle('forge:ytdlp-status', () => {
     // Path inspection only: opening the menu must never launch an external
     // process. Actual tools start only after the plugin approval dialog.
     return require('./ext/plugins').toolchainStatus();
   });
 
   /* ---- per-site allowlist + zoom (v0.3) ---- */
-  ipcMain.handle('forge:presets-list', () => ({
+  handle('forge:presets-list', () => ({
     available: Object.entries(allowlist.TRUST_PRESETS).map(([name, hosts]) => ({ name, hosts: hosts.length })),
     active: allowlist.activePresets(),
   }));
-  ipcMain.handle('forge:preset-apply', (_e, name) => {
+  handle('forge:preset-apply', (_e, name) => {
     const r = allowlist.applyPreset(String(name || ''));
     if (r.ok) { sendState(); log.log('INFO', 'trust preset applied', { preset: name, added: r.addedCount }); }
     return r;
   });
-  ipcMain.handle('forge:preset-revoke', (_e, name) => {
+  handle('forge:preset-revoke', (_e, name) => {
     const r = allowlist.revokePreset(String(name || ''));
     if (r.ok) { sendState(); log.log('INFO', 'trust preset revoked', { preset: name, revoked: r.revokedCount }); }
     return r;
   });
-  ipcMain.handle('forge:set-zoom', (_e, pct) => {
+  handle('forge:set-zoom', (_e, pct) => {
     const z = Math.max(50, Math.min(200, Number(pct) || 100));
     settings.save({ pageZoom: z });
     const t = activeTab();
@@ -1091,19 +1113,19 @@ function registerIpc() {
   });
 
   /* ---- bookmarks & history (local-first, v0.2) ---- */
-  ipcMain.handle('forge:bm-list', () => bh.listBookmarks());
-  ipcMain.handle('forge:bm-add', (_e, item) => {
+  handle('forge:bm-list', () => bh.listBookmarks());
+  handle('forge:bm-add', (_e, item) => {
     const r = bh.addBookmark(item || {});
     log.log(r.ok && !r.duplicate ? 'INFO' : 'ALLOW', 'bookmark added', { url: String(item?.url || '').slice(0, 200) });
     return r;
   });
-  ipcMain.handle('forge:bm-remove', (_e, id) => bh.removeBookmark(id));
-  ipcMain.handle('forge:bm-is', (_e, url) => ({ bookmarked: bh.isBookmarked(url) }));
-  ipcMain.handle('forge:hist-list', () => bh.listHistory());
-  ipcMain.handle('forge:hist-remove', (_e, id) => bh.removeFromHistory(id));
-  ipcMain.handle('forge:hist-clear', () => bh.clearHistory());
+  handle('forge:bm-remove', (_e, id) => bh.removeBookmark(id));
+  handle('forge:bm-is', (_e, url) => ({ bookmarked: bh.isBookmarked(url) }));
+  handle('forge:hist-list', () => bh.listHistory());
+  handle('forge:hist-remove', (_e, id) => bh.removeFromHistory(id));
+  handle('forge:hist-clear', () => bh.clearHistory());
   // 📁 open the laboratory downloads folder in the OS file manager
-  ipcMain.handle('forge:open-downloads', async () => {
+  handle('forge:open-downloads', async () => {
     const dlDir = DL_DIR();
     fs.mkdirSync(dlDir, { recursive: true });
     log.log('INFO', 'open downloads folder');
@@ -1150,6 +1172,7 @@ function createChromeWindow() {
     backgroundColor: '#14110d',
     webPreferences: {
       preload: path.join(APP_ROOT, 'preload.js'),
+      partition: CHROME_UI_PARTITION,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -1207,13 +1230,15 @@ function createChromeWindow() {
     // Chrome UI must never navigate to remote content (only file:// + in-app).
     if (!url.startsWith('file://')) { e.preventDefault(); }
   });
-  // CSP for the chrome UI: no remote scripts/styles, no inline eval, no
-  // connect to anything but localhost agent API. Hygiene for a file:// shell.
+  // CSP for the chrome UI: no remote or inline scripts, no connect to
+  // anything but the localhost agent API. This session is the chrome UI's own
+  // (CHROME_UI_PARTITION), so the page adapter cannot replace this listener.
+  // index.html carries the same policy in a meta tag.
   chromeWin.webContents.session.webRequest.onHeadersReceived({ urls: ['file://*/*'] }, (details, cb2) => {
     const h = details.responseHeaders || {};
     h['Content-Security-Policy'] = [
       "default-src 'self' file: data:",
-      "script-src 'self' 'unsafe-inline'",   // chrome UI uses inline handlers
+      "script-src 'self'",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: file:",
       "connect-src 'self' http://127.0.0.1:8647 ws://127.0.0.1:*",

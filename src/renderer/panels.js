@@ -226,7 +226,7 @@
       if (d.cancellable) actions.appendChild(downloadAction('Cancel', () => F.downloadCancel(d.id), 'danger'));
       if (d.retryable) actions.appendChild(downloadAction('Retry', () => F.downloadRetry(d.id)));
       if (d.path && d.state === 'completed') {
-        if (!d.executable) actions.appendChild(downloadAction('Open', () => F.downloadOpen(d.id)));
+        if (!d.executable && d.openable !== false) actions.appendChild(downloadAction('Open', () => F.downloadOpen(d.id)));
         const revealLabel = F.platform === 'darwin' ? 'Show in Finder'
           : F.platform === 'win32' ? 'Show in Explorer'
             : 'Show in folder';

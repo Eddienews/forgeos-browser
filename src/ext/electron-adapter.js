@@ -7,6 +7,8 @@
  *  - onHeadersReceived → Set-Cookie policy (third-party / tracking /
  *                       persistent-by-mode cookies stripped)
  *  - setPermissionRequestHandler → Phase 15 defaults, ASK via dialog
+ *  - setPermissionCheckHandler / setDevicePermissionHandler → the same
+ *                       defaults for checks; devices are never pre-granted
  *  - will-download    → Phase 13 laboratory directory + metadata, never
  *                       auto-executed
  *
@@ -23,11 +25,11 @@ const { dialog, webContents } = require('electron');
 const { decideRequest } = require('../engine/network-policy');
 const { filterSetCookieHeaders } = require('../engine/cookie-policy');
 const { cleanUrl } = require('../engine/url-cleaner');
-const { permissionFor } = require('../engine/fingerprint');
+const { permissionFor, permissionGrantKey, permissionCheckAllowed } = require('../engine/fingerprint');
 const { MODES } = require('../engine/privacy-modes');
 const settings = require('../engine/settings');
 const allowlist = require('../engine/site-allowlist');
-const { GENERIC_UA } = require('../engine/fingerprint-hardening');
+const { GENERIC_UA, clientHintPlatform } = require('../engine/fingerprint-hardening');
 const { progressPercent } = require('../engine/download-center');
 
 const DOWNLOADS_DIR = path.join(path.dirname(path.dirname(__dirname)), 'downloads');
@@ -53,7 +55,9 @@ function safeFileName(name) {
   return base || 'download';
 }
 
-const EXECUTABLE_RE = /\.(exe|msi|bat|cmd|com|scr|ps1|vbs|jar|apk|dmg|sh|bin|pif|reg|cer|iso|svg)$/i;
+// A warning label only. Whether a file may be opened is decided by the
+// allowlist in download-center.js, never by this list.
+const EXECUTABLE_RE = /\.(exe|msi|msix|appx|bat|cmd|com|scr|ps1|vbs|vbe|js|jse|wsf|wsh|hta|cpl|msc|scf|lnk|url|jar|apk|dmg|pkg|app|command|sh|run|bin|desktop|appimage|deb|rpm|py|pl|rb|pif|reg|cer|iso|svg)$/i;
 
 /** Electron's synchronous message box returns the selected button index. */
 function permissionDialogAllowed(buttonIndex) {
@@ -82,6 +86,8 @@ class SessionAdapter {
     this.downloadsDir = opts.downloadsDir || DOWNLOADS_DIR;
     this.downloadItems = new Map();
     this.downloadSeq = 0;
+    // Origins the user approved through the ASK dialog, for this session only.
+    this.permissionGrants = new Set();
     this.counters = { ads: 0, trackers: 0, analytics: 0, thirdParty: 0, params: 0, cookies: 0, allowed: 0 };
     this.snapshot = { ...this.counters };
     this.installed = false;
@@ -103,12 +109,14 @@ class SessionAdapter {
       // suspicious to Google as a wrong value — inject them explicitly.
       const uaFull = `"Chromium";v="${chromeVer}", "Google Chrome";v="${chromeVer}", "Not?A_Brand";v="99"`;
       const uaBrand = `"Not?A_Brand";v="99", "Chromium";v="${chromeVer}"`;
+      // The real operating system: it must agree with what JavaScript exposes.
+      const uaPlatform = clientHintPlatform();
       let foundUA = false, foundMobile = false, foundPlatform = false;
       for (const key of Object.keys(h)) {
         if (/^sec-ch-ua$/i.test(key)) {
           h[key] = uaFull; foundUA = true;
         } else if (/^sec-ch-ua-platform$/i.test(key)) {
-          h[key] = '"Windows"'; foundPlatform = true;
+          h[key] = uaPlatform; foundPlatform = true;
         } else if (/^sec-ch-ua-mobile$/i.test(key)) {
           h[key] = '?0'; foundMobile = true;
         } else if (/^user-agent$/i.test(key)) {
@@ -117,7 +125,7 @@ class SessionAdapter {
       }
       if (!foundUA) h['Sec-CH-UA'] = uaFull;
       if (!foundMobile) h['Sec-CH-UA-Mobile'] = '?0';
-      if (!foundPlatform) h['Sec-CH-UA-Platform'] = '"Windows"';
+      if (!foundPlatform) h['Sec-CH-UA-Platform'] = uaPlatform;
       // Sec-CH-UA-Full-Version-List is checked for consistency too.
       const major = chromeVer.split('.')[0];
       h['Sec-CH-UA-Full-Version-List'] = `"Chromium";v="${chromeVer}", "Google Chrome";v="${chromeVer}", "Not?A_Brand";v="99.0.${major}.5"`;
@@ -244,6 +252,13 @@ class SessionAdapter {
           log.log(allowed ? 'ALLOW' : 'DENY', `${permission} permission ${allowed ? 'granted' : 'denied'}`, {
             permission, from: details.requestingUrl || '',
           });
+          let requester = details.requestingUrl;
+          try { requester = requester || webContents.getURL(); } catch {}
+          const grant = permissionGrantKey(requester, permission);
+          if (grant) {
+            if (allowed) self.permissionGrants.add(grant);
+            else self.permissionGrants.delete(grant);
+          }
           callback(allowed);
           return;
         }
@@ -252,6 +267,16 @@ class SessionAdapter {
       }
       callback(true);
     });
+
+    // Without a check handler Electron answers every permission check with
+    // "granted", so navigator.permissions.query and check-only APIs (sensors,
+    // idle detection, local fonts, Notification.permission) bypass the policy
+    // above. Checks follow the same defaults; ASK is true only after approval.
+    session.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) =>
+      permissionCheckAllowed(permission, self.modeId,
+        requestingOrigin || (details && details.requestingUrl) || '', self.permissionGrants));
+    // Serial, HID and USB devices are never granted without a chooser.
+    session.setDevicePermissionHandler(() => false);
 
     session.on('will-download', (event, item) => {
       const url = item.getURL();
@@ -363,6 +388,8 @@ class SessionAdapter {
     if (!item) return false;
     try { item.cancel(); return true; } catch { return false; }
   }
+
+  clearPermissionGrants() { this.permissionGrants.clear(); }
 
   resetCounters() { this.counters = { ads: 0, trackers: 0, analytics: 0, thirdParty: 0, params: 0, cookies: 0, allowed: 0 }; }
 
