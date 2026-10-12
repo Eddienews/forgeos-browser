@@ -278,9 +278,45 @@ module.exports = [
     name: 'every GitHub Action is pinned to a full commit SHA',
     gate: 'K',
     fn(a) {
-      const workflow = read('.github/workflows/build.yml');
-      a.ok((workflow.match(/uses:\s+\S+@[0-9a-f]{40} # v\d+/g) || []).length >= 7);
-      a.doesNotMatch(workflow, /uses:\s+\S+@(?![0-9a-f]{40}\b)/);
+      const directory = path.join(root, '.github/workflows');
+      const files = fs.readdirSync(directory).filter((name) => /\.ya?ml$/.test(name));
+      a.ok(files.includes('build.yml') && files.includes('nightly.yml'));
+      for (const name of files) {
+        const workflow = fs.readFileSync(path.join(directory, name), 'utf8');
+        a.ok((workflow.match(/uses:\s+\S+@[0-9a-f]{40} # v\d+/g) || []).length >= 2, name);
+        a.doesNotMatch(workflow, /uses:\s+\S+@(?![0-9a-f]{40}\b)/, name);
+      }
+    },
+  },
+  {
+    name: 'the Electron freshness check flags a stale line and an unsupported major',
+    gate: 'K',
+    fn(a) {
+      const { assessElectron } = require('../../scripts/check-electron');
+      const released = ['41.9.0', '42.3.1', '43.5.1', '43.7.9', '44.0.0', '44.7.0', '45.0.0-beta.2', '46.0.0-nightly.20261001'];
+      const current = assessElectron('43.7.9', released);
+      a.strictEqual(current.ok, true);
+      a.strictEqual(current.newestInLine, '43.7.9');
+      a.strictEqual(current.newestStable, '44.7.0', 'pre-releases are ignored');
+      const stale = assessElectron('43.5.1', released);
+      a.strictEqual(stale.ok, false);
+      a.match(stale.problems[0], /behind 43\.7\.9/);
+      const numeric = assessElectron('43.7.9', ['43.7.9', '43.7.10']);
+      a.strictEqual(numeric.ok, false, 'versions compare numerically, not as text');
+      const unsupported = assessElectron('41.9.0', released);
+      a.strictEqual(unsupported.ok, false);
+      a.match(unsupported.problems.join(' '), /no longer supported/);
+      a.strictEqual(assessElectron('42.3.1', released).ok, true, 'third-newest major is still supported');
+      a.strictEqual(assessElectron('^43.7.9', released).ok, false, 'a range is not a pin');
+      a.strictEqual(assessElectron('43.7.9', []).ok, false);
+      // Scheduled, read-only, and wired to the same check.
+      const nightly = read('.github/workflows/nightly.yml');
+      a.match(nightly, /schedule:\s+- cron: '\d+ \d+ \* \* \*'/);
+      // \s, not \n: Windows checkouts use CRLF line endings.
+      a.match(nightly, /permissions:\s+contents: read\s+jobs:/);
+      a.match(nightly, /run: npm run check:electron/);
+      a.match(nightly, /run: npm audit --audit-level=high/);
+      a.match(read('.github/dependabot.yml'), /package-ecosystem: npm[\s\S]+interval: daily/);
     },
   },
   {

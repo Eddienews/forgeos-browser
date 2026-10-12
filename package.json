@@ -12,6 +12,7 @@
     "test:e2e": "electron tests/e2e/main.js && electron tests/e2e/find-in-page.js && electron tests/e2e/site-permissions.js && electron tests/e2e/identity-and-tabs.js",
     "test:adblock:public": "electron scripts/test-public-adblock.js",
     "verify": "node scripts/verify-gates.js",
+    "check:electron": "node scripts/check-electron.js",
     "update-lists": "node scripts/update-lists.js",
     "package": "node scripts/package.js",
     "package:portable": "node scripts/make-portable.js"

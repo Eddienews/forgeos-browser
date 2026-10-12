@@ -4,10 +4,22 @@
 
 ### Added
 - Per-site permission controls in the site panel: Ask, Allow, or Block for camera and microphone, location, notifications, and clipboard read. The permission prompt can also remember "Always allow" or "Never allow" for the site.
+- A link that asks for a new window (`target="_blank"`, `window.open`) now opens as a ForgeOS tab in a human tab, right after user input. Previously it did nothing.
+
+### Changed
+- Client-hint headers repeat the brand list the engine reports to JavaScript (Chromium) and are sent only to secure origins. ForgeOS no longer claims to be Google Chrome. Set `identifyAsChrome: true` in the settings file if a sign-in page requires that claim.
+- The Control Center demo click, which acts on the human's own page, always asks for confirmation.
+
+### Maintenance and trust
+- Dependabot checks Electron and the build dependencies daily and opens pull requests.
+- A nightly workflow fails when Electron is behind its release line, when the pinned major is unsupported, or when a high-severity advisory is published.
+- Added `SECURITY.md` with private vulnerability reporting, scope, and response intentions.
 
 ### Limits
 - Remembered choices apply to the exact origin in the top-level page only, in Standard mode, and never to agent-owned tabs. Embedded frames always prompt.
 - A site that checks a permission before requesting it still sees `denied` until you choose Allow, because the engine offers no "prompt" answer.
+- Sites that require a Google Chrome identity, such as some Google sign-in pages, may refuse the browser unless `identifyAsChrome` is set.
+- New tabs from links are refused without recent user input on that tab, and in agent tabs.
 
 ## [0.16.0] - 2026-09-24
 
