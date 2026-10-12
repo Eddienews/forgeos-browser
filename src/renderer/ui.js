@@ -143,6 +143,8 @@
     } catch (error) { window.alert('Capture refused: ' + error.message); }
   });
   $('mi-devtools').addEventListener('click', () => { closeMenu(); F.openDevTools(); });
+  $('mi-print').addEventListener('click', () => { closeMenu(); F.print(); });
+  $('mi-save-pdf').addEventListener('click', () => { closeMenu(); F.savePdf(); });
   $('mi-clear').addEventListener('click', async () => {
     closeMenu();
     if (window.confirm('Clear session?\nRemoves: history, cookies, site storage, cache, agent browsing context.')) {
@@ -219,6 +221,7 @@
   $('set-blockads').addEventListener('change', (e) => set('blockAds', e.target.checked));
   $('set-3pcookies').addEventListener('change', (e) => set('blockThirdPartyCookies', e.target.checked));
   $('set-stripparams').addEventListener('change', (e) => set('stripTrackingParams', e.target.checked));
+  $('set-httpsonly').addEventListener('change', (e) => set('httpsOnly', e.target.checked));
   $('set-subs').addEventListener('change', (e) => set('subtitleLangs', e.target.value));
   $('set-zoom').addEventListener('change', (e) => F.setZoom(Number(e.target.value)));
 
@@ -448,6 +451,7 @@
       $('set-blockads').checked = s.blockAds !== false;
       $('set-3pcookies').checked = s.blockThirdPartyCookies !== false;
       $('set-stripparams').checked = s.stripTrackingParams !== false;
+      $('set-httpsonly').checked = s.httpsOnly !== false;
       if (s.subtitleLangs) $('set-subs').value = s.subtitleLangs;
     }
     const el = $('ytdlp-status');

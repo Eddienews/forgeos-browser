@@ -48,6 +48,7 @@ function shortcutAction(input) {
     case 'w': return 'close-tab';
     case 'l': return 'focus-address';
     case 'r': return 'reload';
+    case 'p': return 'print';
     case 'q': return 'quit';
     case '=': case '+': case '-': return zoomAction(key);
     case '0': return 'zoom-reset';

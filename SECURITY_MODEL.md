@@ -119,6 +119,13 @@ browser cookies or credentials to bypass YouTube login, age, or bot gates.
   implementation required disabling sandbox and context isolation, while
   post-load injection interfered with later Chromium navigations. ForgeOS keeps
   the stronger trust boundary and documents engine-dependent entropy honestly.
+- HTTPS-only mode (default on) retries a main-frame `http://` navigation over
+  `https://` before anything is sent in the clear. The browser never downgrades
+  by itself: when the secure attempt fails, a native dialog asks the human,
+  defaulting to "Stay secure", and an allowance covers that exact host until
+  the browser closes. An agent tab is never offered the downgrade. Loopback,
+  private and link-local addresses and local-network names are exempt because
+  they cannot hold a public certificate.
 - One browser process owns a profile. A second launch hands over only complete
   http(s) links from its command line, which open as ordinary human tabs,
   never in the agent tab; switches, paths, `file:` URLs and URLs carrying

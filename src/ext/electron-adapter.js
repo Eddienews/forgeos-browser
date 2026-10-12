@@ -31,6 +31,7 @@ const settings = require('../engine/settings');
 const allowlist = require('../engine/site-allowlist');
 const { GENERIC_UA, clientHintPlatform, engineClientHints, sendsClientHints } = require('../engine/fingerprint-hardening');
 const { progressPercent } = require('../engine/download-center');
+const { httpsUpgradeTarget, createHttpsOnlyState } = require('../engine/https-only');
 
 const DOWNLOADS_DIR = path.join(path.dirname(path.dirname(__dirname)), 'downloads');
 
@@ -137,6 +138,9 @@ class SessionAdapter {
     this.downloadsDir = opts.downloadsDir || DOWNLOADS_DIR;
     this.downloadItems = new Map();
     this.downloadSeq = 0;
+    // HTTPS-only: upgrades in flight and hosts the human allowed over HTTP.
+    this.httpsOnly = createHttpsOnlyState();
+    this.treatHostAsPublic = opts.treatHostAsPublic || null; // tests only
     // Origins the user approved through the ASK dialog, for this session only.
     this.permissionGrants = new Set();
     // Remembered per-site decisions. Null for agent-owned sessions: an agent
@@ -166,6 +170,22 @@ class SessionAdapter {
       const tabUrl = self.pageUrl(details);
       const resourceType = details.resourceType || 'other';
       const S = settings.all();
+
+      // HTTPS-only: retry a plain-HTTP navigation over HTTPS before anything
+      // is sent in the clear. A failed secure attempt is handled in main.js,
+      // which asks the human before any fallback.
+      if (resourceType === 'mainFrame' && S.httpsOnly !== false) {
+        const secure = httpsUpgradeTarget(url, {
+          allowedHosts: self.httpsOnly.allowedHosts, treatAsPublic: self.treatHostAsPublic,
+        });
+        if (secure) {
+          self.httpsOnly.noteUpgrade(url, secure);
+          self.counters.httpsUpgrades = (self.counters.httpsUpgrades || 0) + 1;
+          log.log('CLEAN', 'navigation upgraded to HTTPS', { from: url.slice(0, 200) });
+          callback({ redirectURL: secure });
+          return;
+        }
+      }
 
       // Phase 6: strip tracking parameters on main-frame navigations.
       if (resourceType === 'mainFrame') {

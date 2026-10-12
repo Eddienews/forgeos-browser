@@ -9,7 +9,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node tests/run-tests.js",
-    "test:e2e": "electron tests/e2e/main.js && electron tests/e2e/find-in-page.js && electron tests/e2e/site-permissions.js && electron tests/e2e/identity-and-tabs.js && electron tests/e2e/shortcuts.js",
+    "test:e2e": "electron tests/e2e/main.js && electron tests/e2e/find-in-page.js && electron tests/e2e/site-permissions.js && electron tests/e2e/identity-and-tabs.js && electron tests/e2e/shortcuts.js && electron tests/e2e/https-only.js",
     "test:adblock:public": "electron scripts/test-public-adblock.js",
     "verify": "node scripts/verify-gates.js",
     "check:electron": "node scripts/check-electron.js",

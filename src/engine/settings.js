@@ -12,6 +12,7 @@
  *   blockAds: true,
  *   blockThirdPartyCookies: true,
  *   stripTrackingParams: true,
+ *   httpsOnly: true,
  *   fingerprint: 'standard'|'reduced'|'off', // reserved for a sandbox-safe implementation
  *   subtitleLangs: 'en.*,pt.*',
  *   pageZoom: 100,
@@ -86,6 +87,8 @@ const DEFAULTS = {
   blockAds: true,
   blockThirdPartyCookies: true,
   stripTrackingParams: true,
+  // Retry http:// navigations over https://; ask before falling back.
+  httpsOnly: true,
   // Retained for settings-file compatibility; no page-world shims are
   // installed until a sandbox-safe, navigation-safe implementation exists.
   fingerprint: 'standard',

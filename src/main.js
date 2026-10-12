@@ -343,6 +343,7 @@ function createTab(url = 'about:blank', opts = {}) {
     }
     tab.blockedCredentialUrl = null;
     tab.blockedCredentialNoticeUrl = null;
+    adapter.httpsOnly.settle(url);
     // The blank document is not a visit: no history entry, nothing to inject.
     if (url === 'about:blank') { tab.url = url; sendState(); return; }
     // NO-CREDENTIALS policy: intercept identity-provider sign-in pages and
@@ -413,9 +414,10 @@ function createTab(url = 'about:blank', opts = {}) {
     sendState();
   });
 
-  wc.on('did-fail-load', (_e, code, desc, validatedURL) => {
+  wc.on('did-fail-load', (_e, code, desc, validatedURL, isMainFrame) => {
     if (code === -3) return; // aborted
     log.log('ERROR', 'load failed', { code, desc: String(desc).slice(0, 120), url: String(validatedURL).slice(0, 200) });
+    if (isMainFrame) offerHttpFallback(tab, validatedURL, desc);
   });
 
   wc.on('render-process-gone', (_e, details) => {
@@ -474,6 +476,38 @@ function createTab(url = 'about:blank', opts = {}) {
   // would be dead while it has focus.
   wc.loadURL(url && url !== '' ? url : 'about:blank').catch(() => {});
   return tab;
+}
+
+/**
+ * HTTPS-only fallback. The secure retry of an http:// navigation failed: the
+ * site may not support HTTPS, or something on the network is interfering. The
+ * browser never downgrades by itself; the human decides, per host, for this
+ * session. An agent tab is never offered the downgrade.
+ */
+async function offerHttpFallback(tab, failedUrl, reason) {
+  const upgrade = tab.adapter.httpsOnly.takeFailedUpgrade(failedUrl);
+  if (!upgrade) return false;
+  if (tab.agentOwned || tab.closing || activeTabId !== tab.id || !chromeWin || chromeWin.isDestroyed()) {
+    log.log('DENY', 'insecure fallback not offered', { host: upgrade.host, reason: tab.agentOwned ? 'agent tab' : 'tab not visible' });
+    return false;
+  }
+  const result = await dialog.showMessageBox(chromeWin, {
+    type: 'warning',
+    title: 'ForgeOS Browser — secure connection unavailable',
+    message: `${upgrade.host} could not be opened over HTTPS.`,
+    detail: `Reason: ${String(reason || 'connection failed').slice(0, 120)}\n\n` +
+      'Over plain HTTP, anyone on the network can read and change what you see and send. ' +
+      'Continue only if you do not enter private information.\n\n' +
+      'Your choice applies to this site until the browser is closed.',
+    buttons: ['Stay secure', 'Continue over HTTP'],
+    defaultId: 0, cancelId: 0, noLink: true,
+  });
+  const allowed = result.response === 1;
+  log.log(allowed ? 'ALLOW' : 'DENY', 'insecure HTTP fallback human decision', { host: upgrade.host });
+  if (!allowed || tab.closing || tab.wc.isDestroyed() || !tabs.has(tab.id)) return false;
+  tab.adapter.httpsOnly.allowHttp(upgrade.host);
+  tab.wc.loadURL(upgrade.httpUrl).catch(() => {});
+  return true;
 }
 
 async function refreshAgentView(tab) {
@@ -728,6 +762,44 @@ function reopenClosedTab() {
   return true;
 }
 
+/** Open the system print dialog for the page the human is looking at. */
+function printActiveTab() {
+  const t = activeTab();
+  if (!t || t.closing || t.wc.isDestroyed()) return false;
+  t.wc.print({ printBackground: true }, (ok, reason) => {
+    if (!ok && reason && !/cancel/i.test(String(reason))) log.log('ERROR', 'print failed', { reason: String(reason).slice(0, 120) });
+  });
+  return true;
+}
+
+/** Save the current page as a PDF where the human chooses. */
+async function savePageAsPdf() {
+  const t = activeTab();
+  if (!t || t.closing || t.wc.isDestroyed() || !chromeWin || chromeWin.isDestroyed())
+    return { ok: false, reason: 'No page to save.' };
+  const id = t.id, url = t.wc.getURL();
+  const base = String(t.title || 'page').replace(/[\\/:*?"<>|\x00-\x1f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'page';
+  const choice = await dialog.showSaveDialog(chromeWin, {
+    title: 'Save page as PDF',
+    defaultPath: path.join(app.getPath('documents'), `${base}.pdf`),
+    filters: [{ name: 'PDF', extensions: ['pdf'] }],
+  });
+  if (choice.canceled || !choice.filePath) return { ok: false, canceled: true };
+  if (path.extname(choice.filePath).toLowerCase() !== '.pdf') return { ok: false, reason: 'The file name must end in .pdf.' };
+  // The page shown when the dialog opened is the page that gets saved.
+  if (activeTabId !== id || t.closing || t.wc.isDestroyed() || t.wc.getURL() !== url)
+    return { ok: false, reason: 'The page changed; nothing was saved.' };
+  try {
+    const data = await t.wc.printToPDF({ printBackground: true });
+    await fs.promises.writeFile(choice.filePath, data);
+  } catch (error) {
+    log.log('ERROR', 'save as PDF failed', { error: String(error).slice(0, 120) });
+    return { ok: false, reason: 'Could not save the PDF.' };
+  }
+  log.log('INFO', 'page saved as PDF');
+  return { ok: true, file: path.basename(choice.filePath) };
+}
+
 function focusAddressBar() {
   if (!chromeWin || chromeWin.isDestroyed()) return;
   chromeWin.webContents.focus();
@@ -756,6 +828,7 @@ function runShortcut(action) {
       return true;
     }
     case 'reopen-tab': return reopenClosedTab();
+    case 'print': return printActiveTab();
     case 'focus-address': focusAddressBar(); return true;
     case 'reload': if (t) t.wc.reload(); return !!t;
     case 'back':
@@ -1039,6 +1112,7 @@ function registerIpc() {
     for (const { session: s, adapter } of todo) {
       removed += await clearSessionData(s);
       adapter.clearPermissionGrants();
+      adapter.httpsOnly.clear();
     }
     for (const t of tabs.values()) {
       t.history = []; t.index = -1; t.lastAgentView = null;
@@ -1248,6 +1322,8 @@ function registerIpc() {
     if (res.ok) log.log('INFO', 'settings updated', { keys: Object.keys(patch || {}).join(',') });
     return res;
   });
+  handle('forge:print', () => printActiveTab());
+  handle('forge:save-pdf', () => savePageAsPdf());
   handle('forge:version', () => app.getVersion());
   /* ---- agent inference key (v0.11): the user's own, never the project's ----
    * The key is written to its own 0600 file, never to settings.json, and it is
