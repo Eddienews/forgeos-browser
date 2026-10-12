@@ -30,6 +30,7 @@ const { requestAction } = require('./engine/permissions');
 const settings = require('./engine/settings');
 const bh = require('./engine/bookmarks-history');
 const allowlist = require('./engine/site-allowlist');
+const sitePermissions = require('./engine/site-permissions');
 const { compileCosmetic, selectorsForHost } = require('./engine/cosmetic-engine');
 const { startAgentApi } = require('./ext/agent-api');
 const { createAgentSession } = require('./engine/agent-network-proxy');
@@ -146,12 +147,18 @@ function noteSiteBlock(webContentsId, category) {
   if (key) tab.siteCounts[key]++;
 }
 
+// Remembered site permissions belong to the human. An agent-owned session
+// neither reads nor writes them.
+function sitePermissionsFor(partitionKey) {
+  return String(partitionKey || '').startsWith('forge-agent-') ? null : sitePermissions;
+}
+
 function getSessionFor(partitionKey) {
   if (partitionKey == null) {
     let e = sessions.get('__default__');
     if (!e) {
       const s = session.defaultSession;
-      e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, downloadsDir: DL_DIR(), getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r), onSiteBlocked: noteSiteBlock }) };
+      e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, downloadsDir: DL_DIR(), getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r), onSiteBlocked: noteSiteBlock, sitePermissions: sitePermissionsFor(partitionKey) }) };
       sessions.set('__default__', e);
     }
     return e;
@@ -159,7 +166,7 @@ function getSessionFor(partitionKey) {
   let e = sessions.get(partitionKey);
   if (!e) {
     const s = session.fromPartition(partitionKey);
-    e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, downloadsDir: DL_DIR(), getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r), onSiteBlocked: noteSiteBlock }) };
+    e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, downloadsDir: DL_DIR(), getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r), onSiteBlocked: noteSiteBlock, sitePermissions: sitePermissionsFor(partitionKey) }) };
     sessions.set(partitionKey, e);
   }
   return e;
@@ -936,7 +943,10 @@ function registerIpc() {
     if (!tab) return null;
     const info = siteSnapshot(tab, allowlist.isAllowed,
       h => settings.all().credentialOptIn?.[h] === true, tab.adapter.counters);
-    return info && { ...info, credentialsGloballyAllowed: settings.all().allowCredentials === true };
+    return info && { ...info, credentialsGloballyAllowed: settings.all().allowCredentials === true,
+      // Strict and Ephemeral deny these permissions outright; remembered
+      // decisions are shown but only take effect in Standard mode.
+      permissions: sitePermissions.list(info.origin), permissionsActive: modeId === 'standard' };
   };
   handle('forge:site-privacy', siteStatus);
   handle('forge:site-exception', async (event, kind, enabled) => {
@@ -969,6 +979,27 @@ function registerIpc() {
       tab.wc.loadURL(tab.blockedCredentialUrl).catch(() => {});
     }
     sendState();
+    return { ok: true, site: siteStatus(event) };
+  });
+  handle('forge:site-permission', async (event, permission, state) => {
+    const tab = humanSite(event), status = siteStatus(event);
+    if (!tab || !status || !sitePermissions.isManaged(permission) || !['ask', 'allow', 'deny'].includes(state))
+      return { ok: false, reason: 'No active human HTTP(S) site or invalid permission.' };
+    if (state === 'allow') {
+      const label = sitePermissions.MANAGED_PERMISSIONS[permission];
+      const response = await dialog.showMessageBox(chromeWin, { type: 'warning',
+        title: 'Site permission', message: `Always allow “${label}” on ${status.host}?`,
+        detail: `${status.origin}\nThis site will get this capability without asking again. It can be reversed from this badge.`,
+        buttons: ['Cancel', 'Always allow'], defaultId: 0, cancelId: 0, noLink: true });
+      if (response.response !== 1) return { ok: false, reason: 'Cancelled.' };
+    }
+    if (humanSite(event) !== tab || siteStatus(event)?.origin !== status.origin)
+      return { ok: false, reason: 'Active human site changed.' };
+    const result = sitePermissions.set(status.origin, permission, state);
+    if (!result.ok) return result;
+    // Resetting or blocking also withdraws an approval given earlier in this session.
+    if (state !== 'allow') tab.adapter.revokePermissionGrant(status.origin, permission);
+    log.log('INFO', 'site permission changed', { host: status.host, permission, state });
     return { ok: true, site: siteStatus(event) };
   });
   handle('forge:site-clear', async (event) => {
