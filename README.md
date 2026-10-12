@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Build](https://github.com/Eddienews/forgeos-browser/actions/workflows/build.yml/badge.svg)](https://github.com/Eddienews/forgeos-browser/actions)
-[![Tests](https://img.shields.io/badge/tests-419%20passing-brightgreen)](https://github.com/Eddienews/forgeos-browser/blob/main/tests/run-tests.js)
+[![Tests](https://img.shields.io/badge/tests-426%20passing-brightgreen)](https://github.com/Eddienews/forgeos-browser/blob/main/tests/run-tests.js)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20·%20macOS%20·%20Linux%20·%20Pi-blue)](https://github.com/Eddienews/forgeos-browser/releases)
 [![Telemetry](https://img.shields.io/badge/telemetry-zero-orange)](https://github.com/Eddienews/forgeos-browser/blob/main/PRIVACY_MODEL.md)
 
@@ -53,7 +53,7 @@ Measured vs Brave/Chrome/Edge on the same machine (see [results/BENCHMARK.md](re
 ```bash
 npm install
 npm start                 # dev
-npm test                  # 419 unit tests
+npm test                  # 426 unit tests
 npm run package           # electron-packager for host platform
 node scripts/make-portable.js   # portable zip
 # cross-platform: node scripts/package.js --platform=linux,darwin --arch=x64,arm64
@@ -114,6 +114,15 @@ npm install && npm start
 npm run package
 ./dist/ForgeBrowserLab-linux-x64/ForgeBrowserLab
 ```
+
+Install for your user, with a launcher entry and icon (no root needed):
+```bash
+npm run install:linux                    # package, then install to ~/.local/share/forgeos-browser
+bash scripts/install-linux.sh --default  # also make it the default browser
+bash scripts/install-linux.sh --uninstall
+```
+Your profile stays in `~/.config/ForgeOS Browser`. Links opened from other
+applications arrive as new tabs in the running browser.
 
 **Raspberry Pi (arm64, Pi 4/5)**
 ```bash

@@ -5,6 +5,9 @@
 ### Added
 - Per-site permission controls in the site panel: Ask, Allow, or Block for camera and microphone, location, notifications, and clipboard read. The permission prompt can also remember "Always allow" or "Never allow" for the site.
 - A link that asks for a new window (`target="_blank"`, `window.open`) now opens as a ForgeOS tab in a human tab, right after user input. Previously it did nothing.
+- Keyboard shortcuts: Ctrl+T, Ctrl+W, Ctrl+L, Ctrl+R/F5, Alt+Left/Right, Ctrl+Tab, Ctrl+1–9, Ctrl+=/−/0, F11 and F12, from a page or from the toolbar.
+- The browser is single-instance: a second launch, or a link opened from another application, becomes a new tab in the running browser.
+- Linux: per-user installer (`npm run install:linux`) with launcher entry, icon, and optional default-browser registration. An application icon.
 
 ### Changed
 - Client-hint headers repeat the brand list the engine reports to JavaScript (Chromium) and are sent only to secure origins. ForgeOS no longer claims to be Google Chrome. Set `identifyAsChrome: true` in the settings file if a sign-in page requires that claim.

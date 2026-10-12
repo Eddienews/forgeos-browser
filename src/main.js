@@ -41,6 +41,7 @@ const { classifyAction, compareAgentPreview, hashEffectProof } = require('./engi
 const { runGoal } = require('./engine/agent-loop');
 const credentialPolicy = require('./engine/credential-policy');
 const { browserViewBounds, popupDecision } = require('./engine/view-layout');
+const { shortcutAction, nextZoom, tabTarget, externalUrls } = require('./engine/desktop-integration');
 const sessionStore = require('./engine/session-store');
 const notebook = require('./engine/research-notebook');
 const { cleanUrlString } = require('./engine/url-cleaner');
@@ -70,6 +71,13 @@ const IS_PACKAGED = __dirname.includes('app.asar');
 const SMOKE_RUNTIME_BASE = process.argv.includes('--smoke')
   ? process.env.FORGE_SMOKE_RUNTIME_BASE
   : null;
+
+// One browser per profile: two processes writing the same history, session and
+// site-data files corrupt them, and the second cannot bind the Agent API. A
+// second launch hands its links to the running browser and exits. Smoke runs
+// use their own runtime base and must work while a browser is open.
+const HAS_INSTANCE_LOCK = !!SMOKE_RUNTIME_BASE || app.requestSingleInstanceLock();
+if (!HAS_INSTANCE_LOCK) app.quit();
 
 function getRuntimeBase() {
   if (SMOKE_RUNTIME_BASE) return path.resolve(SMOKE_RUNTIME_BASE);
@@ -313,7 +321,12 @@ function createTab(url = 'about:blank', opts = {}) {
     const find = ctrl && !input.alt && input.key.toLowerCase() === 'f';
     const repeat = !ctrl && !input.alt && input.key === 'F3';
     const close = !ctrl && !input.alt && input.key === 'Escape' && pageFind.opened;
-    if (!find && !repeat && !close) return;
+    if (!find && !repeat && !close) {
+      // Browser shortcuts work while a page has focus; the page never sees them.
+      const action = activeTabId === tab.id ? shortcutAction(input) : null;
+      if (action) { event.preventDefault(); runShortcut(action); }
+      return;
+    }
     event.preventDefault();
     if (activeTabId === tab.id) {
       if (close) pageFind.close();
@@ -330,6 +343,8 @@ function createTab(url = 'about:blank', opts = {}) {
     }
     tab.blockedCredentialUrl = null;
     tab.blockedCredentialNoticeUrl = null;
+    // The blank document is not a visit: no history entry, nothing to inject.
+    if (url === 'about:blank') { tab.url = url; sendState(); return; }
     // NO-CREDENTIALS policy: intercept identity-provider sign-in pages and
     // show a clear notice instead of Google's misleading "may not be secure".
     if (credentialPolicy.matchesCredentialHost(url) && !settings.all().allowCredentials) {
@@ -454,9 +469,10 @@ function createTab(url = 'about:blank', opts = {}) {
     wc.on('will-redirect', denyNonWeb);
   }
 
-  if (url !== 'about:blank' && url !== '') {
-    wc.loadURL(url).catch(() => {});
-  }
+  // A blank tab still loads a real (network-free) blank document: a view that
+  // never loaded anything receives no input events, so keyboard shortcuts
+  // would be dead while it has focus.
+  wc.loadURL(url && url !== '' ? url : 'about:blank').catch(() => {});
   return tab;
 }
 
@@ -682,6 +698,76 @@ async function approveAgentNavigation(url) {
     url: String(url).slice(0, 300), decision: allowed ? 'allow' : 'deny',
   });
   return allowed;
+}
+
+/* ------------------------------------------------------------------ */
+/* Keyboard shortcuts and links from other applications                */
+/* ------------------------------------------------------------------ */
+
+function focusAddressBar() {
+  if (!chromeWin || chromeWin.isDestroyed()) return;
+  chromeWin.webContents.focus();
+  sendToChrome('forge:focus-address');
+}
+
+function openHumanTab(url) {
+  const t = createTab('about:blank');
+  switchTab(t.id, { focus: !!url });
+  if (url) navigateIn(t, url);
+  else focusAddressBar();
+  return t;
+}
+
+/** Run one action from desktop-integration.shortcutAction. Human input only. */
+function runShortcut(action) {
+  if (!chromeWin || chromeWin.isDestroyed()) return false;
+  const t = activeTab();
+  switch (action) {
+    case 'new-tab': openHumanTab(null); return true;
+    case 'close-tab': {
+      if (!t) return false;
+      const last = tabs.size === 1;
+      closeTab(t.id).then(() => { if (last && !agentQuitting && chromeWin && !chromeWin.isDestroyed()) openHumanTab(null); })
+        .catch(() => {});
+      return true;
+    }
+    case 'focus-address': focusAddressBar(); return true;
+    case 'reload': if (t) t.wc.reload(); return !!t;
+    case 'back':
+      if (!t || t.index <= 0) return false;
+      t.index -= 1; t.wc.goBack(); return true;
+    case 'forward':
+      if (!t || t.index >= t.history.length - 1) return false;
+      t.index += 1; t.wc.goForward(); return true;
+    case 'zoom-in': case 'zoom-out': case 'zoom-reset': {
+      const zoom = nextZoom(settings.all().pageZoom, action);
+      settings.save({ pageZoom: zoom });
+      if (t) t.wc.setZoomFactor(zoom / 100);
+      return true;
+    }
+    case 'fullscreen': chromeWin.setFullScreen(!chromeWin.isFullScreen()); return true;
+    case 'devtools': if (t) t.wc.openDevTools({ mode: 'detach' }); return !!t;
+    case 'quit': app.quit(); return true;
+    default: {
+      const target = tabTarget(action, [...tabs.keys()], activeTabId);
+      if (target == null || !tabs.has(target)) return false;
+      if (target !== activeTabId) switchTab(target);
+      return true;
+    }
+  }
+}
+
+/** Open links another application handed over, as ordinary human tabs. */
+function openExternalUrls(urls) {
+  if (!chromeWin || chromeWin.isDestroyed()) return 0;
+  for (const url of urls) {
+    log.log('INFO', 'link opened from another application', { url: url.slice(0, 200) });
+    openHumanTab(url);
+  }
+  if (chromeWin.isMinimized()) chromeWin.restore();
+  chromeWin.show();
+  chromeWin.focus();
+  return urls.length;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1268,8 +1354,17 @@ function createChromeWindow() {
     winOpts.titleBarStyle = 'hidden';
   }
 
+  // Linux and Windows take the window icon from here; macOS uses the bundle's.
+  if (process.platform !== 'darwin') winOpts.icon = path.join(APP_ROOT, '..', 'assets', 'icon.png');
+
   chromeWin = new BrowserWindow(winOpts);
   chromeWin.setMenuBarVisibility(false);
+  // The same shortcuts while the toolbar or address bar has focus. Find keys
+  // are handled by the toolbar renderer itself.
+  chromeWin.webContents.on('before-input-event', (event, input) => {
+    const action = shortcutAction(input);
+    if (action) { event.preventDefault(); runShortcut(action); }
+  });
   // Debug: forward renderer console to the event log when FORGE_DEBUG_CONSOLE=1.
   if (process.env.FORGE_DEBUG_CONSOLE) {
     chromeWin.webContents.on('console-message', (_e, level, message, line, sourceId) => {
@@ -1314,6 +1409,8 @@ function createChromeWindow() {
       const t = createTab('about:blank');
       switchTab(t.id, { focus: false });
     }
+    // Links given on the command line ("open with ForgeOS Browser").
+    if (!process.argv.includes('--smoke')) openExternalUrls(externalUrls(process.argv));
     sendState();
   });
   chromeWin.webContents.on('will-navigate', (e, url) => {
@@ -1343,7 +1440,17 @@ function createChromeWindow() {
   chromeWin.loadFile(RENDERER);
 }
 
+app.on('second-instance', (_event, argv) => {
+  // Another launch of the browser: open its links here, or just come forward.
+  if (!openExternalUrls(externalUrls(argv)) && chromeWin && !chromeWin.isDestroyed()) {
+    if (chromeWin.isMinimized()) chromeWin.restore();
+    chromeWin.show();
+    chromeWin.focus();
+  }
+});
+
 app.whenReady().then(() => {
+  if (!HAS_INSTANCE_LOCK) return; // a running browser already took over
   // Crash recovery: never die silently. Log the error, show it, and keep the
   // app alive where possible (a renderer/tab crash must not kill the shell).
   process.on('uncaughtException', (err) => {

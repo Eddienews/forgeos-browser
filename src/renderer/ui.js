@@ -149,6 +149,8 @@
       await F.clearSession();
     }
   });
+  // Ctrl+L, F6, Alt+D and Ctrl+T arrive from the main process.
+  F.onFocusAddress(() => { const addr = $('addr'); addr.focus(); addr.select(); });
   $('addr').addEventListener('keydown', async (e) => {
     if (e.key === 'Enter' && $('addr').value.trim()) {
       await F.navigate($('addr').value.trim());

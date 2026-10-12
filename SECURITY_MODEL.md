@@ -119,6 +119,12 @@ browser cookies or credentials to bypass YouTube login, age, or bot gates.
   implementation required disabling sandbox and context isolation, while
   post-load injection interfered with later Chromium navigations. ForgeOS keeps
   the stronger trust boundary and documents engine-dependent entropy honestly.
+- One browser process owns a profile. A second launch hands over only complete
+  http(s) links from its command line, which open as ordinary human tabs,
+  never in the agent tab; switches, paths, `file:` URLs and URLs carrying
+  credentials are ignored.
+- Browser keyboard shortcuts are taken only for chords that need Ctrl/Cmd, Alt
+  or a function key. Ordinary typing is never intercepted.
 - Permission *checks* follow the same defaults as permission requests. Electron
   answers every check with "granted" when no check handler is installed, so
   `navigator.permissions.query` and check-only APIs are answered explicitly:

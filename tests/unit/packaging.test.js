@@ -80,7 +80,7 @@ module.exports = [
       const forbidden = ['src/private-notes.txt', 'src/engine/extra.js', 'src/ext/extra.js',
         'src/renderer/extra.html', 'src/lists/extra.json', 'assets/secret.txt',
         'lists/extra.txt', 'src/forge-inference-key.tmp', 'src/renderer/ui.js.bak',
-        'assets/icon.png', 'src/engine/nested/extra.js'];
+        'assets/unlisted-icon.png', 'src/engine/nested/extra.js'];
       for (const file of forbidden) a.strictEqual(isPackageExcluded(file), true, file);
       for (const dir of ['src', 'src/engine', 'src/renderer', 'src/ext', 'src/lists', 'assets', 'lists']) {
         a.strictEqual(isPackageExcluded(dir), false, `directory ${dir} must be traversable`);

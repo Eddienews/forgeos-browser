@@ -28,6 +28,7 @@ const api = {
   findClose: () => ipcRenderer.invoke('forge:find-close'),
   onFindResult: (cb) => ipcRenderer.on('forge:find-result', (_e, status) => cb(status)),
   onFindShortcut: (cb) => ipcRenderer.on('forge:find-shortcut', (_e, shortcut) => cb(shortcut)),
+  onFocusAddress: (cb) => ipcRenderer.on('forge:focus-address', () => cb()),
   setMode: (mode) => ipcRenderer.invoke('forge:set-mode', mode),
   clearSession: () => ipcRenderer.invoke('forge:clear-session'),
   setForgetOnClose: (on) => ipcRenderer.invoke('forge:set-forget', on),
