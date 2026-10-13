@@ -1,6 +1,6 @@
-# Handoff: verify ForgeOS Browser v0.18.1 on macOS Intel and Windows
+# Handoff: verify ForgeOS Browser v0.18.2 on macOS Intel and Windows
 
-Written on 2026-10-12 and updated for v0.18.1 on 2026-10-13 by a Claude Code session on the maintainer's Linux
+Written on 2026-10-12 and updated for v0.18.2 on 2026-10-13 by a Claude Code session on the maintainer's Linux
 machine, for whoever sits at the Mac or the Windows machine next: Eddie, or a
 Claude Code session there. That session had neither machine, so every macOS and
 Windows command below is unverified until it is run.
@@ -14,7 +14,7 @@ Delete this file in the pull request that records the results.
   same checklist applies with the arm64 archive.
 - Linux x64 is already verified by execution on the maintainer's machine.
 
-v0.18.1 is published. The thing under test is the **published archive**, because
+v0.18.2 is published. The thing under test is the **published archive**, because
 that is what a user downloads. Building from source (last section) is a second,
 smaller check.
 
@@ -40,7 +40,7 @@ macOS (Intel):
 
 ```bash
 mkdir -p ~/forge-verify && cd ~/forge-verify
-gh release download v0.18.1 -R Eddienews/forgeos-browser \
+gh release download v0.18.2 -R Eddienews/forgeos-browser \
   -p 'ForgeBrowserLab-portable-darwin-x64.zip' -p SHA256SUMS
 shasum -a 256 -c SHA256SUMS --ignore-missing     # expect: ...darwin-x64.zip: OK
 ditto -x -k ForgeBrowserLab-portable-darwin-x64.zip .
@@ -50,19 +50,19 @@ Windows (PowerShell):
 
 ```powershell
 mkdir $HOME\forge-verify; cd $HOME\forge-verify
-gh release download v0.18.1 -R Eddienews/forgeos-browser `
+gh release download v0.18.2 -R Eddienews/forgeos-browser `
   -p 'ForgeBrowserLab-portable-win32-x64.zip' -p SHA256SUMS
 (Get-FileHash ForgeBrowserLab-portable-win32-x64.zip -Algorithm SHA256).Hash.ToLower()
 Select-String win32-x64 SHA256SUMS               # the two hashes must match
 Expand-Archive ForgeBrowserLab-portable-win32-x64.zip -DestinationPath .
 ```
 
-Expected hashes for v0.18.1:
+Expected hashes for v0.18.2:
 
 | Archive | SHA-256 |
 | --- | --- |
-| `ForgeBrowserLab-portable-darwin-x64.zip` | `9735dcfe45613ab50242274eaf6575d4ca23fb70dcf8ba7ebae5921888ad37ad` |
-| `ForgeBrowserLab-portable-win32-x64.zip` | `c4c7c60e62be7438f624459b26d569d8bf02dfe7c1514d07dae3db4996e38ba3` |
+| `ForgeBrowserLab-portable-darwin-x64.zip` | `5ed6e551cd006be80b3b52fe190f340382fb21c9cb9dd15322d9446272ef92a7` |
+| `ForgeBrowserLab-portable-win32-x64.zip` | `fb815e9d26ae9bf87aaaf176540342d912871359e61cf4977e8464f58a9e9746` |
 
 Note the exact path the archive unpacks to; the commands below call it `<app>`
 (macOS, the `.app` bundle) or `<dir>` (Windows, the folder holding
@@ -117,7 +117,7 @@ to Ctrl, to Cmd, or to both: the changelog documents them as Ctrl only.
 
 | # | Check | Expected |
 | --- | --- | --- |
-| 1 | App opens; toolbar version | `v0.18.1` |
+| 1 | App opens; toolbar version | `v0.18.2` |
 | 2 | Load `https://example.com` | Page renders; security badge reads `HTTPS` |
 | 3 | Click the security badge | Site panel opens fully inside the window and has a "Permissions for this site" section |
 | 4 | Open a site that asks for camera or location | A prompt appears; before allowing, the site sees `denied` |
@@ -135,6 +135,7 @@ to Ctrl, to Cmd, or to both: the changelog documents them as Ctrl only.
 | 16 | Open a new blank tab and click ✎ | The notice "Open a video page first." appears inside the toolbar, over the address bar |
 | 17 | Click anywhere on the ⚙ button, including its centre | The settings menu opens |
 | 18 | Window buttons | Native minimize, maximize and close work; the toolbar draws none of its own (those are Linux only) |
+| 19 | Open three tabs with different pages, then switch between them several times | Each tab shows its own page every time. Before 0.18.2 a tab came back empty on Linux; this was never checked on macOS or Windows |
 
 Notes on individual checks:
 
@@ -150,7 +151,7 @@ Notes on individual checks:
 - **13.** macOS: `ELECTRON_RUN_AS_NODE=1 "<app>/Contents/MacOS/ForgeBrowserLab" -e "console.log(1)"`.
   Windows: `$env:ELECTRON_RUN_AS_NODE=1; & "<dir>\ForgeBrowserLab.exe" -e "console.log(1)"`,
   then `Remove-Item Env:ELECTRON_RUN_AS_NODE`.
-- **Update notice.** v0.18.1 is the latest release, so no notice is expected.
+- **Update notice.** v0.18.2 is the latest release, so no notice is expected.
   Only confirm that the Settings toggle exists.
 
 ### Upgrade from the older version on the Intel Mac
@@ -226,7 +227,7 @@ Fill in one column per machine and hand the table back to Eddie.
 | 1. Checksum matches | | |
 | 2. First-launch dialog and the path that worked | | |
 | 3. Smoke exit code | | |
-| 4. Manual checklist 1–18 (list the numbers that failed) | | |
+| 4. Manual checklist 1–19 (list the numbers that failed) | | |
 | 4. Upgrade migration | | n/a |
 | 5. Video download | | |
 | 5. Transcript | | |
