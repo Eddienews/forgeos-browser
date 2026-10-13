@@ -58,4 +58,21 @@ module.exports = [
       a.deepStrictEqual(windowControls({ platform: 'linux', env: { XDG_SESSION_DESKTOP: 'niri' } }), { show: true, minimize: false });
     },
   },
+  {
+    // The page view covers everything below the toolbar, so a notice anchored
+    // to the bottom of the toolbar window is drawn where nobody can see it.
+    name: 'plugin notices are anchored inside the toolbar, not below it',
+    gate: 'A',
+    fn(a) {
+      const css = fs.readFileSync(path.join(__dirname, '../../src/renderer/style.css'), 'utf8');
+      const rule = css.match(/#plug-toast, #plug-progress \{([^}]*)\}/);
+      a.ok(rule, 'shared notice rule exists');
+      a.match(rule[1], /position: fixed; top: \d+px;/);
+      const barHeight = Number(css.match(/--bar-h: (\d+)px/)[1]);
+      const top = Number(rule[1].match(/top: (\d+)px/)[1]);
+      const height = Number(rule[1].match(/[^-]height: (\d+)px/)[1]);
+      a.ok(top + height <= barHeight, 'the notice fits inside the toolbar');
+      for (const block of css.matchAll(/#plug-(?:toast|progress)[^{]*\{([^}]*)\}/g)) a.doesNotMatch(block[1], /bottom:/);
+    },
+  },
 ];

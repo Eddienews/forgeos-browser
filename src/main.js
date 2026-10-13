@@ -1355,8 +1355,10 @@ function createChromeWindow() {
   const winOpts = {
     width: 1280,
     height: 820,
-    minWidth: 760,
-    minHeight: 520,
+    // Kept small: a tiling window manager sizes the window regardless, and a
+    // window held above its tile is drawn clipped.
+    minWidth: 520,
+    minHeight: 320,
     title: 'ForgeOS Browser',
     backgroundColor: '#14110d',
     webPreferences: {

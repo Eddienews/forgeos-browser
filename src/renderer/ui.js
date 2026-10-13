@@ -581,7 +581,7 @@
   refreshAgentKey();
 
   /* ---------------- plugins: ⬇ video / ✎ transcript ---------------- */
-  // Persistent progress pill (bottom-right): shows while a job runs.
+  // Persistent progress pill (over the toolbar): shows while a job runs.
   let progressEl = null;
   let currentJobId = null;
   let pluginBusy = false;
@@ -624,6 +624,7 @@
   let toastTimer = null;
   function showToast(text, ms = 4000) {
     toast.textContent = text;
+    toast.title = text;
     toast.classList.add('show');
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = setTimeout(() => toast.classList.remove('show'), ms);
