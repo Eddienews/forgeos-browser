@@ -18,6 +18,7 @@
 - The Control Center demo click, which acts on the human's own page, always asks for confirmation.
 
 ### Maintenance and trust
+- Updated Electron to 44.7.0 (Chromium 152), the build tooling, and the pinned GitHub Actions.
 - Dependabot checks Electron and the build dependencies daily and opens pull requests.
 - A nightly workflow fails when Electron is behind its release line, when the pinned major is unsupported, or when a high-severity advisory is published.
 - Added `SECURITY.md` with private vulnerability reporting, scope, and response intentions.

@@ -19,10 +19,10 @@
     "install:linux": "npm run package && bash scripts/install-linux.sh"
   },
   "devDependencies": {
-    "@electron/asar": "^4.3.0",
-    "@electron/fuses": "1.8.0",
+    "@electron/asar": "^4.3.1",
+    "@electron/fuses": "2.1.3",
     "@electron/packager": "^20.3.0",
-    "electron": "43.7.9",
+    "electron": "44.7.0",
     "yaml": "2.9.1"
   }
 }
