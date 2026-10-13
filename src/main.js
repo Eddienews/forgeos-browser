@@ -1416,12 +1416,14 @@ function createChromeWindow() {
     const saved = sessionStore.restoreTabRecords(getRuntimeBase())
       .filter(item => !item.containerId || modeId === 'standard');
     if (saved.length) {
-      saved.forEach((item, i) => {
+      saved.forEach((item) => {
         const t = createTab(item.url, { containerId: item.containerId });
-        if (i === 0) switchTab(t.id, { focus: false });
+        // Never take the view from a tab that is already showing: an agent
+        // may have opened its tab while the browser was still starting.
+        if (activeTabId == null) switchTab(t.id, { focus: false });
       });
       log.log('INFO', 'session restored', { tabs: saved.length });
-    } else {
+    } else if (!tabs.size) {
       const t = createTab('about:blank');
       switchTab(t.id, { focus: false });
     }

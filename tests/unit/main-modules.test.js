@@ -98,6 +98,21 @@ module.exports = [
     },
   },
   {
+    name: 'startup never takes the view from a tab that is already showing',
+    gate: 'J',
+    fn(a) {
+      const main = read('src/main.js');
+      const start = main.indexOf('const saved = sessionStore.restoreTabRecords(getRuntimeBase())');
+      const body = main.slice(start, main.indexOf('// Links given on the command line', start));
+      a.ok(start > 0 && body.length > 100);
+      // An agent can open its tab before startup finishes; the restored or
+      // blank tab must not replace it as the visible tab.
+      a.match(body, /if \(activeTabId == null\) switchTab\(t\.id, \{ focus: false \}\);/);
+      a.match(body, /\} else if \(!tabs\.size\) \{\s+const t = createTab\('about:blank'\);/);
+      a.strictEqual((body.match(/switchTab\(/g) || []).length, 2);
+    },
+  },
+  {
     name: 'with no window to ask, a plugin job is never approved',
     gate: 'J',
     async fn(a) {
