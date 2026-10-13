@@ -22,6 +22,7 @@ const {
   parseYtDlpProgress,
   resolveToolchain,
   resolveYtDlp,
+  skippedSubtitlesWarning,
   toolchainStatus,
   transcriptFiles,
   videoFiles,
@@ -214,12 +215,12 @@ class PluginRunner {
               this.fs.writeFileSync(txtPath, vttToPlainText(vttPath, this.fs), 'utf8');
               return txtPath;
             });
-            const warning = code === 0 ? undefined : classifyYtDlpError(
-              boundedOutput(stderrLines), code, { kind, subtitleLangs }
-            );
+            const output = boundedOutput(stderrLines);
+            const warning = skippedSubtitlesWarning(output)
+              || (code === 0 ? undefined : classifyYtDlpError(output, code, { kind, subtitleLangs }));
             finish({ state: 'done', code, files: [...files, ...sourceFiles], warning });
-            safeLog(this.log, code === 0 ? 'INFO' : 'WARN', 'transcript converted to text', {
-              count: files.length, partial: code !== 0, job: jobId,
+            safeLog(this.log, warning ? 'WARN' : 'INFO', 'transcript converted to text', {
+              count: files.length, partial: !!warning, job: jobId,
             });
             return;
           }
@@ -238,9 +239,13 @@ class PluginRunner {
 
       try {
         if (kind === 'transcript') {
+          // Every requested language can be refused while yt-dlp still exits 0.
+          const output = boundedOutput(stderrLines);
           finish({
             state: 'error', code,
-            error: `No subtitles were produced for the selected languages (${subtitleLangs}). Try another language.`,
+            error: skippedSubtitlesWarning(output)
+              ? classifyYtDlpError(output, code, { kind, subtitleLangs })
+              : `No subtitles were produced for the selected languages (${subtitleLangs}). Try another language.`,
           });
           return;
         }

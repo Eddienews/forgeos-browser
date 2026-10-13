@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+- YouTube transcripts: one caption language refused by YouTube (usually a machine-translated track answered with "429 Too Many Requests") no longer cancels the whole job. The remaining languages are saved and the refused ones are named in a note.
+- A YouTube rate limit is reported as a rate limit. It was shown as "YouTube or the network could not be reached".
+
 ## [0.17.0] - 2026-10-12
 
 The first release since 0.15.0. It includes everything prepared as 0.16.0,
