@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Build](https://github.com/Eddienews/forgeos-browser/actions/workflows/build.yml/badge.svg)](https://github.com/Eddienews/forgeos-browser/actions)
-[![Tests](https://img.shields.io/badge/tests-439%20passing-brightgreen)](https://github.com/Eddienews/forgeos-browser/blob/main/tests/run-tests.js)
+[![Tests](https://img.shields.io/badge/tests-443%20passing-brightgreen)](https://github.com/Eddienews/forgeos-browser/blob/main/tests/run-tests.js)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20·%20macOS%20·%20Linux%20·%20Pi-blue)](https://github.com/Eddienews/forgeos-browser/releases)
 [![Telemetry](https://img.shields.io/badge/telemetry-zero-orange)](https://github.com/Eddienews/forgeos-browser/blob/main/PRIVACY_MODEL.md)
 
@@ -53,7 +53,7 @@ Measured vs Brave/Chrome/Edge on the same machine (see [results/BENCHMARK.md](re
 ```bash
 npm install
 npm start                 # dev
-npm test                  # 439 unit tests
+npm test                  # 443 unit tests
 npm run package           # electron-packager for host platform
 node scripts/make-portable.js   # portable zip
 # cross-platform: node scripts/package.js --platform=linux,darwin --arch=x64,arm64
@@ -168,6 +168,12 @@ reported for regression analysis but do not gate CI.
 ```
 src/
 ├── main.js               Electron shell (window, tabs, WebContentsView)
+├── main/                 main-process modules composed by main.js
+│   ├── downloads.js         download registry + approval-gated plugin jobs
+│   ├── page-injection.js    cosmetic rules and browser-owned page styling
+│   ├── page-output.js       print and save as PDF
+│   ├── update-notice.js     daily update notice
+│   └── smoke.js             --smoke self-check
 ├── engine/               pure, testable core
 │   ├── filter-engine.js      network blocking (suffix trie)
 │   ├── cosmetic-engine.js    element-hiding rules

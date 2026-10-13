@@ -48,9 +48,9 @@ module.exports = [
       a.doesNotMatch(JSON.stringify(result), /evil/);
       a.strictEqual(releasePageUrl('v1.2.3"><script>'), null);
       a.strictEqual(releasePageUrl('../../x'), null);
-      const main = read('src/main.js');
-      a.match(main, /const url = updateStatus\.available \? updateCheck\.releasePageUrl\(updateStatus\.latest\) : null;/);
-      a.doesNotMatch(main, /html_url|browser_download_url/);
+      const notice = read('src/main/update-notice.js');
+      a.match(notice, /const url = updateStatus\.available \? updateCheck\.releasePageUrl\(updateStatus\.latest\) : null;/);
+      a.doesNotMatch(notice + read('src/main.js'), /html_url|browser_download_url/);
     },
   },
   {
@@ -98,16 +98,18 @@ module.exports = [
     name: 'automatic checks run only for installed builds, respect the setting, and install nothing',
     gate: 'K',
     fn(a) {
+      const notice = read('src/main/update-notice.js');
       const main = read('src/main.js');
-      a.match(main, /function scheduleUpdateChecks\(\) \{\s+if \(updateTimer \|\| !IS_PACKAGED \|\| SMOKE_RUNTIME_BASE\) return;/);
-      a.match(main, /if \(!manual && settings\.all\(\)\.checkForUpdates === false\) return publicUpdateStatus\(\);/);
+      a.match(notice, /function scheduleUpdateChecks\(\) \{\s+if \(updateTimer \|\| !ctx\.isPackaged \|\| ctx\.isSmoke\) return;/);
+      a.match(main, /isPackaged: IS_PACKAGED,\s+isSmoke: !!SMOKE_RUNTIME_BASE,/);
+      a.match(notice, /if \(!manual && settings\.all\(\)\.checkForUpdates === false\) return publicUpdateStatus\(\);/);
       a.strictEqual(require('../../src/engine/settings').DEFAULTS.checkForUpdates, true);
       const engine = read('src/engine/update-check.js');
       // A notice only: no download, no write, no process, no shell.
-      a.doesNotMatch(engine + main.slice(main.indexOf('/* Update notice'), main.indexOf('/** Open the system print dialog')),
+      a.doesNotMatch(engine + notice,
         /child_process|spawn|(?<!\.)exec\(|execFile|writeFile|createWriteStream|shell\.open|autoUpdater/);
       const { PACKAGE_FILES } = require('../../scripts/package-policy');
-      a.ok(PACKAGE_FILES.includes('src/engine/update-check.js'));
+      a.ok(PACKAGE_FILES.includes('src/engine/update-check.js') && PACKAGE_FILES.includes('src/main/update-notice.js'));
       a.match(read('PRIVACY_MODEL.md'), /update check/i);
     },
   },

@@ -41,7 +41,8 @@ function harness(onDialog = () => {}) {
     } } };
   const source = fs.readFileSync(path.join(__dirname, '../../src/main.js'), 'utf8');
   const begin = source.indexOf('const agentClickApprovals = new WeakMap();');
-  const end = source.indexOf('let smokeDone = false;', begin);
+  // The agent action section runs to the app lifecycle handlers that follow it.
+  const end = source.indexOf("app.on('window-all-closed'", begin);
   if (begin < 0 || end < 0) throw new Error('main-process action functions not found');
   vm.runInNewContext(source.slice(begin, end) + '\nthis.approve = approveAgentAction; this.act = executeAgentAction;', context);
   return { ...context, button, form, page, wc, tab, dialogs, logs, scripts,
