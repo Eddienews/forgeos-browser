@@ -31,7 +31,7 @@ async function until(fn, timeout = 9000) {
   throw new Error('Timed out waiting for ' + fn.toString().slice(0, 100));
 }
 const ui = (win, script) => win.webContents.executeJavaScript(script);
-const page = (win) => win.contentView.children[0]?.webContents;
+const page = (win) => win.contentView.children.at(-1)?.webContents;
 const label = (win) => ui(win, "({ text: document.getElementById('app-version').textContent, marked: document.getElementById('app-version').classList.contains('update-available'), line: document.getElementById('update-line').textContent })");
 
 async function main() {

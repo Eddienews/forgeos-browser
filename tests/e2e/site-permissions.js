@@ -25,7 +25,7 @@ async function until(fn, timeout = 9000) {
   throw new Error('Timed out waiting for ' + fn.toString().slice(0, 100));
 }
 const ui = (win, script) => win.webContents.executeJavaScript(script);
-const page = (win) => win.contentView.children[0]?.webContents;
+const page = (win) => win.contentView.children.at(-1)?.webContents;
 const query = (wc, name) => wc.executeJavaScript(
   `navigator.permissions.query({ name: ${JSON.stringify(name)} }).then(r => r.state, e => 'error: ' + e.message)`);
 const stored = (win, permission) => ui(win,

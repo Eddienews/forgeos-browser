@@ -28,7 +28,7 @@ async function until(fn, timeout = 9000) {
   throw new Error('Timed out waiting for ' + fn.toString().slice(0, 80));
 }
 async function ui(win, script) { return win.webContents.executeJavaScript(script); }
-function page(win) { return win.contentView.children[0]?.webContents; }
+function page(win) { return win.contentView.children.at(-1)?.webContents; }
 function key(wc, code, modifiers = []) {
   wc.focus();
   wc.sendInputEvent({ type: 'keyDown', keyCode: code, modifiers });
@@ -53,8 +53,8 @@ async function main() {
   await until(() => ui(win, "!document.querySelector('#find-bar').classList.contains('hidden')"));
   check('Ctrl+F from page opens chrome find panel',
     await ui(win, "document.activeElement.id === 'find-query'"));
-  check('page view is below find panel', win.contentView.children[0].getBounds().y === 84,
-    JSON.stringify(win.contentView.children[0].getBounds()));
+  check('page view is below find panel', win.contentView.children.at(-1).getBounds().y === 84,
+    JSON.stringify(win.contentView.children.at(-1).getBounds()));
   await ui(win, "document.querySelector('#find-query').value = 'amber'; document.querySelector('#find-query').dispatchEvent(new Event('input', {bubbles:true}))");
   try { await until(() => ui(win, "document.querySelector('#find-count').textContent === '1 / 3'")); }
   catch (error) {
@@ -80,14 +80,14 @@ async function main() {
   check('no-match query displays zero matches', await ui(win, "document.querySelector('#find-count').textContent === '0 / 0'"));
   key(wc, 'Escape');
   await until(() => ui(win, "document.querySelector('#find-bar').classList.contains('hidden')"));
-  check('Escape from page closes and restores page bounds', win.contentView.children[0].getBounds().y === 42);
+  check('Escape from page closes and restores page bounds', win.contentView.children.at(-1).getBounds().y === 42);
   // Reopen and navigate: search must not leak to another document.
   await ui(win, 'window.forge.findOpen()');
   await ui(win, "window.forge.findSearch('amber', 'forward')");
   await until(() => ui(win, "document.querySelector('#find-count').textContent === '1 / 3'"));
   await ui(win, `window.forge.navigate(${JSON.stringify(url + '?next=1')})`);
   await until(() => ui(win, "document.querySelector('#find-bar').classList.contains('hidden')"));
-  check('main-frame navigation resets find state', win.contentView.children[0].getBounds().y === 42);
+  check('main-frame navigation resets find state', win.contentView.children.at(-1).getBounds().y === 42);
   // A new tab switch also clears selection and cannot retain the query.
   await ui(win, 'window.forge.findOpen()');
   await ui(win, "window.forge.findSearch('amber', 'forward')");

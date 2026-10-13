@@ -498,13 +498,16 @@ function layoutActiveView() {
 
 function switchTab(id, { focus = true } = {}) {
   if (activeTabId !== id) pageFind.close();
-  const prev = tabs.get(activeTabId);
-  if (prev) chromeWin.contentView.removeChildView(prev.view);
   const tab = tabs.get(id);
   if (!tab) return;
+  const prev = tabs.get(activeTabId);
+  // Every tab's view stays attached and only the active one is visible. A view
+  // that is detached and attached again does not resume drawing: the page
+  // stays hidden and the tab comes back empty.
+  if (prev && prev !== tab) prev.view.setVisible(false);
   agentNavigationEpoch++;
   activeTabId = id;
-  chromeWin.contentView.addChildView(tab.view);
+  chromeWin.contentView.addChildView(tab.view); // also raises it above the other tabs
   layoutActiveView();
   if (focus && tab.wc) tab.wc.focus();
   tab.pageCounts = tab.adapter.takeDelta();
