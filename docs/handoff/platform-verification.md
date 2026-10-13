@@ -132,7 +132,7 @@ to Ctrl, to Cmd, or to both: the changelog documents them as Ctrl only.
 | 13 | `ELECTRON_RUN_AS_NODE=1` with `-e "console.log(1)"` | Starts the browser instead of printing `1` |
 | 14 | `npx electron-fuses read --app <app or exe>` (from a checkout after `npm ci`) | `RunAsNode`, `EnableNodeOptionsEnvironmentVariable`, `EnableNodeCliInspectArguments` off; `OnlyLoadAppFromAsar` on |
 | 15 | Narrow the window as far as it goes | Tabs and address bar shrink; the buttons on the right stay inside the window |
-| 16 | Click ✎ on a page that is not a video | A notice appears inside the toolbar, over the address bar |
+| 16 | Open a new blank tab and click ✎ | The notice "Open a video page first." appears inside the toolbar, over the address bar |
 | 17 | Click anywhere on the ⚙ button, including its centre | The settings menu opens |
 | 18 | Window buttons | Native minimize, maximize and close work; the toolbar draws none of its own (those are Linux only) |
 
