@@ -52,6 +52,24 @@
     }
   });
 
+  /* ---------------- window buttons (Linux) ---------------- */
+  function showFullscreen(on) {
+    const btn = $('btn-win-full');
+    btn.classList.toggle('active', !!on);
+    btn.title = on ? 'Exit full screen (F11)' : 'Full screen (F11)';
+    btn.setAttribute('aria-label', on ? 'Exit full screen' : 'Full screen');
+  }
+  F.windowControls().then((controls) => {
+    if (!controls || !controls.show) return;
+    $('win-controls').classList.remove('hidden');
+    $('btn-win-min').classList.toggle('hidden', !controls.minimize);
+    showFullscreen(controls.fullscreen);
+  }).catch(() => {});
+  for (const [id, action] of [['btn-win-min', 'minimize'], ['btn-win-full', 'fullscreen'], ['btn-win-close', 'close']]) {
+    $(id).addEventListener('click', () => F.windowControl(action));
+  }
+  F.onFullscreen(showFullscreen);
+
   /* ---------------- gear menu ---------------- */
   const gearBtn = $('btn-gear');
   const gearMenu = $('gear-menu');

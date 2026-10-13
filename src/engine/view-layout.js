@@ -22,6 +22,22 @@ function browserViewBounds({ width, height, toolbarHeight = 42, rightInset = 0, 
   };
 }
 
+// Compositors that keep a window on screen when it asks to be minimized. The
+// application is still told it is hidden and stops drawing, which leaves a
+// frozen window, so no minimize button is offered there.
+const NO_MINIMIZE_DESKTOPS = new Set(['hyprland', 'sway', 'niri', 'river', 'i3', 'dwl', 'labwc']);
+
+/**
+ * Which window buttons the toolbar draws itself. Windows and macOS supply
+ * native ones; on Linux the title bar is hidden, so the toolbar provides them.
+ */
+function windowControls({ platform, env = {} } = {}) {
+  if (platform !== 'linux') return { show: false, minimize: false };
+  const desktops = String(env.XDG_CURRENT_DESKTOP || env.XDG_SESSION_DESKTOP || '')
+    .toLowerCase().split(':').map((name) => name.trim()).filter(Boolean);
+  return { show: true, minimize: !desktops.some((name) => NO_MINIMIZE_DESKTOPS.has(name)) };
+}
+
 const POPUP_INPUT_WINDOW_MS = 1500;
 const POPUP_MAX_TABS = 60;
 
@@ -47,4 +63,4 @@ function popupDecision({ url, agentOwned, closing, active, msSinceUserInput, ope
   return { open: true, url: parsed.href };
 }
 
-module.exports = { browserViewBounds, popupDecision, POPUP_INPUT_WINDOW_MS, POPUP_MAX_TABS };
+module.exports = { windowControls, browserViewBounds, popupDecision, POPUP_INPUT_WINDOW_MS, POPUP_MAX_TABS };
