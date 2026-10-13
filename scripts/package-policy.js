@@ -15,6 +15,7 @@ const PACKAGE_FILES = Object.freeze([
   'lists/easylist.txt',
   'lists/easyprivacy.txt',
   'src/main.js',
+  'src/main/agent-actions.js',
   'src/main/downloads.js',
   'src/main/page-injection.js',
   'src/main/page-output.js',

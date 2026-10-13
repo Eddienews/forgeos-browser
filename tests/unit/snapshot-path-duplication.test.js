@@ -102,7 +102,8 @@ module.exports = [
     }
   } },
   { name: 'main indexed snapshot must not overwrite scrubbed URL with raw webContents URL', gate: 'C1', fn: async assert => {
-    const main = fs.readFileSync(path.join(__dirname, '../../src/main.js'), 'utf8');
+    const main = fs.readFileSync(path.join(__dirname, '../../src/main/agent-actions.js'), 'utf8');
+    assert.ok(main.includes('async function readIndexedSnapshot()') && main.includes('// Main-process authority:'));
     const body = main.slice(main.indexOf('async function readIndexedSnapshot()'), main.indexOf('// Main-process authority:', main.indexOf('async function readIndexedSnapshot()')));
     assert.ok(!/snapshot\.url\s*=\s*live/.test(body), 'raw wc.getURL override reintroduces path value');
   } },
