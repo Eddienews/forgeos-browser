@@ -4,6 +4,7 @@
 
 ### Fixed
 - YouTube transcripts: one caption language refused by YouTube (usually a machine-translated track answered with "429 Too Many Requests") no longer cancels the whole job. The remaining languages are saved and the refused ones are named in a note.
+- The settings (gear) button responds to a click anywhere on it. An invisible notification element sat on top of it inside the toolbar's window-drag area, so only the top edge of the button took clicks.
 - A YouTube rate limit is reported as a rate limit. It was shown as "YouTube or the network could not be reached".
 
 ## [0.17.0] - 2026-10-12
