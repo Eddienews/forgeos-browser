@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { browserViewBounds } = require('../../src/engine/view-layout');
+const { browserViewBounds, windowControls } = require('../../src/engine/view-layout');
 
 module.exports = [
   {
@@ -43,6 +43,19 @@ module.exports = [
       a.ok(body.indexOf('id="btn-gear"') < barEnd && body.indexOf('id="gear-menu"') < barEnd);
       a.ok(body.indexOf('id="find-bar"') > barEnd, 'find bar is a sibling of the toolbar');
       a.strictEqual(html.includes('id="plug-toast"'), false, 'the toast is created once, by ui.js');
+    },
+  },
+  {
+    name: 'toolbar window buttons are Linux-only and omit minimize where it is ignored',
+    gate: 'A',
+    fn(a) {
+      a.deepStrictEqual(windowControls({ platform: 'win32', env: {} }), { show: false, minimize: false });
+      a.deepStrictEqual(windowControls({ platform: 'darwin', env: {} }), { show: false, minimize: false });
+      a.deepStrictEqual(windowControls({ platform: 'linux', env: { XDG_CURRENT_DESKTOP: 'GNOME' } }), { show: true, minimize: true });
+      a.deepStrictEqual(windowControls({ platform: 'linux', env: {} }), { show: true, minimize: true });
+      a.deepStrictEqual(windowControls({ platform: 'linux', env: { XDG_CURRENT_DESKTOP: 'Hyprland' } }), { show: true, minimize: false });
+      a.deepStrictEqual(windowControls({ platform: 'linux', env: { XDG_CURRENT_DESKTOP: 'ubuntu:sway' } }), { show: true, minimize: false });
+      a.deepStrictEqual(windowControls({ platform: 'linux', env: { XDG_SESSION_DESKTOP: 'niri' } }), { show: true, minimize: false });
     },
   },
 ];
