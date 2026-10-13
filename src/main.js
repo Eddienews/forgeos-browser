@@ -21,7 +21,6 @@ const path = require('path');
 const { FilterEngine } = require('./engine/filter-engine');
 const { EventLog } = require('./engine/event-log');
 const { SessionAdapter } = require('./ext/electron-adapter');
-const { PluginRunner } = require('./ext/plugins');
 const { sessionPlanFor, captureTabReloadPlan, clearSessionData, containerPartition, CONTAINER_IDS } = require('./engine/storage-manager');
 const { MODES, isValidMode } = require('./engine/privacy-modes');
 const { analyzeAgentView, IN_PAGE_SCRIPT, readPageView } = require('./engine/agent-view');
@@ -31,7 +30,6 @@ const settings = require('./engine/settings');
 const bh = require('./engine/bookmarks-history');
 const allowlist = require('./engine/site-allowlist');
 const sitePermissions = require('./engine/site-permissions');
-const { compileCosmetic, selectorsForHost } = require('./engine/cosmetic-engine');
 const { startAgentApi } = require('./ext/agent-api');
 const { createAgentSession } = require('./engine/agent-network-proxy');
 const { forgeSnapshotScript } = require('./page-snapshot');
@@ -41,16 +39,19 @@ const { classifyAction, compareAgentPreview, hashEffectProof } = require('./engi
 const { runGoal } = require('./engine/agent-loop');
 const credentialPolicy = require('./engine/credential-policy');
 const { browserViewBounds, popupDecision } = require('./engine/view-layout');
-const updateCheck = require('./engine/update-check');
 const { shortcutAction, nextZoom, tabTarget, externalUrls, closedTabRecord, rememberClosedTab } = require('./engine/desktop-integration');
 const sessionStore = require('./engine/session-store');
 const notebook = require('./engine/research-notebook');
 const { cleanUrlString } = require('./engine/url-cleaner');
 const { classifyField } = require('./engine/sensitive-fields');
 const { createPageWebPreferences } = require('./page-web-preferences');
+const { createDownloads } = require('./main/downloads');
+const { createPageInjection } = require('./main/page-injection');
+const { createPageOutput } = require('./main/page-output');
+const { createSmoke } = require('./main/smoke');
+const { createUpdateNotice } = require('./main/update-notice');
 const agentProvider = require('./engine/agent-provider');
-const { DARK_SCROLLBAR_CSS, supportsPageAppearance } = require('./engine/page-appearance');
-const { isExistingPathInside, isSafeToOpen, upsertDownload } = require('./engine/download-center');
+const { isExistingPathInside, isSafeToOpen } = require('./engine/download-center');
 const { pageProcessingPolicy } = require('./engine/page-processing-policy');
 const { FindInPage } = require('./engine/find-in-page');
 const { siteSnapshot, clearOriginData } = require('./engine/site-privacy');
@@ -141,8 +142,39 @@ const pageFind = new FindInPage((status) => {
 });
 let agentLease = null;
 let agentTabId = null;
-const downloads = [];
-const plugins = new PluginRunner({ log });
+
+/* ------------------------------------------------------------------ */
+/* Modules                                                             */
+/* ------------------------------------------------------------------ */
+
+// `log` is replaced with the real event log once the app is ready, so modules
+// receive a stable logger that always forwards to the current one.
+const logger = { log: (...args) => log.log(...args) };
+
+// What the modules under src/main/ may use. Values that change over time
+// (the window, the active tab) are getters, read live on every use.
+const ctx = {
+  logger,
+  isPackaged: IS_PACKAGED,
+  isSmoke: !!SMOKE_RUNTIME_BASE,
+  get chromeWin() { return chromeWin; },
+  get activeTabId() { return activeTabId; },
+  activeTab: () => activeTab(),
+  sendToChrome: (channel, payload) => sendToChrome(channel, payload),
+  openHumanTab: (url) => openHumanTab(url),
+  createTab: (url, opts) => createTab(url, opts),
+  switchTab: (id, opts) => switchTab(id, opts),
+  refreshAgentView: (tab) => refreshAgentView(tab),
+  securityFor: (tab) => securityFor(tab),
+  getRuntimeBase: () => getRuntimeBase(),
+  getDownloadDir: () => getDownloadDir(),
+};
+
+const { downloads, plugins, pushDownload, runPluginJob } = createDownloads(ctx);
+const { initCosmetic, injectPageAppearance, injectCosmetic, injectDomRemoval } = createPageInjection(ctx);
+const { publicUpdateStatus, runUpdateCheck, scheduleUpdateChecks, openUpdatePage } = createUpdateNotice(ctx);
+const { printActiveTab, savePageAsPdf } = createPageOutput(ctx);
+const { runSmoke } = createSmoke(ctx);
 
 function persistOpenTabs() {
   try { return sessionStore.captureOpenTabs(tabs, getRuntimeBase()); }
@@ -179,89 +211,6 @@ function getSessionFor(partitionKey) {
     sessions.set(partitionKey, e);
   }
   return e;
-}
-
-function pushDownload(record) {
-  const saved = upsertDownload(downloads, {
-    ...record, openable: isSafeToOpen(record.path || record.filename),
-  }, 50);
-  if (saved) sendToChrome('forge:download', saved);
-  return saved;
-}
-
-function pluginDownloadRecord(event, context) {
-  if (!event || !event.jobId) return null;
-  const state = event.state === 'done' ? 'completed'
-    : event.state === 'progress' ? 'running'
-      : event.state;
-  let sourceDomain = '';
-  try { sourceDomain = new URL(context.url).hostname; } catch {}
-  const safeFiles = Array.isArray(event.files)
-    ? event.files.filter((file) => isExistingPathInside(DL_DIR(), file))
-    : [];
-  const preferred = safeFiles.find((file) => context.kind === 'transcript' ? /\.txt$/i.test(file) : /\.mp4$/i.test(file))
-    || safeFiles[0]
-    || null;
-  let size = null;
-  if (preferred) {
-    try { size = fs.statSync(preferred).size; } catch {}
-  }
-  return pushDownload({
-    id: event.jobId,
-    kind: 'plugin',
-    pluginKind: event.kind || context.kind,
-    filename: preferred ? path.basename(preferred) : context.label,
-    source_domain: sourceDomain,
-    url: context.url,
-    state,
-    pct: state === 'completed' ? 100 : event.pct,
-    speed: event.speed || null,
-    eta: event.eta || null,
-    totalLabel: event.total || null,
-    size,
-    content_type: context.kind === 'transcript' ? 'text/plain' : 'video/mp4',
-    path: preferred,
-    files: safeFiles,
-    error: event.error || null,
-    warning: event.warning || null,
-    cancellable: state === 'running',
-    retryable: state === 'error' || state === 'cancelled',
-    executable: false,
-  });
-}
-
-async function runPluginJob(kind, pageUrl, label) {
-  const context = {
-    kind,
-    url: pageUrl,
-    label: label || (kind === 'transcript' ? 'YouTube transcript' : 'YouTube video'),
-  };
-  const result = await plugins.run(
-    kind,
-    pageUrl,
-    async () => {
-      if (!chromeWin) return { approved: false };
-      const response = await dialog.showMessageBox(chromeWin, {
-        type: 'question',
-        title: 'ForgeOS Browser — approval required',
-        message: `Plugin wants to ${kind === 'transcript' ? 'fetch a transcript' : 'download the video'} from this page`,
-        detail: pageUrl,
-        buttons: ['Deny', 'Approve'],
-        defaultId: 0,
-        cancelId: 0,
-        noLink: true,
-      });
-      const approved = response.response === 1 && !response.checkboxChecked;
-      log.log(approved ? 'ALLOW' : 'DENY', 'plugin approval ' + (approved ? 'granted' : 'denied'), { url: pageUrl.slice(0, 200), kind });
-      return { approved };
-    },
-    (event) => {
-      pluginDownloadRecord(event, context);
-      sendToChrome('forge:plugin-event', event);
-    }
-  );
-  if (result.state !== 'started') pluginDownloadRecord(result, context);
-  return result;
 }
 
 /* ------------------------------------------------------------------ */
@@ -761,92 +710,6 @@ function reopenClosedTab() {
   navigateIn(t, record.url);
   log.log('INFO', 'closed tab reopened', { url: record.url.slice(0, 200) });
   return true;
-}
-
-/* ------------------------------------------------------------------ */
-/* Update notice                                                       */
-/* ------------------------------------------------------------------ */
-
-// The browser only tells the user a newer release exists; it never downloads
-// or installs one. See update-check.js for exactly what the request carries.
-let updateStatus = { enabled: true, available: false, latest: null, checkedAt: null, error: null, checking: false };
-let updateTimer = null;
-
-function publicUpdateStatus() {
-  return { ...updateStatus, enabled: settings.all().checkForUpdates !== false, current: app.getVersion() };
-}
-
-async function runUpdateCheck({ manual = false } = {}) {
-  if (!manual && settings.all().checkForUpdates === false) return publicUpdateStatus();
-  if (updateStatus.checking) return publicUpdateStatus();
-  updateStatus = { ...updateStatus, checking: true };
-  sendToChrome('forge:update-status', publicUpdateStatus());
-  const result = await updateCheck.checkForUpdate({ currentVersion: app.getVersion() });
-  updateStatus = {
-    ...updateStatus, checking: false, checkedAt: result.checkedAt, error: result.ok ? null : result.error,
-    // A failed check keeps what an earlier successful one found.
-    available: result.ok ? result.available : updateStatus.available,
-    latest: result.ok ? result.latest : updateStatus.latest,
-  };
-  log.log(result.ok ? 'INFO' : 'WARN', 'update check', {
-    outcome: result.ok ? (result.available ? 'newer release available' : 'up to date') : 'failed', manual,
-  });
-  sendToChrome('forge:update-status', publicUpdateStatus());
-  return publicUpdateStatus();
-}
-
-/** Daily check for installed builds. Development and smoke runs never call out. */
-function scheduleUpdateChecks() {
-  if (updateTimer || !IS_PACKAGED || SMOKE_RUNTIME_BASE) return;
-  setTimeout(() => runUpdateCheck().catch(() => {}), 20000).unref?.();
-  updateTimer = setInterval(() => runUpdateCheck().catch(() => {}), updateCheck.CHECK_INTERVAL_MS);
-  updateTimer.unref?.();
-}
-
-/** Open this project's release page for the newer version in a human tab. */
-function openUpdatePage() {
-  const url = updateStatus.available ? updateCheck.releasePageUrl(updateStatus.latest) : null;
-  if (!url) return false;
-  openHumanTab(url);
-  return true;
-}
-
-/** Open the system print dialog for the page the human is looking at. */
-function printActiveTab() {
-  const t = activeTab();
-  if (!t || t.closing || t.wc.isDestroyed()) return false;
-  t.wc.print({ printBackground: true }, (ok, reason) => {
-    if (!ok && reason && !/cancel/i.test(String(reason))) log.log('ERROR', 'print failed', { reason: String(reason).slice(0, 120) });
-  });
-  return true;
-}
-
-/** Save the current page as a PDF where the human chooses. */
-async function savePageAsPdf() {
-  const t = activeTab();
-  if (!t || t.closing || t.wc.isDestroyed() || !chromeWin || chromeWin.isDestroyed())
-    return { ok: false, reason: 'No page to save.' };
-  const id = t.id, url = t.wc.getURL();
-  const base = String(t.title || 'page').replace(/[\\/:*?"<>|\x00-\x1f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'page';
-  const choice = await dialog.showSaveDialog(chromeWin, {
-    title: 'Save page as PDF',
-    defaultPath: path.join(app.getPath('documents'), `${base}.pdf`),
-    filters: [{ name: 'PDF', extensions: ['pdf'] }],
-  });
-  if (choice.canceled || !choice.filePath) return { ok: false, canceled: true };
-  if (path.extname(choice.filePath).toLowerCase() !== '.pdf') return { ok: false, reason: 'The file name must end in .pdf.' };
-  // The page shown when the dialog opened is the page that gets saved.
-  if (activeTabId !== id || t.closing || t.wc.isDestroyed() || t.wc.getURL() !== url)
-    return { ok: false, reason: 'The page changed; nothing was saved.' };
-  try {
-    const data = await t.wc.printToPDF({ printBackground: true });
-    await fs.promises.writeFile(choice.filePath, data);
-  } catch (error) {
-    log.log('ERROR', 'save as PDF failed', { error: String(error).slice(0, 120) });
-    return { ok: false, reason: 'Could not save the PDF.' };
-  }
-  log.log('INFO', 'page saved as PDF');
-  return { ok: true, file: path.basename(choice.filePath) };
 }
 
 function focusAddressBar() {
@@ -1681,87 +1544,6 @@ app.whenReady().then(() => {
   if (smoke) setTimeout(runSmoke, 3500);
 });
 
-/* Cosmetic filtering (v0.4): compile "##" rules once at startup; inject a
- * stylesheet into every page before its scripts run. Toggled by settings. */
-let cosmetic = null;
-function initCosmetic() {
-  try {
-    const fs = require('fs');
-    const lines = [];
-    // Lists live inside the asar when packaged: <asar>/src → <asar>/lists.
-    const listsDir = __dirname.includes('app.asar')
-      ? path.join(__dirname, '..', 'lists')
-      : path.join(__dirname, '..', 'lists');
-    for (const f of ['easylist.txt', 'easyprivacy.txt']) {
-      const p = path.join(listsDir, f);
-      if (!fs.existsSync(p)) continue;
-      for (const l of fs.readFileSync(p, 'utf8').split('\n')) {
-        if (l.includes('##') || l.includes('#@#')) lines.push(l);
-      }
-    }
-    cosmetic = compileCosmetic(lines);
-    log.log('INFO', 'cosmetic rules compiled', cosmetic.stats);
-  } catch (e) {
-    log.log('ERROR', 'cosmetic compile failed', { error: String(e).slice(0, 150) });
-    cosmetic = { genericCss: '', byDomain: new Map(), stats: {} };
-  }
-}
-
-/** Apply browser-owned visual chrome to web content without a page preload. */
-function injectPageAppearance(tab, url) {
-  if (!tab || !supportsPageAppearance(url)) return;
-  tab.wc.insertCSS(DARK_SCROLLBAR_CSS, { cssOrigin: 'user' }).catch(() => {});
-}
-
-/** Inject cosmetic CSS into a page view (native insertCSS — no JS cost). */
-function injectCosmetic(tab, url) {
-  if (!cosmetic || !tab || !url.startsWith('http')) return;
-  try {
-    if (settings.all().blockAds === false) return; // user toggle respected
-    let host = '';
-    try { host = new URL(url).hostname; } catch {}
-    // Per-site allowlist also disables cosmetic hiding.
-    if (host && allowlist.isAllowed(host)) return;
-    const hostSelectors = selectorsForHost(cosmetic, host);
-    const css = [
-      cosmetic.genericCss,
-      ...hostSelectors.map((s) => `${s}{display:none!important}`),
-    ].filter(Boolean).join('\n');
-    if (!css) return;
-    tab.wc.insertCSS(css, { cssOrigin: 'user' }).catch(() => {});
-  } catch {}
-}
-
-/** DOM removal pass: DELETE matched elements (testers score "removed" > hidden). */
-function injectDomRemoval(tab, url) {
-  if (!cosmetic || !tab || !url.startsWith('http')) return;
-  try {
-    if (!pageProcessingPolicy(url).allowDomRemoval) return;
-    if (settings.all().blockAds === false) return;
-    let host = '';
-    try { host = new URL(url).hostname; } catch {}
-    if (host && allowlist.isAllowed(host)) return;
-    const hostSelectors = selectorsForHost(cosmetic, host);
-    const generic = cosmetic.genericSelectors || [];
-    const selectors = [...new Set([...generic, ...hostSelectors])]
-      .filter((s) => s && s.length < 200 && !/[:{}]/.test(s)) // safe subset only
-      .slice(0, 4000);
-    if (!selectors.length) return;
-    const js = `(function(){
-      let removed = 0;
-      for (const sel of ${JSON.stringify(selectors)}) {
-        try {
-          document.querySelectorAll(sel).forEach(el => {
-            if (el && el.parentNode) { el.parentNode.removeChild(el); removed++; }
-          });
-        } catch {}
-      }
-      return removed;
-    })()`;
-    tab.wc.executeJavaScript(js, true).catch(() => {});
-  } catch {}
-}
-
 /* ------------------------------------------------------------------------ *
  * Agent capabilities (v0.11): observe -> decide -> act.
  *
@@ -1986,81 +1768,6 @@ async function approveAgentAction(info) {
   return allowed;
 }
 
-
-let smokeDone = false;
-async function runSmoke() {
-  if (smokeDone) return;
-  smokeDone = true;
-  const fs = require('fs');
-  const reportPath = path.join(getRuntimeBase(), 'results', 'smoke-report.json');
-  fs.mkdirSync(path.dirname(reportPath), { recursive: true });
-  const finish = (code) => {
-    // Merge finished/code onto any report already written (do not clobber it).
-    let obj = {};
-    try { obj = JSON.parse(fs.readFileSync(reportPath, 'utf8') || '{}'); } catch {}
-    obj.finished = true;
-    obj.code = code;
-    try { fs.writeFileSync(reportPath, JSON.stringify(obj, null, 2)); } catch {}
-    setTimeout(() => app.exit(code), 4500); // hold ~4.5s so the window can be captured
-  };
-  try {
-    log.log('INFO', 'smoke start');
-    const t = createTab('https://example.com');
-    switchTab(t.id, { focus: false });
-    log.log('INFO', 'smoke tab created', { id: t.id });
-    const navOk = await new Promise((resolve) => {
-      let settled = false;
-      const done = (ok, extra) => { if (!settled) { settled = true; resolve(extra || ok); } };
-      t.wc.once('did-navigate', () => {
-        log.log('INFO', 'smoke did-navigate');
-        setTimeout(async () => {
-          await refreshAgentView(t);
-          done(true);
-        }, 1200);
-      });
-      t.wc.once('did-fail-load', (_e, code, desc) => { log.log('ERROR', 'smoke did-fail-load', { code, desc: String(desc).slice(0, 100) }); done(false, { failed: code }); });
-      setTimeout(() => done(false, { failed: 'timeout' }), 25000);
-    });
-    const report = {
-      smoke: true,
-      url: t.url,
-      title: t.title,
-      security: securityFor(t),
-      pageCounts: t.pageCounts,
-      agentView: t.lastAgentView ? {
-        url: t.lastAgentView.url,
-        title: t.lastAgentView.title,
-        untrusted: t.lastAgentView.security.untrusted,
-        authority: t.lastAgentView.security.instruction_authority,
-        injection: t.lastAgentView.security.prompt_injection_severity,
-        paragraphs: (t.lastAgentView.content.paragraphs || []).slice(0, 2),
-        links: (t.lastAgentView.content.links || []).slice(0, 3),
-      } : null,
-      navigation: navOk === true ? 'OK' : JSON.stringify(navOk),
-    };
-    report.pageBoundary = await t.wc.executeJavaScript(`({
-      processType: typeof window.process,
-      requireType: typeof window.require,
-      forgeType: typeof window.forge,
-      electronType: typeof window.electron
-    })`);
-    report.pageBoundary.safe = report.pageBoundary.processType === 'undefined' &&
-      report.pageBoundary.requireType === 'undefined' &&
-      report.pageBoundary.forgeType === 'undefined' &&
-      report.pageBoundary.electronType === 'undefined';
-    console.log('SMOKE_REPORT ' + JSON.stringify(report));
-    fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
-    const pass = report.security && report.security.label === 'HTTPS' && navOk === true && report.pageBoundary.safe;
-    log.log(pass ? 'INFO' : 'ERROR', 'smoke ' + (pass ? 'PASS' : 'FAIL'), { url: report.url, security: report.security && report.security.label, title: report.title });
-    finish(pass ? 0 : 1);
-  } catch (e) {
-    const detail = { smoke: true, error: String(e && e.stack || e).slice(0, 500) };
-    console.log('SMOKE_REPORT ' + JSON.stringify(detail));
-    log.log('ERROR', 'smoke failed', { error: String(e).slice(0, 200) });
-    try { fs.writeFileSync(reportPath, JSON.stringify(detail, null, 2)); } catch {}
-    setTimeout(() => app.exit(2), 400);
-  }
-}
 
 app.on('window-all-closed', () => {
   // Persist open tabs for next launch (crash recovery) unless quitting

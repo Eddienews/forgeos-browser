@@ -110,13 +110,15 @@ module.exports = [
       const { shortcutAction } = require('../../src/engine/desktop-integration');
       a.strictEqual(shortcutAction({ type: 'keyDown', key: 'p', control: true }), 'print');
       a.strictEqual(shortcutAction({ type: 'keyDown', key: 'p' }), null);
-      const main = read('src/main.js');
-      const start = main.indexOf('async function savePageAsPdf() {');
-      const body = main.slice(start, main.indexOf('function focusAddressBar() {', start));
-      a.match(body, /dialog\.showSaveDialog\(chromeWin/);
+      const output = read('src/main/page-output.js');
+      const start = output.indexOf('async function savePageAsPdf() {');
+      const body = output.slice(start, output.indexOf('return { printActiveTab, savePageAsPdf };', start));
+      a.ok(start > 0 && body.length > 200);
+      a.match(body, /dialog\.showSaveDialog\(ctx\.chromeWin/);
       a.match(body, /path\.extname\(choice\.filePath\)\.toLowerCase\(\) !== '\.pdf'/);
       // Re-checked after the dialog: the saved page is the one that was shown.
       a.ok(body.indexOf('t.wc.getURL() !== url') > body.indexOf('dialog.showSaveDialog'));
+      a.match(body, /ctx\.activeTabId !== id/);
       a.ok(body.indexOf('printToPDF') > body.indexOf('t.wc.getURL() !== url'));
     },
   },
