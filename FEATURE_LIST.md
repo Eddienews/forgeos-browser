@@ -16,7 +16,7 @@ increments. Status legend: `[x]` shipped, `[~]` in progress, `[ ]` planned.
 
 ## Next — Browser essentials
 
-- [ ] Automatic update notification and an About ForgeOS page.
+- [~] Update notification (merged into main; release pending); automatic installation and an About ForgeOS page remain planned.
 - [~] Advanced tabs: reopen closed (Ctrl+Shift+T, merged into main; release
   pending) and restore the previous session are done; pin, duplicate, mute and
   group remain planned.

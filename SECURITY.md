@@ -57,6 +57,7 @@ guarantees:
 
 ## How the project stays current
 
+- Installed builds check once a day for a newer release and tell the user.
 - Dependabot checks Electron and the build dependencies every day.
 - A nightly workflow fails when Electron is behind its release line, when the
   pinned major is unsupported, or when a high-severity advisory is published.

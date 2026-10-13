@@ -85,6 +85,24 @@ never synced.
 - Vendor/engine requests (Chromium update channel) are **not** silenced; any that
   occur are documented rather than hidden.
 
+### The update check: the one request ForgeOS makes for itself
+
+A browser left on an old engine is exposed to every vulnerability fixed since.
+Installed builds therefore ask, about 20 seconds after start and then once a
+day, whether a newer release exists.
+
+- **Where:** one HTTPS `GET` to
+  `https://api.github.com/repos/Eddienews/forgeos-browser/releases/latest`.
+- **What it carries:** a fixed `User-Agent` and an `Accept` header. No cookie,
+  no identifier, no installed version, no usage data. GitHub sees the IP
+  address, as it would for any visit to the project page.
+- **What happens with the answer:** only the release's version number is read.
+  If it is newer, the toolbar version label is marked; clicking it opens this
+  project's release page in a normal tab. Nothing is downloaded or installed.
+- **How to turn it off:** Settings → "Check for updates". With it off, the
+  request is made only when you press "Check now".
+- Builds run from source never make the automatic request.
+
 ---
 _See also THREAT_MODEL.md (what we accept as out-of-scope) and
 SECURITY_MODEL.md (agent-side boundaries)._

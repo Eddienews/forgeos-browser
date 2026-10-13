@@ -102,6 +102,10 @@
             <span>Strip tracking parameters</span></label>
           <label class="menu-row check" title="Open http:// links over https://. If a site has no HTTPS, you are asked before continuing."><input type="checkbox" id="set-httpsonly" checked />
             <span>HTTPS-only mode</span></label>
+          <label class="menu-row check" title="Once a day, asks GitHub whether a newer ForgeOS release exists. Sends no identifier and installs nothing."><input type="checkbox" id="set-updates" checked />
+            <span>Check for updates</span></label>
+          <div class="menu-row"><span class="menu-hint" id="update-line">Updates: not checked yet</span>
+            <button class="menu-row action" id="mi-update-check" type="button">Check now</button></div>
           <div class="menu-row" title="User-Agent and permission protections are engine-managed; page shims are disabled to preserve sandboxing.">
             <span>Fingerprint posture</span>
             <span>Engine-managed</span>
