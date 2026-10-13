@@ -41,6 +41,7 @@ const { classifyAction, compareAgentPreview, hashEffectProof } = require('./engi
 const { runGoal } = require('./engine/agent-loop');
 const credentialPolicy = require('./engine/credential-policy');
 const { browserViewBounds, popupDecision } = require('./engine/view-layout');
+const updateCheck = require('./engine/update-check');
 const { shortcutAction, nextZoom, tabTarget, externalUrls, closedTabRecord, rememberClosedTab } = require('./engine/desktop-integration');
 const sessionStore = require('./engine/session-store');
 const notebook = require('./engine/research-notebook');
@@ -762,6 +763,54 @@ function reopenClosedTab() {
   return true;
 }
 
+/* ------------------------------------------------------------------ */
+/* Update notice                                                       */
+/* ------------------------------------------------------------------ */
+
+// The browser only tells the user a newer release exists; it never downloads
+// or installs one. See update-check.js for exactly what the request carries.
+let updateStatus = { enabled: true, available: false, latest: null, checkedAt: null, error: null, checking: false };
+let updateTimer = null;
+
+function publicUpdateStatus() {
+  return { ...updateStatus, enabled: settings.all().checkForUpdates !== false, current: app.getVersion() };
+}
+
+async function runUpdateCheck({ manual = false } = {}) {
+  if (!manual && settings.all().checkForUpdates === false) return publicUpdateStatus();
+  if (updateStatus.checking) return publicUpdateStatus();
+  updateStatus = { ...updateStatus, checking: true };
+  sendToChrome('forge:update-status', publicUpdateStatus());
+  const result = await updateCheck.checkForUpdate({ currentVersion: app.getVersion() });
+  updateStatus = {
+    ...updateStatus, checking: false, checkedAt: result.checkedAt, error: result.ok ? null : result.error,
+    // A failed check keeps what an earlier successful one found.
+    available: result.ok ? result.available : updateStatus.available,
+    latest: result.ok ? result.latest : updateStatus.latest,
+  };
+  log.log(result.ok ? 'INFO' : 'WARN', 'update check', {
+    outcome: result.ok ? (result.available ? 'newer release available' : 'up to date') : 'failed', manual,
+  });
+  sendToChrome('forge:update-status', publicUpdateStatus());
+  return publicUpdateStatus();
+}
+
+/** Daily check for installed builds. Development and smoke runs never call out. */
+function scheduleUpdateChecks() {
+  if (updateTimer || !IS_PACKAGED || SMOKE_RUNTIME_BASE) return;
+  setTimeout(() => runUpdateCheck().catch(() => {}), 20000).unref?.();
+  updateTimer = setInterval(() => runUpdateCheck().catch(() => {}), updateCheck.CHECK_INTERVAL_MS);
+  updateTimer.unref?.();
+}
+
+/** Open this project's release page for the newer version in a human tab. */
+function openUpdatePage() {
+  const url = updateStatus.available ? updateCheck.releasePageUrl(updateStatus.latest) : null;
+  if (!url) return false;
+  openHumanTab(url);
+  return true;
+}
+
 /** Open the system print dialog for the page the human is looking at. */
 function printActiveTab() {
   const t = activeTab();
@@ -1322,6 +1371,9 @@ function registerIpc() {
     if (res.ok) log.log('INFO', 'settings updated', { keys: Object.keys(patch || {}).join(',') });
     return res;
   });
+  handle('forge:update-status', () => publicUpdateStatus());
+  handle('forge:update-check', () => runUpdateCheck({ manual: true }));
+  handle('forge:update-open', () => openUpdatePage());
   handle('forge:print', () => printActiveTab());
   handle('forge:save-pdf', () => savePageAsPdf());
   handle('forge:version', () => app.getVersion());
@@ -1621,6 +1673,8 @@ app.whenReady().then(() => {
     log.log('INFO', 'agent api listening', { url: `http://127.0.0.1:${api.port}`, tokenFile: api.tokenFile });
   })
     .catch((e) => log.log('ERROR', 'agent api failed to start', { error: String(e).slice(0, 150) }));
+
+  scheduleUpdateChecks();
 
   // --smoke: automated self-check on the REAL app (used by scripts/verify-gates).
   const smoke = process.argv.includes('--smoke');

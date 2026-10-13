@@ -9,7 +9,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node tests/run-tests.js",
-    "test:e2e": "electron tests/e2e/main.js && electron tests/e2e/find-in-page.js && electron tests/e2e/site-permissions.js && electron tests/e2e/identity-and-tabs.js && electron tests/e2e/shortcuts.js && electron tests/e2e/https-only.js",
+    "test:e2e": "electron tests/e2e/main.js && electron tests/e2e/find-in-page.js && electron tests/e2e/site-permissions.js && electron tests/e2e/identity-and-tabs.js && electron tests/e2e/shortcuts.js && electron tests/e2e/https-only.js && electron tests/e2e/update-check.js",
     "test:adblock:public": "electron scripts/test-public-adblock.js",
     "verify": "node scripts/verify-gates.js",
     "check:electron": "node scripts/check-electron.js",
@@ -19,10 +19,10 @@
     "install:linux": "npm run package && bash scripts/install-linux.sh"
   },
   "devDependencies": {
-    "@electron/asar": "^4.3.0",
-    "@electron/fuses": "1.8.0",
+    "@electron/asar": "^4.3.1",
+    "@electron/fuses": "2.1.3",
     "@electron/packager": "^20.3.0",
-    "electron": "43.7.9",
+    "electron": "44.7.0",
     "yaml": "2.9.1"
   }
 }

@@ -133,6 +133,8 @@ body.platform-darwin #bar { padding-left: 78px; }
 #btn-gear:hover, #btn-gear.open { color: var(--amber); border-color: var(--line); background: var(--bg3); }
 .plug { color: var(--amber); opacity: .85; font-size: 13px; }
 .plug:hover { opacity: 1; border-color: var(--line); background: var(--bg3); }
+/* The toolbar is a window drag region; the update mark must take clicks. */
+.toolbar-version.update-available { color: var(--amber); cursor: pointer; -webkit-app-region: no-drag; }
 .toolbar-version {
   flex: 0 0 auto;
   color: var(--muted);

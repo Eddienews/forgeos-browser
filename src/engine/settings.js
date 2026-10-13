@@ -13,6 +13,7 @@
  *   blockThirdPartyCookies: true,
  *   stripTrackingParams: true,
  *   httpsOnly: true,
+ *   checkForUpdates: true,
  *   fingerprint: 'standard'|'reduced'|'off', // reserved for a sandbox-safe implementation
  *   subtitleLangs: 'en.*,pt.*',
  *   pageZoom: 100,
@@ -89,6 +90,8 @@ const DEFAULTS = {
   stripTrackingParams: true,
   // Retry http:// navigations over https://; ask before falling back.
   httpsOnly: true,
+  // Ask once a day whether a newer release exists. Never downloads anything.
+  checkForUpdates: true,
   // Retained for settings-file compatibility; no page-world shims are
   // installed until a sandbox-safe, navigation-safe implementation exists.
   fingerprint: 'standard',

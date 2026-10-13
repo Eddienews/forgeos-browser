@@ -54,6 +54,7 @@ const PACKAGE_FILES = Object.freeze([
   'src/engine/snapshot-filter.js',
   'src/engine/storage-manager.js',
   'src/engine/typesafe-decider.js',
+  'src/engine/update-check.js',
   'src/engine/url-cleaner.js',
   'src/engine/url-safety.js',
   'src/engine/view-layout.js',
