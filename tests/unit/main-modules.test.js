@@ -7,7 +7,7 @@ const path = require('path');
 
 const root = path.join(__dirname, '../..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
-const MODULES = ['downloads', 'page-injection', 'page-output', 'smoke', 'update-notice'];
+const MODULES = ['agent-actions', 'downloads', 'page-injection', 'page-output', 'smoke', 'update-notice'];
 
 module.exports = [
   {
@@ -61,6 +61,55 @@ module.exports = [
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
+    },
+  },
+  {
+    name: 'agent actions refuse without an agent tab or a window, through the real module wiring',
+    gate: 'J',
+    async fn(a) {
+      const { createAgentActions } = require('../../src/main/agent-actions');
+      const logs = [];
+      const wc = { isDestroyed: () => false, getURL: () => 'https://site.test/', executeJavaScript: async () => { throw new Error('must not run'); } };
+      const tab = { wc, agentOwned: true };
+      let window = null;
+      let agentReady = false;
+      const api = createAgentActions({
+        logger: { log: (...entry) => logs.push(entry) },
+        activeTab: () => tab,
+        requireAgentTab: async () => { if (!agentReady) throw new Error('no agent tab'); return tab; },
+        get chromeWin() { return window; },
+      });
+      // Observation and action both stop at the agent-tab guard before touching the page.
+      a.deepStrictEqual(await api.readIndexedSnapshot(), { error: 'no agent tab' });
+      const refusedAct = await api.executeAgentAction({ kind: 'click', targetIndex: 1 });
+      a.strictEqual(refusedAct.ok, false);
+      a.match(refusedAct.reason, /no agent tab/);
+      // No window means no human to ask: approval is refused and logged.
+      agentReady = true;
+      a.strictEqual(await api.approveAgentAction({ action: { kind: 'click', targetIndex: 1 } }), false);
+      a.ok(logs.some((entry) => entry[0] === 'DENY' && /approval unavailable/.test(entry[1])));
+      // The window is read live: a destroyed one is refused the same way.
+      window = { isDestroyed: () => true };
+      a.strictEqual(await api.approveAgentAction({ action: { kind: 'click', targetIndex: 1 } }), false);
+      // With a window but no browser-held observation, an agent-owned proposal is rejected before any dialog.
+      window = { isDestroyed: () => false };
+      a.strictEqual(await api.approveAgentAction({ action: { kind: 'click', targetIndex: 1, fingerprint: 'x' } }), false);
+      a.ok(logs.some((entry) => /preview invalidated/.test(entry[1])));
+    },
+  },
+  {
+    name: 'startup never takes the view from a tab that is already showing',
+    gate: 'J',
+    fn(a) {
+      const main = read('src/main.js');
+      const start = main.indexOf('const saved = sessionStore.restoreTabRecords(getRuntimeBase())');
+      const body = main.slice(start, main.indexOf('// Links given on the command line', start));
+      a.ok(start > 0 && body.length > 100);
+      // An agent can open its tab before startup finishes; the restored or
+      // blank tab must not replace it as the visible tab.
+      a.match(body, /if \(activeTabId == null\) switchTab\(t\.id, \{ focus: false \}\);/);
+      a.match(body, /\} else if \(!tabs\.size\) \{\s+const t = createTab\('about:blank'\);/);
+      a.strictEqual((body.match(/switchTab\(/g) || []).length, 2);
     },
   },
   {

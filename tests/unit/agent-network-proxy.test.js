@@ -37,6 +37,15 @@ test('special-use and mapped IPv6 addresses fail closed', () => {
   assert.equal(isPublicAddress('2606:4700:4700::1111'), true);
 });
 
+test('only the special /24 blocks inside 192.0.0.0/16 are refused', () => {
+  // 192.0.0.0/24 (IETF protocol assignments) and 192.0.2.0/24 (TEST-NET-1).
+  for (const ip of ['192.0.0.1', '192.0.0.255', '192.0.2.1', '192.0.2.255', '::ffff:192.0.2.1'])
+    assert.equal(isPublicAddress(ip), false, ip);
+  // Ordinary public space, including IANA's own web servers (192.0.43.8).
+  for (const ip of ['192.0.43.8', '192.0.1.1', '192.0.3.1', '192.0.32.8', '192.0.255.1'])
+    assert.equal(isPublicAddress(ip), true, ip);
+});
+
 test('HTTP absolute-form and CONNECT refuse loopback/private/link-local and malformed or mismatched authorities without dialing', async () => {
   let attempts = 0;
   await withProxy({ resolver: async () => [{ address: '127.0.0.1' }], dial: () => { attempts++; throw Error('must not dial'); } }, async ({ port, proxyConfig }) => {

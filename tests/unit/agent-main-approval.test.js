@@ -33,16 +33,16 @@ function harness(onDialog = () => {}) {
   const logs = [];
   const context = { activeTab: () => active, forgeActionScript, forgeScrollScript, compareAgentPreview, hashEffectProof, require,
     requireAgentTab: async () => { if (active !== tab) throw Error('agent tab switched'); return tab; },
-    chromeWin: { isDestroyed: () => false }, log: { log: (...entry) => { logs.push(entry); } },
+    ctx: { chromeWin: { isDestroyed: () => false } }, log: { log: (...entry) => { logs.push(entry); } },
     dialog: { showMessageBox: async (_win, options) => {
       dialogs.push(options);
       onDialog({ button, form, page, tab });
       return { response: 1 };
     } } };
-  const source = fs.readFileSync(path.join(__dirname, '../../src/main.js'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '../../src/main/agent-actions.js'), 'utf8');
   const begin = source.indexOf('const agentClickApprovals = new WeakMap();');
-  // The agent action section runs to the app lifecycle handlers that follow it.
-  const end = source.indexOf("app.on('window-all-closed'", begin);
+  // From the approval registry to the end of the module's factory body.
+  const end = source.indexOf('return { readIndexedSnapshot, executeAgentAction, approveAgentAction };', begin);
   if (begin < 0 || end < 0) throw new Error('main-process action functions not found');
   vm.runInNewContext(source.slice(begin, end) + '\nthis.approve = approveAgentAction; this.act = executeAgentAction;', context);
   return { ...context, button, form, page, wc, tab, dialogs, logs, scripts,

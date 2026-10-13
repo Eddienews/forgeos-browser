@@ -17,6 +17,11 @@
 - Client-hint headers repeat the brand list the engine reports to JavaScript (Chromium) and are sent only to secure origins. ForgeOS no longer claims to be Google Chrome. Set `identifyAsChrome: true` in the settings file if a sign-in page requires that claim.
 - The Control Center demo click, which acts on the human's own page, always asks for confirmation.
 
+### Fixed
+- An agent tab could not load sites hosted in `192.0.0.0/16` outside the two reserved `/24` blocks, such as iana.org; the agent proxy refused them as non-public.
+- An agent that opened its tab while the browser was still starting lost it as the visible tab, and every following agent call failed.
+- Plugin job events were never written to the event log.
+
 ### Maintenance and trust
 - Updated Electron to 44.7.0 (Chromium 152), the build tooling, and the pinned GitHub Actions.
 - Dependabot checks Electron and the build dependencies daily and opens pull requests.
