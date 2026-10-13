@@ -1,2 +1,8 @@
-# Shell scripts must keep LF endings on every platform: a CRLF shebang does not run.
-*.sh text eol=lf
+# Check out every file byte-for-byte as it is stored, on every platform.
+#
+# The release job runs on Linux and compares the files inside each packaged
+# app.asar with the repository's own. Git for Windows otherwise rewrites text
+# files with CRLF on checkout, so the Windows-built archive could never match
+# and the release was refused ("app.asar content mismatch: LICENSE"). It also
+# keeps shell scripts runnable: a CRLF shebang does not execute.
+* -text
