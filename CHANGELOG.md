@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.18.2] - 2026-10-13
+
+### Fixed
+- Switching to another tab and back shows the page again. The page area stayed empty, reloading did not help, and only restarting the browser brought the tabs back.
+
 ## [0.18.1] - 2026-10-13
 
 ### Fixed

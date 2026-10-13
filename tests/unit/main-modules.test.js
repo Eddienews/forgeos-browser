@@ -113,6 +113,22 @@ module.exports = [
     },
   },
   {
+    name: 'switching tabs hides the previous view and never detaches it',
+    gate: 'J',
+    fn(a) {
+      const main = read('src/main.js');
+      const start = main.indexOf('function switchTab(');
+      const body = main.slice(start, main.indexOf('async function closeTab(', start));
+      a.ok(start > 0 && body.length > 100);
+      // A detached view does not draw again when it is attached again: the tab
+      // came back empty until the browser was restarted.
+      a.doesNotMatch(body, /removeChildView/);
+      a.match(body, /if \(prev && prev !== tab\) prev\.view\.setVisible\(false\);/);
+      a.match(body, /chromeWin\.contentView\.addChildView\(tab\.view\);/);
+      a.strictEqual((main.match(/removeChildView\(/g) || []).length, 1, 'only closing a tab detaches its view');
+    },
+  },
+  {
     name: 'with no window to ask, a plugin job is never approved',
     gate: 'J',
     async fn(a) {
