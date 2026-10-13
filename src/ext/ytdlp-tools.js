@@ -207,6 +207,10 @@ function buildYtDlpArgs(kind, pageUrl, options = {}) {
   } else {
     args.push(
       '--skip-download',
+      // YouTube rate-limits individual caption tracks, most often the
+      // machine-translated ones. Without this the first refused language
+      // aborts the job before the remaining languages are requested.
+      '--ignore-errors',
       '--write-auto-subs',
       '--write-subs',
       '--sub-langs', normalizeSubtitleLanguages(options.subtitleLangs),
@@ -308,15 +312,29 @@ function classifyYtDlpError(output, code, context = {}) {
   if (/requested format is not available|no video formats found/.test(lower)) {
     return 'This video does not offer a QuickTime-compatible H.264/AAC format at 1080p or below.';
   }
-  if (/unable to download|network is unreachable|timed? out|temporary failure|connection refused/.test(lower)) {
-    return 'The download failed because YouTube or the network could not be reached. Check the connection and try again.';
-  }
+  // Before the network check: yt-dlp reports a rate limit as "Unable to
+  // download ...: HTTP Error 429", which is not a connection problem.
   if (/http error 429|too many requests/.test(lower)) {
     return 'YouTube temporarily rate-limited this connection. Wait and try again later.';
+  }
+  if (/unable to download|network is unreachable|timed? out|temporary failure|connection refused/.test(lower)) {
+    return 'The download failed because YouTube or the network could not be reached. Check the connection and try again.';
   }
   const errorLine = text.split(/\r?\n/).reverse().find((line) => /^\s*error:/i.test(line));
   if (errorLine) return errorLine.replace(/^\s*error:\s*/i, '').trim().slice(0, 280);
   return `yt-dlp exited with code ${code == null ? 'unknown' : code}.`;
+}
+
+// Caption languages yt-dlp requested but could not save, read from its
+// per-language messages. Returns a user-facing warning, or undefined.
+function skippedSubtitlesWarning(output) {
+  const text = String(output || '');
+  const langs = [...new Set(
+    [...text.matchAll(/Unable to download video subtitles for '([A-Za-z0-9_-]{1,35})'/g)].map((m) => m[1])
+  )];
+  if (!langs.length) return undefined;
+  const reason = /http error 429|too many requests/i.test(text) ? 'rate-limited' : 'did not provide';
+  return `YouTube ${reason} these caption languages: ${langs.join(', ')}. The other captions were saved.`;
 }
 
 module.exports = {
@@ -332,6 +350,7 @@ module.exports = {
   resolveExecutable,
   resolveToolchain,
   resolveYtDlp,
+  skippedSubtitlesWarning,
   toolchainStatus,
   transcriptFiles,
   videoFiles,
