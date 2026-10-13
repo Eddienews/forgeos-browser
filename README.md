@@ -53,7 +53,7 @@ Measured vs Brave/Chrome/Edge on the same machine (see [results/BENCHMARK.md](re
 ```bash
 npm install
 npm start                 # dev
-npm test                  # 449 unit tests
+npm test                  # 454 unit tests
 npm run package           # electron-packager for host platform
 node scripts/make-portable.js   # portable zip
 # cross-platform: node scripts/package.js --platform=linux,darwin --arch=x64,arm64
@@ -121,6 +121,8 @@ npm run install:linux                    # package, then install to ~/.local/sha
 bash scripts/install-linux.sh --default  # also make it the default browser
 bash scripts/install-linux.sh --uninstall
 ```
+The window has no title bar on Linux; Full screen, Close and (where the desktop
+supports it) Minimize are at the right end of the toolbar.
 Your profile stays in `~/.config/ForgeOS Browser`. Links opened from other
 applications arrive as new tabs in the running browser.
 

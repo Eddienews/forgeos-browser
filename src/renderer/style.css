@@ -69,7 +69,7 @@ body.platform-darwin #bar { padding-left: 78px; }
 
 #tabs {
   display: flex; gap: 4px; overflow-x: auto;
-  max-width: 34vw; min-width: 60px; height: 100%;
+  flex: 0 100 auto; max-width: 34vw; min-width: 60px; height: 100%;
   align-items: center;
   scrollbar-width: none;
 }
@@ -111,13 +111,16 @@ body.platform-darwin #bar { padding-left: 78px; }
 #bar button:hover { border-color: var(--line); background: var(--bg3); }
 #bar button:disabled { color: var(--line); cursor: default; }
 
+/* Only the tab strip and the address bar give way when the window is narrow;
+   the buttons on the right must never be pushed out of it. */
+#btn-newtab, .nav, .gear-wrap, #win-controls { flex: 0 0 auto; }
 #addrbar {
-  flex: 1; display: flex; align-items: center; gap: 6px;
+  flex: 1 1 160px; min-width: 0; display: flex; align-items: center; gap: 6px;
   background: var(--bg3); border: 1px solid var(--line); border-radius: 6px;
   padding: 0 8px; height: 30px;
 }
 #addrbar:focus-within { border-color: var(--amber-dim); }
-#addr { flex: 1; background: none; border: 0; color: var(--fg); font-size: 12.5px; outline: none; }
+#addr { flex: 1 1 0; min-width: 0; width: 0; background: none; border: 0; color: var(--fg); font-size: 12.5px; outline: none; }
 .badge {
   font: 10px var(--mono); letter-spacing: .08em; padding: 1px 5px;
   border-radius: 4px; border: 1px solid var(--line); color: var(--muted);
@@ -131,6 +134,12 @@ body.platform-darwin #bar { padding-left: 78px; }
 .gear-wrap { position: relative; display: flex; gap: 2px; }
 #btn-gear { font-size: 15px; color: var(--muted); }
 #btn-gear:hover, #btn-gear.open { color: var(--amber); border-color: var(--line); background: var(--bg3); }
+#win-controls { display: flex; gap: 2px; margin-left: 2px; padding-left: 6px; border-left: 1px solid var(--line); }
+#win-controls button { color: var(--muted); display: flex; align-items: center; justify-content: center; }
+#win-controls svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+#win-controls button:hover { color: var(--fg); }
+#btn-win-full.active { color: var(--amber); }
+#btn-win-close:hover { color: var(--fg); background: var(--red); border-color: var(--red); }
 .plug { color: var(--amber); opacity: .85; font-size: 13px; }
 .plug:hover { opacity: 1; border-color: var(--line); background: var(--bg3); }
 /* The toolbar is a window drag region; the update mark must take clicks. */
@@ -144,31 +153,31 @@ body.platform-darwin #bar { padding-left: 78px; }
   user-select: none;
 }
 
-/* plugin progress toast */
-#plug-toast {
-  position: fixed; bottom: 14px; right: 14px; z-index: 200;
+/* Plugin notices and progress sit inside the toolbar. Page content is
+   composited above everything below the toolbar, so anything placed lower in
+   this window is never seen. */
+#plug-toast, #plug-progress {
+  position: fixed; top: 5px; left: 50%; z-index: 200;
+  height: 32px; max-width: min(560px, calc(100vw - 32px));
   background: var(--bg2); color: var(--fg);
   border: 1px solid var(--amber-dim); border-radius: 8px;
-  padding: 9px 14px; font-size: 12.5px;
+  font-size: 12.5px; white-space: nowrap;
   box-shadow: 0 6px 24px rgba(0,0,0,.5);
-  opacity: 0; transform: translateY(8px); pointer-events: none;
+  opacity: 0; transform: translate(-50%, -6px); pointer-events: none;
   transition: opacity .18s ease, transform .18s ease;
 }
-#plug-toast.show { opacity: 1; transform: translateY(0); }
+#plug-toast.show, #plug-progress.show { opacity: 1; transform: translate(-50%, 0); }
+#plug-toast { padding: 0 14px; line-height: 30px; overflow: hidden; text-overflow: ellipsis; }
 
 /* plugin progress pill */
 #plug-progress {
-  position: fixed; bottom: 14px; right: 14px; z-index: 210;
-  background: var(--bg2); color: var(--fg);
-  border: 1px solid var(--amber-dim); border-radius: 8px;
-  padding: 10px 14px; width: 260px;
-  box-shadow: 0 6px 24px rgba(0,0,0,.5);
-  opacity: 0; transform: translateY(8px); pointer-events: none;
-  transition: opacity .18s ease, transform .18s ease;
+  z-index: 210; width: 320px; padding: 0 14px;
+  display: flex; flex-direction: column; justify-content: center; gap: 3px;
+  -webkit-app-region: no-drag;
 }
-#plug-progress.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
-.pp-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 7px; }
-.pp-label { display: block; font-size: 12.5px; }
+#plug-progress.show { pointer-events: auto; }
+.pp-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.pp-label { display: block; font-size: 12px; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; }
 .pp-cancel {
   border: 0; background: transparent; color: var(--muted); cursor: pointer;
   padding: 0; font: inherit; font-size: 11px;
@@ -176,8 +185,8 @@ body.platform-darwin #bar { padding-left: 78px; }
 .pp-cancel:hover { color: var(--red); }
 .pp-cancel:disabled { opacity: .5; cursor: default; }
 .pp-bar {
-  height: 6px; border-radius: 3px; overflow: hidden;
-  background: var(--bg3); border: 1px solid var(--line);
+  height: 4px; border-radius: 2px; overflow: hidden;
+  background: var(--bg3);
 }
 .pp-fill {
   height: 100%; width: 0%;

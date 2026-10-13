@@ -34,7 +34,7 @@ const { startAgentApi } = require('./ext/agent-api');
 const { createAgentSession } = require('./engine/agent-network-proxy');
 const { runGoal } = require('./engine/agent-loop');
 const credentialPolicy = require('./engine/credential-policy');
-const { browserViewBounds, popupDecision } = require('./engine/view-layout');
+const { browserViewBounds, popupDecision, windowControls } = require('./engine/view-layout');
 const { shortcutAction, nextZoom, tabTarget, externalUrls, closedTabRecord, rememberClosedTab } = require('./engine/desktop-integration');
 const sessionStore = require('./engine/session-store');
 const notebook = require('./engine/research-notebook');
@@ -1239,6 +1239,20 @@ function registerIpc() {
   handle('forge:print', () => printActiveTab());
   handle('forge:save-pdf', () => savePageAsPdf());
   handle('forge:version', () => app.getVersion());
+  handle('forge:window-controls', () => ({
+    ...windowControls({ platform: process.platform, env: process.env }),
+    fullscreen: !!chromeWin && !chromeWin.isDestroyed() && chromeWin.isFullScreen(),
+  }));
+  handle('forge:window-control', (event, action) => {
+    if (!isChrome(event)) return false;
+    if (action === 'fullscreen') { chromeWin.setFullScreen(!chromeWin.isFullScreen()); return true; }
+    if (action === 'close') { chromeWin.close(); return true; }
+    if (action === 'minimize' && windowControls({ platform: process.platform, env: process.env }).minimize) {
+      chromeWin.minimize();
+      return true;
+    }
+    return false;
+  });
   /* ---- agent inference key (v0.11): the user's own, never the project's ----
    * The key is written to its own 0600 file, never to settings.json, and it is
    * never logged or echoed back: the renderer only ever learns whether one
@@ -1341,8 +1355,10 @@ function createChromeWindow() {
   const winOpts = {
     width: 1280,
     height: 820,
-    minWidth: 760,
-    minHeight: 520,
+    // Kept small: a tiling window manager sizes the window regardless, and a
+    // window held above its tile is drawn clipped.
+    minWidth: 520,
+    minHeight: 320,
     title: 'ForgeOS Browser',
     backgroundColor: '#14110d',
     webPreferences: {
@@ -1375,6 +1391,9 @@ function createChromeWindow() {
 
   chromeWin = new BrowserWindow(winOpts);
   chromeWin.setMenuBarVisibility(false);
+  for (const [event, fullscreen] of [['enter-full-screen', true], ['leave-full-screen', false]]) {
+    chromeWin.on(event, () => sendToChrome('forge:fullscreen', fullscreen));
+  }
   // The same shortcuts while the toolbar or address bar has focus. Find keys
   // are handled by the toolbar renderer itself.
   chromeWin.webContents.on('before-input-event', (event, input) => {

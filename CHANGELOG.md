@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-10-13
+
+### Fixed
+- Plugin notices ("Transcript saved", errors) and the download progress with its Cancel button are shown inside the toolbar. They were drawn at the bottom of the window, underneath the page, and were never visible.
+- The window can be as small as 520×320. The old 760×520 minimum made a tiling window manager draw the browser larger than its tile, with the edge cut off.
+- In a narrow window the tab strip and address bar shrink, and the buttons on the right stay inside the window.
+
+## [0.18.0] - 2026-10-13
+
+### Added
+- Linux: window buttons in the toolbar, to the right of Settings. Full screen (same as F11), Close, and Minimize. Minimize is left out on compositors that ignore the request (Hyprland, Sway, niri, river, i3, dwl, labwc), where it would leave a frozen window on screen. Windows and macOS keep their native buttons.
+
+### Fixed
+- YouTube transcripts: one caption language refused by YouTube (usually a machine-translated track answered with "429 Too Many Requests") no longer cancels the whole job. The remaining languages are saved and the refused ones are named in a note.
+- The settings (gear) button responds to a click anywhere on it. An invisible notification element sat on top of it inside the toolbar's window-drag area, so only the top edge of the button took clicks.
+- A YouTube rate limit is reported as a rate limit. It was shown as "YouTube or the network could not be reached".
+
 ## [0.17.0] - 2026-10-12
 
 The first release since 0.15.0. It includes everything prepared as 0.16.0,

@@ -1,6 +1,8 @@
 'use strict';
 
-const { browserViewBounds } = require('../../src/engine/view-layout');
+const fs = require('fs');
+const path = require('path');
+const { browserViewBounds, windowControls } = require('../../src/engine/view-layout');
 
 module.exports = [
   {
@@ -19,6 +21,58 @@ module.exports = [
       a.deepStrictEqual(browserViewBounds({
         width: 760, height: 520, toolbarHeight: 42, rightInset: 700,
       }), { x: 0, y: 42, width: 320, height: 478 });
+    },
+  },
+  {
+    // Anything left inside #bar inherits its window-drag region and its
+    // backdrop-filter containing block: a stray fixed element there sat over
+    // the gear button and swallowed real mouse clicks.
+    name: 'toolbar markup is balanced and nothing but the toolbar lives in #bar',
+    gate: 'A',
+    fn(a) {
+      const html = fs.readFileSync(path.join(__dirname, '../../src/renderer/index.html'), 'utf8');
+      const body = html.slice(html.indexOf('<body'));
+      a.strictEqual((body.match(/<div\b/g) || []).length, (body.match(/<\/div>/g) || []).length);
+      let depth = 0;
+      let barEnd = -1;
+      for (const m of body.slice(body.indexOf('<div id="bar">')).matchAll(/<(\/?)div\b[^>]*>/g)) {
+        depth += m[1] ? -1 : 1;
+        if (depth === 0) { barEnd = body.indexOf('<div id="bar">') + m.index; break; }
+      }
+      a.ok(barEnd > 0, '#bar is closed');
+      a.ok(body.indexOf('id="btn-gear"') < barEnd && body.indexOf('id="gear-menu"') < barEnd);
+      a.ok(body.indexOf('id="find-bar"') > barEnd, 'find bar is a sibling of the toolbar');
+      a.strictEqual(html.includes('id="plug-toast"'), false, 'the toast is created once, by ui.js');
+    },
+  },
+  {
+    name: 'toolbar window buttons are Linux-only and omit minimize where it is ignored',
+    gate: 'A',
+    fn(a) {
+      a.deepStrictEqual(windowControls({ platform: 'win32', env: {} }), { show: false, minimize: false });
+      a.deepStrictEqual(windowControls({ platform: 'darwin', env: {} }), { show: false, minimize: false });
+      a.deepStrictEqual(windowControls({ platform: 'linux', env: { XDG_CURRENT_DESKTOP: 'GNOME' } }), { show: true, minimize: true });
+      a.deepStrictEqual(windowControls({ platform: 'linux', env: {} }), { show: true, minimize: true });
+      a.deepStrictEqual(windowControls({ platform: 'linux', env: { XDG_CURRENT_DESKTOP: 'Hyprland' } }), { show: true, minimize: false });
+      a.deepStrictEqual(windowControls({ platform: 'linux', env: { XDG_CURRENT_DESKTOP: 'ubuntu:sway' } }), { show: true, minimize: false });
+      a.deepStrictEqual(windowControls({ platform: 'linux', env: { XDG_SESSION_DESKTOP: 'niri' } }), { show: true, minimize: false });
+    },
+  },
+  {
+    // The page view covers everything below the toolbar, so a notice anchored
+    // to the bottom of the toolbar window is drawn where nobody can see it.
+    name: 'plugin notices are anchored inside the toolbar, not below it',
+    gate: 'A',
+    fn(a) {
+      const css = fs.readFileSync(path.join(__dirname, '../../src/renderer/style.css'), 'utf8');
+      const rule = css.match(/#plug-toast, #plug-progress \{([^}]*)\}/);
+      a.ok(rule, 'shared notice rule exists');
+      a.match(rule[1], /position: fixed; top: \d+px;/);
+      const barHeight = Number(css.match(/--bar-h: (\d+)px/)[1]);
+      const top = Number(rule[1].match(/top: (\d+)px/)[1]);
+      const height = Number(rule[1].match(/[^-]height: (\d+)px/)[1]);
+      a.ok(top + height <= barHeight, 'the notice fits inside the toolbar');
+      for (const block of css.matchAll(/#plug-(?:toast|progress)[^{]*\{([^}]*)\}/g)) a.doesNotMatch(block[1], /bottom:/);
     },
   },
 ];

@@ -11,6 +11,7 @@ const { PluginRunner } = require('../../src/ext/plugins');
 const {
   buildYtDlpArgs,
   classifyYtDlpError,
+  skippedSubtitlesWarning,
   extractVideoId,
   parseYtDlpProgress,
   resolveExecutable,
@@ -136,6 +137,8 @@ module.exports = [
       });
       a.ok(args.includes('--write-auto-subs'));
       a.ok(args.includes('--write-subs'));
+      a.ok(args.includes('--ignore-errors'));
+      a.strictEqual(buildYtDlpArgs('video', VIDEO_URL, {}).includes('--ignore-errors'), false);
       a.strictEqual(args[args.indexOf('--sub-langs') + 1], 'en.*,pt.*');
       a.strictEqual(args[args.indexOf('--sub-format') + 1], 'vtt/best');
       a.deepStrictEqual(args.slice(-2), ['--', VIDEO_URL]);
@@ -158,6 +161,21 @@ module.exports = [
       a.match(classifyYtDlpError('ERROR: Sign in to confirm you are not a bot', 1), /sign-in|bot check/i);
       a.match(classifyYtDlpError('ERROR: Requested format is not available', 1), /QuickTime-compatible/);
       a.strictEqual(classifyYtDlpError('ERROR: private video', 1), 'private video');
+      a.match(classifyYtDlpError("ERROR: Unable to download video subtitles for 'en': HTTP Error 429: Too Many Requests", 1), /rate-limited/);
+      a.match(classifyYtDlpError('ERROR: Unable to download webpage: Network is unreachable', 1), /could not be reached/);
+    },
+  },
+  {
+    name: 'refused caption languages are named in a warning',
+    gate: 'J',
+    fn(a) {
+      const output = "WARNING: Unable to download video subtitles for 'pt': HTTP Error 429: Too Many Requests\n"
+        + "WARNING: Unable to download video subtitles for 'pt-PT': HTTP Error 429: Too Many Requests\n"
+        + "WARNING: Unable to download video subtitles for 'pt': HTTP Error 429: Too Many Requests\n";
+      a.strictEqual(skippedSubtitlesWarning(output),
+        'YouTube rate-limited these caption languages: pt, pt-PT. The other captions were saved.');
+      a.match(skippedSubtitlesWarning("WARNING: Unable to download video subtitles for 'de': HTTP Error 404"), /did not provide.*de\./);
+      a.strictEqual(skippedSubtitlesWarning('[info] Writing video subtitles'), undefined);
     },
   },
   {
@@ -298,6 +316,45 @@ module.exports = [
         a.strictEqual(fs.readFileSync(vtt.replace(/\.vtt$/, '.txt'), 'utf8'), 'Partial success\n');
         a.ok(result.files.includes(vtt));
         a.strictEqual(fs.existsSync(vtt), true);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'a successful exit with refused caption languages reports them',
+    gate: 'J',
+    async fn(a) {
+      const dir = tempDir();
+      try {
+        const refused = "WARNING: Unable to download video subtitles for 'pt': HTTP Error 429: Too Many Requests\n";
+        let child = fakeChild();
+        let events = [];
+        let terminal = terminalPromise(events);
+        await runnerFor(dir, child).run('transcript', VIDEO_URL, async () => ({ approved: true }), emitterFor(events));
+        const vtt = path.join(dir, `Demo [${VIDEO_ID}].en-orig.vtt`);
+        fs.writeFileSync(vtt, 'WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nOriginal track\n', 'utf8');
+        child.stderr.write(refused);
+        child.stderr.end();
+        child.stdout.end();
+        child.emit('close', 0, null);
+        let result = await terminal;
+        a.strictEqual(result.state, 'done');
+        a.match(result.warning, /rate-limited these caption languages: pt\./);
+        a.ok(result.files.includes(vtt));
+
+        fs.rmSync(vtt); fs.rmSync(vtt.replace(/\.vtt$/, '.txt'));
+        child = fakeChild();
+        events = [];
+        terminal = terminalPromise(events);
+        await runnerFor(dir, child).run('transcript', VIDEO_URL, async () => ({ approved: true }), emitterFor(events));
+        child.stderr.write(refused);
+        child.stderr.end();
+        child.stdout.end();
+        child.emit('close', 0, null);
+        result = await terminal;
+        a.strictEqual(result.state, 'error');
+        a.match(result.error, /rate-limited this connection/);
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
