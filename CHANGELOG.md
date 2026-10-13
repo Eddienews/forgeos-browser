@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-10-13
+
+### Fixed
+- Plugin notices ("Transcript saved", errors) and the download progress with its Cancel button are shown inside the toolbar. They were drawn at the bottom of the window, underneath the page, and were never visible.
+- The window can be as small as 520×320. The old 760×520 minimum made a tiling window manager draw the browser larger than its tile, with the edge cut off.
+- In a narrow window the tab strip and address bar shrink, and the buttons on the right stay inside the window.
+
 ## [0.18.0] - 2026-10-13
 
 ### Added
