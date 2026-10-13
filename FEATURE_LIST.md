@@ -17,19 +17,21 @@ increments. Status legend: `[x]` shipped, `[~]` in progress, `[ ]` planned.
 ## Next — Browser essentials
 
 - [ ] Automatic update notification and an About ForgeOS page.
-- [ ] Advanced tabs: reopen closed, pin, duplicate, mute, group, and restore the
-  previous session.
+- [~] Advanced tabs: reopen closed (Ctrl+Shift+T, merged into main; release
+  pending) and restore the previous session are done; pin, duplicate, mute and
+  group remain planned.
 - [~] Find in page with result count, Ctrl+F/F3 navigation and a chrome-owned search bar (merged into main; release pending).
-- [ ] Site permission controls for camera, microphone, location, notifications,
-  and clipboard access.
+- [~] Site permission controls for camera, microphone, location, notifications,
+  and clipboard access: per-site Ask/Allow/Block in the site panel and
+  remember choices in the prompt (merged into main; release pending).
 - [ ] Complete keyboard shortcut reference and command palette.
-- [ ] Reader mode, print, save as PDF, and full-page screenshots.
+- [~] Print and save as PDF (merged into main; release pending); reader mode and full-page screenshots remain planned.
 - [ ] Side-by-side browsing and vertical tabs.
 
 ## Privacy and security
 
 - [~] Per-site protection panel with live-origin counters and reversible host exceptions (merged into main; release pending).
-- [ ] HTTPS-only mode and certificate details.
+- [~] HTTPS-only mode with a human-approved fallback (merged into main; release pending); certificate details remain planned.
 - [~] Clear current-origin storage; clear host-only cookies/cache only when the session is dedicated. Shared sessions preserve cookies/cache to avoid deleting another origin's data.
 - [~] Named persistent Work, Personal and Research containers with distinct Electron sessions; banking/social names remain planned.
 - [ ] Privacy-preserving phishing and lookalike-domain warnings.

@@ -271,16 +271,146 @@ module.exports = [
       a.strictEqual(app.userAgentFallback, GENERIC_UA);
       const adapter = read('src/ext/electron-adapter.js');
       a.doesNotMatch(adapter, /'"Windows"'/);
-      a.strictEqual((adapter.match(/= uaPlatform;/g) || []).length, 2);
+      a.match(adapter, /headers\['Sec-CH-UA-Platform'\] = clientHintPlatform\(\);/);
     },
   },
   {
     name: 'every GitHub Action is pinned to a full commit SHA',
     gate: 'K',
     fn(a) {
-      const workflow = read('.github/workflows/build.yml');
-      a.ok((workflow.match(/uses:\s+\S+@[0-9a-f]{40} # v\d+/g) || []).length >= 7);
-      a.doesNotMatch(workflow, /uses:\s+\S+@(?![0-9a-f]{40}\b)/);
+      const directory = path.join(root, '.github/workflows');
+      const files = fs.readdirSync(directory).filter((name) => /\.ya?ml$/.test(name));
+      a.ok(files.includes('build.yml') && files.includes('nightly.yml'));
+      for (const name of files) {
+        const workflow = fs.readFileSync(path.join(directory, name), 'utf8');
+        a.ok((workflow.match(/uses:\s+\S+@[0-9a-f]{40} # v\d+/g) || []).length >= 2, name);
+        a.doesNotMatch(workflow, /uses:\s+\S+@(?![0-9a-f]{40}\b)/, name);
+      }
+    },
+  },
+  {
+    name: 'the Electron freshness check flags a stale line and an unsupported major',
+    gate: 'K',
+    fn(a) {
+      const { assessElectron } = require('../../scripts/check-electron');
+      const released = ['41.9.0', '42.3.1', '43.5.1', '43.7.9', '44.0.0', '44.7.0', '45.0.0-beta.2', '46.0.0-nightly.20261001'];
+      const current = assessElectron('43.7.9', released);
+      a.strictEqual(current.ok, true);
+      a.strictEqual(current.newestInLine, '43.7.9');
+      a.strictEqual(current.newestStable, '44.7.0', 'pre-releases are ignored');
+      const stale = assessElectron('43.5.1', released);
+      a.strictEqual(stale.ok, false);
+      a.match(stale.problems[0], /behind 43\.7\.9/);
+      const numeric = assessElectron('43.7.9', ['43.7.9', '43.7.10']);
+      a.strictEqual(numeric.ok, false, 'versions compare numerically, not as text');
+      const unsupported = assessElectron('41.9.0', released);
+      a.strictEqual(unsupported.ok, false);
+      a.match(unsupported.problems.join(' '), /no longer supported/);
+      a.strictEqual(assessElectron('42.3.1', released).ok, true, 'third-newest major is still supported');
+      a.strictEqual(assessElectron('^43.7.9', released).ok, false, 'a range is not a pin');
+      a.strictEqual(assessElectron('43.7.9', []).ok, false);
+      // Scheduled, read-only, and wired to the same check.
+      const nightly = read('.github/workflows/nightly.yml');
+      a.match(nightly, /schedule:\s+- cron: '\d+ \d+ \* \* \*'/);
+      // \s, not \n: Windows checkouts use CRLF line endings.
+      a.match(nightly, /permissions:\s+contents: read\s+jobs:/);
+      a.match(nightly, /run: npm run check:electron/);
+      a.match(nightly, /run: npm audit --audit-level=high/);
+      a.match(read('.github/dependabot.yml'), /package-ecosystem: npm[\s\S]+interval: daily/);
+    },
+  },
+  {
+    name: 'client-hint brands repeat the engine and never claim Google Chrome by default',
+    gate: 'K',
+    fn(a) {
+      const hardening = require('../../src/engine/fingerprint-hardening');
+      const { rewriteIdentityHeaders } = require('../../src/ext/electron-adapter');
+      const incoming = { 'User-Agent': 'Mozilla/5.0 Electron/43.7.9', Accept: '*/*',
+        'sec-ch-ua': '"Forged";v="1"', 'Sec-CH-UA-Platform': '"Forged"' };
+
+      // Before the engine reported: no brand hint at all, never a guess.
+      const early = rewriteIdentityHeaders(incoming, 'https://site.test/', {});
+      a.strictEqual(early['User-Agent'], hardening.GENERIC_UA);
+      a.strictEqual(early.Accept, '*/*');
+      a.strictEqual(Object.keys(early).some((k) => /^sec-ch-ua/i.test(k)), false);
+
+      a.strictEqual(hardening.setEngineBrands({
+        brands: [{ brand: 'Not;A=Brand', version: '8' }, { brand: 'Chromium', version: '150' }],
+        fullVersionList: [{ brand: 'Not;A=Brand', version: '8.0.0.0' }, { brand: 'Chromium', version: '150.0.7871.250' }],
+      }), true);
+      const secure = rewriteIdentityHeaders(incoming, 'https://site.test/', {});
+      a.strictEqual(secure['Sec-CH-UA'], '"Not;A=Brand";v="8", "Chromium";v="150"');
+      a.strictEqual(secure['Sec-CH-UA-Mobile'], '?0');
+      a.strictEqual(secure['Sec-CH-UA-Platform'], hardening.clientHintPlatform());
+      a.strictEqual('Sec-CH-UA-Full-Version-List' in secure, false, 'high-entropy hint is not volunteered');
+      a.strictEqual('sec-ch-ua' in secure, false, 'forged lowercase duplicate is dropped');
+      a.doesNotMatch(JSON.stringify(secure), /Google Chrome|Forged|Electron/);
+
+      const asked = rewriteIdentityHeaders({ ...incoming, 'Sec-CH-UA-Full-Version-List': 'x' }, 'https://site.test/', {});
+      a.strictEqual(asked['Sec-CH-UA-Full-Version-List'], '"Not;A=Brand";v="8.0.0.0", "Chromium";v="150.0.7871.250"');
+
+      // Client hints go only to secure origins.
+      const plain = rewriteIdentityHeaders(incoming, 'http://site.test/', {});
+      a.strictEqual(Object.keys(plain).some((k) => /^sec-ch-ua/i.test(k)), false);
+      a.strictEqual(plain['User-Agent'], hardening.GENERIC_UA);
+      a.ok(rewriteIdentityHeaders(incoming, 'http://localhost:3000/', {})['Sec-CH-UA']);
+
+      // The compatibility switch is explicit and uses the major version in the low-entropy list.
+      const compat = rewriteIdentityHeaders(incoming, 'https://site.test/', { identifyAsChrome: true }, '150.0.7871.250');
+      a.strictEqual(compat['Sec-CH-UA'], '"Chromium";v="150", "Google Chrome";v="150", "Not?A_Brand";v="99"');
+      a.strictEqual(rewriteIdentityHeaders(incoming, 'https://site.test/', { identifyAsChrome: 'yes' })['Sec-CH-UA'],
+        '"Not;A=Brand";v="8", "Chromium";v="150"', 'only a literal true enables it');
+
+      // A malformed report can never inject header syntax, and changes nothing.
+      for (const bad of [null, {}, { brands: [] }, { brands: [{ brand: 'a"b', version: '1' }] },
+        { brands: [{ brand: 'ok', version: '1\r\nX: y' }] }, { brands: [{ brand: 'ok\n', version: '1' }] },
+        { brands: Array(9).fill({ brand: 'x', version: '1' }) }])
+        a.strictEqual(hardening.setEngineBrands(bad), false);
+      a.strictEqual(rewriteIdentityHeaders(incoming, 'https://site.test/', {})['Sec-CH-UA'],
+        '"Not;A=Brand";v="8", "Chromium";v="150"');
+    },
+  },
+  {
+    name: 'a new-window request becomes a tab only for http(s), from the visible human tab, after user input',
+    gate: 'K',
+    fn(a) {
+      const { popupDecision, POPUP_INPUT_WINDOW_MS, POPUP_MAX_TABS } = require('../../src/engine/view-layout');
+      const ok = { url: 'https://site.test/next?a=1', agentOwned: false, closing: false, active: true,
+        msSinceUserInput: 120, openTabs: 3 };
+      a.deepStrictEqual(popupDecision(ok), { open: true, url: 'https://site.test/next?a=1' });
+      a.strictEqual(popupDecision({ ...ok, url: 'http://site.test/' }).open, true);
+      for (const [change, reason] of [
+        [{ agentOwned: true }, /agent/], [{ active: false }, /visible/], [{ closing: true }, /visible/],
+        [{ msSinceUserInput: POPUP_INPUT_WINDOW_MS + 1 }, /user input/], [{ msSinceUserInput: -5 }, /user input/],
+        [{ msSinceUserInput: undefined }, /user input/], [{ openTabs: POPUP_MAX_TABS }, /too many/],
+        [{ url: 'javascript:alert(1)' }, /http/], [{ url: 'file:///etc/passwd' }, /http/],
+        [{ url: 'data:text/html,x' }, /http/], [{ url: 'about:blank' }, /http/], [{ url: '' }, /unparseable/],
+        [{ url: 'https://user:pw@site.test/' }, /credentials/],
+      ]) {
+        const result = popupDecision({ ...ok, ...change });
+        a.strictEqual(result.open, false, JSON.stringify(change));
+        a.match(result.reason, reason);
+      }
+      a.strictEqual(popupDecision().open, false);
+      const main = read('src/main.js');
+      // A native child window is never created, whatever the decision.
+      const handler = main.slice(main.indexOf('wc.setWindowOpenHandler(({ url }) => {'));
+      a.match(handler.slice(0, handler.indexOf('if (tab.agentOwned) {')), /return \{ action: 'deny' \};\s+\}\);/);
+      a.doesNotMatch(main, /action: 'allow'/);
+    },
+  },
+  {
+    name: 'the Control Center demo click on a human page always asks the human',
+    gate: 'K',
+    fn(a) {
+      const main = read('src/main.js');
+      const start = main.indexOf("handle('forge:click'");
+      const body = main.slice(start, main.indexOf("handle('forge:request-action'", start));
+      a.ok(start > 0);
+      const confirm = body.indexOf('dialog.showMessageBox(chromeWin');
+      const dispatch = body.indexOf("t.wc.sendInputEvent({ type: 'mouseDown'");
+      a.ok(confirm > 0 && dispatch > confirm, 'confirmation precedes the click');
+      a.match(body, /if \(confirmation\.response !== 1 \|\| activeTab\(\) !== t \|\| t\.wc\.isDestroyed\(\)\)\s+return \{ verdict: 'DENY'/);
     },
   },
   {

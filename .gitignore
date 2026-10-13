@@ -10,6 +10,7 @@ forge-settings.json
 forge-history.json
 forge-bookmarks.json
 forge-allowlist.json
+forge-permissions.json
 forge-fp-level
 
 # build artifacts

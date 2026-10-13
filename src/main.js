@@ -25,11 +25,12 @@ const { PluginRunner } = require('./ext/plugins');
 const { sessionPlanFor, captureTabReloadPlan, clearSessionData, containerPartition, CONTAINER_IDS } = require('./engine/storage-manager');
 const { MODES, isValidMode } = require('./engine/privacy-modes');
 const { analyzeAgentView, IN_PAGE_SCRIPT, readPageView } = require('./engine/agent-view');
-const { applyAppLevelHardening } = require('./engine/fingerprint-hardening');
+const { applyAppLevelHardening, setEngineBrands } = require('./engine/fingerprint-hardening');
 const { requestAction } = require('./engine/permissions');
 const settings = require('./engine/settings');
 const bh = require('./engine/bookmarks-history');
 const allowlist = require('./engine/site-allowlist');
+const sitePermissions = require('./engine/site-permissions');
 const { compileCosmetic, selectorsForHost } = require('./engine/cosmetic-engine');
 const { startAgentApi } = require('./ext/agent-api');
 const { createAgentSession } = require('./engine/agent-network-proxy');
@@ -39,7 +40,8 @@ const { normalizeSnapshot } = require('./engine/page-snapshot');
 const { classifyAction, compareAgentPreview, hashEffectProof } = require('./engine/action-policy');
 const { runGoal } = require('./engine/agent-loop');
 const credentialPolicy = require('./engine/credential-policy');
-const { browserViewBounds } = require('./engine/view-layout');
+const { browserViewBounds, popupDecision } = require('./engine/view-layout');
+const { shortcutAction, nextZoom, tabTarget, externalUrls, closedTabRecord, rememberClosedTab } = require('./engine/desktop-integration');
 const sessionStore = require('./engine/session-store');
 const notebook = require('./engine/research-notebook');
 const { cleanUrlString } = require('./engine/url-cleaner');
@@ -69,6 +71,13 @@ const IS_PACKAGED = __dirname.includes('app.asar');
 const SMOKE_RUNTIME_BASE = process.argv.includes('--smoke')
   ? process.env.FORGE_SMOKE_RUNTIME_BASE
   : null;
+
+// One browser per profile: two processes writing the same history, session and
+// site-data files corrupt them, and the second cannot bind the Agent API. A
+// second launch hands its links to the running browser and exits. Smoke runs
+// use their own runtime base and must work while a browser is open.
+const HAS_INSTANCE_LOCK = !!SMOKE_RUNTIME_BASE || app.requestSingleInstanceLock();
+if (!HAS_INSTANCE_LOCK) app.quit();
 
 function getRuntimeBase() {
   if (SMOKE_RUNTIME_BASE) return path.resolve(SMOKE_RUNTIME_BASE);
@@ -146,12 +155,18 @@ function noteSiteBlock(webContentsId, category) {
   if (key) tab.siteCounts[key]++;
 }
 
+// Remembered site permissions belong to the human. An agent-owned session
+// neither reads nor writes them.
+function sitePermissionsFor(partitionKey) {
+  return String(partitionKey || '').startsWith('forge-agent-') ? null : sitePermissions;
+}
+
 function getSessionFor(partitionKey) {
   if (partitionKey == null) {
     let e = sessions.get('__default__');
     if (!e) {
       const s = session.defaultSession;
-      e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, downloadsDir: DL_DIR(), getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r), onSiteBlocked: noteSiteBlock }) };
+      e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, downloadsDir: DL_DIR(), getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r), onSiteBlocked: noteSiteBlock, sitePermissions: sitePermissionsFor(partitionKey) }) };
       sessions.set('__default__', e);
     }
     return e;
@@ -159,7 +174,7 @@ function getSessionFor(partitionKey) {
   let e = sessions.get(partitionKey);
   if (!e) {
     const s = session.fromPartition(partitionKey);
-    e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, downloadsDir: DL_DIR(), getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r), onSiteBlocked: noteSiteBlock }) };
+    e = { session: s, adapter: new SessionAdapter({ session: s, engine, log, modeId, downloadsDir: DL_DIR(), getChromeWindow: () => chromeWin, onDownloadRecord: (r) => pushDownload(r), onSiteBlocked: noteSiteBlock, sitePermissions: sitePermissionsFor(partitionKey) }) };
     sessions.set(partitionKey, e);
   }
   return e;
@@ -306,7 +321,12 @@ function createTab(url = 'about:blank', opts = {}) {
     const find = ctrl && !input.alt && input.key.toLowerCase() === 'f';
     const repeat = !ctrl && !input.alt && input.key === 'F3';
     const close = !ctrl && !input.alt && input.key === 'Escape' && pageFind.opened;
-    if (!find && !repeat && !close) return;
+    if (!find && !repeat && !close) {
+      // Browser shortcuts work while a page has focus; the page never sees them.
+      const action = activeTabId === tab.id ? shortcutAction(input) : null;
+      if (action) { event.preventDefault(); runShortcut(action); }
+      return;
+    }
     event.preventDefault();
     if (activeTabId === tab.id) {
       if (close) pageFind.close();
@@ -323,6 +343,9 @@ function createTab(url = 'about:blank', opts = {}) {
     }
     tab.blockedCredentialUrl = null;
     tab.blockedCredentialNoticeUrl = null;
+    adapter.httpsOnly.settle(url);
+    // The blank document is not a visit: no history entry, nothing to inject.
+    if (url === 'about:blank') { tab.url = url; sendState(); return; }
     // NO-CREDENTIALS policy: intercept identity-provider sign-in pages and
     // show a clear notice instead of Google's misleading "may not be secure".
     if (credentialPolicy.matchesCredentialHost(url) && !settings.all().allowCredentials) {
@@ -391,18 +414,50 @@ function createTab(url = 'about:blank', opts = {}) {
     sendState();
   });
 
-  wc.on('did-fail-load', (_e, code, desc, validatedURL) => {
+  wc.on('did-fail-load', (_e, code, desc, validatedURL, isMainFrame) => {
     if (code === -3) return; // aborted
     log.log('ERROR', 'load failed', { code, desc: String(desc).slice(0, 120), url: String(validatedURL).slice(0, 200) });
+    if (isMainFrame) offerHttpFallback(tab, validatedURL, desc);
   });
 
   wc.on('render-process-gone', (_e, details) => {
     log.log('ERROR', 'renderer gone', { reason: details.reason, exitCode: details.exitCode });
   });
 
-  // window.open is denied: no untrusted content opens its own chrome.
+  // No untrusted content opens its own chrome: a native child window is
+  // always denied. A human tab's link that asks for a new window (target=_blank,
+  // window.open) is reopened as an ordinary ForgeOS tab instead, with no opener
+  // relationship, but only right after real user input on that tab. Agent
+  // tabs never open tabs.
+  let lastUserInputAt = 0;
+  wc.on('input-event', (_e, input) => {
+    if (input && (input.type === 'mouseDown' || input.type === 'mouseUp' || input.type === 'keyDown' ||
+        input.type === 'rawKeyDown' || input.type === 'gestureTap')) lastUserInputAt = Date.now();
+  });
   wc.setWindowOpenHandler(({ url }) => {
-    log.log('DENY', 'window.open blocked', { url: url.slice(0, 200) });
+    const decision = popupDecision({
+      url, agentOwned: tab.agentOwned, closing: !!tab.closing, active: activeTabId === tab.id,
+      msSinceUserInput: Date.now() - lastUserInputAt, openTabs: tabs.size,
+    });
+    if (decision.open) {
+      lastUserInputAt = 0; // one tab per user action
+      log.log('ALLOW', 'link opened in new tab', { url: url.slice(0, 200) });
+      // After this handler returns: never create a view inside the callback.
+      setImmediate(() => {
+        if (tab.closing || !tabs.has(tab.id)) return;
+        try {
+          const opened = createTab('about:blank', {
+            containerId: tab.containerId, forgetOnClose: tab.forgetOnClose && !tab.containerId,
+          });
+          switchTab(opened.id, { focus: true });
+          navigateIn(opened, decision.url);
+        } catch (error) {
+          log.log('ERROR', 'new tab from link failed', { error: String(error).slice(0, 120) });
+        }
+      });
+    } else {
+      log.log('DENY', 'window.open blocked', { url: String(url).slice(0, 200), reason: decision.reason });
+    }
     return { action: 'deny' };
   });
 
@@ -416,10 +471,43 @@ function createTab(url = 'about:blank', opts = {}) {
     wc.on('will-redirect', denyNonWeb);
   }
 
-  if (url !== 'about:blank' && url !== '') {
-    wc.loadURL(url).catch(() => {});
-  }
+  // A blank tab still loads a real (network-free) blank document: a view that
+  // never loaded anything receives no input events, so keyboard shortcuts
+  // would be dead while it has focus.
+  wc.loadURL(url && url !== '' ? url : 'about:blank').catch(() => {});
   return tab;
+}
+
+/**
+ * HTTPS-only fallback. The secure retry of an http:// navigation failed: the
+ * site may not support HTTPS, or something on the network is interfering. The
+ * browser never downgrades by itself; the human decides, per host, for this
+ * session. An agent tab is never offered the downgrade.
+ */
+async function offerHttpFallback(tab, failedUrl, reason) {
+  const upgrade = tab.adapter.httpsOnly.takeFailedUpgrade(failedUrl);
+  if (!upgrade) return false;
+  if (tab.agentOwned || tab.closing || activeTabId !== tab.id || !chromeWin || chromeWin.isDestroyed()) {
+    log.log('DENY', 'insecure fallback not offered', { host: upgrade.host, reason: tab.agentOwned ? 'agent tab' : 'tab not visible' });
+    return false;
+  }
+  const result = await dialog.showMessageBox(chromeWin, {
+    type: 'warning',
+    title: 'ForgeOS Browser — secure connection unavailable',
+    message: `${upgrade.host} could not be opened over HTTPS.`,
+    detail: `Reason: ${String(reason || 'connection failed').slice(0, 120)}\n\n` +
+      'Over plain HTTP, anyone on the network can read and change what you see and send. ' +
+      'Continue only if you do not enter private information.\n\n' +
+      'Your choice applies to this site until the browser is closed.',
+    buttons: ['Stay secure', 'Continue over HTTP'],
+    defaultId: 0, cancelId: 0, noLink: true,
+  });
+  const allowed = result.response === 1;
+  log.log(allowed ? 'ALLOW' : 'DENY', 'insecure HTTP fallback human decision', { host: upgrade.host });
+  if (!allowed || tab.closing || tab.wc.isDestroyed() || !tabs.has(tab.id)) return false;
+  tab.adapter.httpsOnly.allowHttp(upgrade.host);
+  tab.wc.loadURL(upgrade.httpUrl).catch(() => {});
+  return true;
 }
 
 async function refreshAgentView(tab) {
@@ -524,6 +612,7 @@ async function changePrivacyMode(nextModeId) {
   const reloadPlan = captureTabReloadPlan(tabs, activeTabId);
   const replacements = [];
   modeId = nextModeId;
+  closedTabs.length = 0; // a mode change must not carry tabs across privacy levels
 
   try {
     for (const item of reloadPlan.items) {
@@ -644,6 +733,139 @@ async function approveAgentNavigation(url) {
     url: String(url).slice(0, 300), decision: allowed ? 'allow' : 'deny',
   });
   return allowed;
+}
+
+/* ------------------------------------------------------------------ */
+/* Keyboard shortcuts and links from other applications                */
+/* ------------------------------------------------------------------ */
+
+// Tabs the human closed, most recent first, for Ctrl+Shift+T. In memory only.
+const closedTabs = [];
+
+/** A deliberate close by the human: remember it, then close. */
+function closeTabByUser(id) {
+  rememberClosedTab(closedTabs, closedTabRecord(tabs.get(id)));
+  return closeTab(id);
+}
+
+function reopenClosedTab() {
+  const record = closedTabs.shift();
+  if (!record) return false;
+  // A container tab returns to its container; that needs Standard mode.
+  const containerId = record.containerId && CONTAINER_IDS.includes(record.containerId) && modeId === 'standard'
+    ? record.containerId : null;
+  if (record.containerId && !containerId) return reopenClosedTab(); // cannot be restored faithfully: skip it
+  const t = createTab('about:blank', { containerId });
+  switchTab(t.id, { focus: true });
+  navigateIn(t, record.url);
+  log.log('INFO', 'closed tab reopened', { url: record.url.slice(0, 200) });
+  return true;
+}
+
+/** Open the system print dialog for the page the human is looking at. */
+function printActiveTab() {
+  const t = activeTab();
+  if (!t || t.closing || t.wc.isDestroyed()) return false;
+  t.wc.print({ printBackground: true }, (ok, reason) => {
+    if (!ok && reason && !/cancel/i.test(String(reason))) log.log('ERROR', 'print failed', { reason: String(reason).slice(0, 120) });
+  });
+  return true;
+}
+
+/** Save the current page as a PDF where the human chooses. */
+async function savePageAsPdf() {
+  const t = activeTab();
+  if (!t || t.closing || t.wc.isDestroyed() || !chromeWin || chromeWin.isDestroyed())
+    return { ok: false, reason: 'No page to save.' };
+  const id = t.id, url = t.wc.getURL();
+  const base = String(t.title || 'page').replace(/[\\/:*?"<>|\x00-\x1f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'page';
+  const choice = await dialog.showSaveDialog(chromeWin, {
+    title: 'Save page as PDF',
+    defaultPath: path.join(app.getPath('documents'), `${base}.pdf`),
+    filters: [{ name: 'PDF', extensions: ['pdf'] }],
+  });
+  if (choice.canceled || !choice.filePath) return { ok: false, canceled: true };
+  if (path.extname(choice.filePath).toLowerCase() !== '.pdf') return { ok: false, reason: 'The file name must end in .pdf.' };
+  // The page shown when the dialog opened is the page that gets saved.
+  if (activeTabId !== id || t.closing || t.wc.isDestroyed() || t.wc.getURL() !== url)
+    return { ok: false, reason: 'The page changed; nothing was saved.' };
+  try {
+    const data = await t.wc.printToPDF({ printBackground: true });
+    await fs.promises.writeFile(choice.filePath, data);
+  } catch (error) {
+    log.log('ERROR', 'save as PDF failed', { error: String(error).slice(0, 120) });
+    return { ok: false, reason: 'Could not save the PDF.' };
+  }
+  log.log('INFO', 'page saved as PDF');
+  return { ok: true, file: path.basename(choice.filePath) };
+}
+
+function focusAddressBar() {
+  if (!chromeWin || chromeWin.isDestroyed()) return;
+  chromeWin.webContents.focus();
+  sendToChrome('forge:focus-address');
+}
+
+function openHumanTab(url) {
+  const t = createTab('about:blank');
+  switchTab(t.id, { focus: !!url });
+  if (url) navigateIn(t, url);
+  else focusAddressBar();
+  return t;
+}
+
+/** Run one action from desktop-integration.shortcutAction. Human input only. */
+function runShortcut(action) {
+  if (!chromeWin || chromeWin.isDestroyed()) return false;
+  const t = activeTab();
+  switch (action) {
+    case 'new-tab': openHumanTab(null); return true;
+    case 'close-tab': {
+      if (!t) return false;
+      const last = tabs.size === 1;
+      closeTabByUser(t.id).then(() => { if (last && !agentQuitting && chromeWin && !chromeWin.isDestroyed()) openHumanTab(null); })
+        .catch(() => {});
+      return true;
+    }
+    case 'reopen-tab': return reopenClosedTab();
+    case 'print': return printActiveTab();
+    case 'focus-address': focusAddressBar(); return true;
+    case 'reload': if (t) t.wc.reload(); return !!t;
+    case 'back':
+      if (!t || t.index <= 0) return false;
+      t.index -= 1; t.wc.goBack(); return true;
+    case 'forward':
+      if (!t || t.index >= t.history.length - 1) return false;
+      t.index += 1; t.wc.goForward(); return true;
+    case 'zoom-in': case 'zoom-out': case 'zoom-reset': {
+      const zoom = nextZoom(settings.all().pageZoom, action);
+      settings.save({ pageZoom: zoom });
+      if (t) t.wc.setZoomFactor(zoom / 100);
+      return true;
+    }
+    case 'fullscreen': chromeWin.setFullScreen(!chromeWin.isFullScreen()); return true;
+    case 'devtools': if (t) t.wc.openDevTools({ mode: 'detach' }); return !!t;
+    case 'quit': app.quit(); return true;
+    default: {
+      const target = tabTarget(action, [...tabs.keys()], activeTabId);
+      if (target == null || !tabs.has(target)) return false;
+      if (target !== activeTabId) switchTab(target);
+      return true;
+    }
+  }
+}
+
+/** Open links another application handed over, as ordinary human tabs. */
+function openExternalUrls(urls) {
+  if (!chromeWin || chromeWin.isDestroyed()) return 0;
+  for (const url of urls) {
+    log.log('INFO', 'link opened from another application', { url: url.slice(0, 200) });
+    openHumanTab(url);
+  }
+  if (chromeWin.isMinimized()) chromeWin.restore();
+  chromeWin.show();
+  chromeWin.focus();
+  return urls.length;
 }
 
 /* ------------------------------------------------------------------ */
@@ -868,7 +1090,7 @@ function registerIpc() {
     switchTab(t.id, { focus: true });
     return { id: t.id, containerId: t.containerId };
   });
-  handle('forge:close-tab', (_e, id) => closeTab(id));
+  handle('forge:close-tab', (_e, id) => closeTabByUser(id));
   handle('forge:switch-tab', (_e, id) => { if (tabs.has(id)) switchTab(id); });
   handle('forge:set-menu-open', (_e, state) => {
     if (!chromeWin || !activeTabId) return false;
@@ -890,6 +1112,7 @@ function registerIpc() {
     for (const { session: s, adapter } of todo) {
       removed += await clearSessionData(s);
       adapter.clearPermissionGrants();
+      adapter.httpsOnly.clear();
     }
     for (const t of tabs.values()) {
       t.history = []; t.index = -1; t.lastAgentView = null;
@@ -898,6 +1121,7 @@ function registerIpc() {
       t.adapter.takeDelta();
     }
     downloads.length = 0;
+    closedTabs.length = 0;
     bh.clearHistory();
     sessionStore.clear(getRuntimeBase());
     log.log('INFO', 'clear session complete', { cookiesRemoved: removed });
@@ -936,7 +1160,10 @@ function registerIpc() {
     if (!tab) return null;
     const info = siteSnapshot(tab, allowlist.isAllowed,
       h => settings.all().credentialOptIn?.[h] === true, tab.adapter.counters);
-    return info && { ...info, credentialsGloballyAllowed: settings.all().allowCredentials === true };
+    return info && { ...info, credentialsGloballyAllowed: settings.all().allowCredentials === true,
+      // Strict and Ephemeral deny these permissions outright; remembered
+      // decisions are shown but only take effect in Standard mode.
+      permissions: sitePermissions.list(info.origin), permissionsActive: modeId === 'standard' };
   };
   handle('forge:site-privacy', siteStatus);
   handle('forge:site-exception', async (event, kind, enabled) => {
@@ -971,6 +1198,27 @@ function registerIpc() {
     sendState();
     return { ok: true, site: siteStatus(event) };
   });
+  handle('forge:site-permission', async (event, permission, state) => {
+    const tab = humanSite(event), status = siteStatus(event);
+    if (!tab || !status || !sitePermissions.isManaged(permission) || !['ask', 'allow', 'deny'].includes(state))
+      return { ok: false, reason: 'No active human HTTP(S) site or invalid permission.' };
+    if (state === 'allow') {
+      const label = sitePermissions.MANAGED_PERMISSIONS[permission];
+      const response = await dialog.showMessageBox(chromeWin, { type: 'warning',
+        title: 'Site permission', message: `Always allow “${label}” on ${status.host}?`,
+        detail: `${status.origin}\nThis site will get this capability without asking again. It can be reversed from this badge.`,
+        buttons: ['Cancel', 'Always allow'], defaultId: 0, cancelId: 0, noLink: true });
+      if (response.response !== 1) return { ok: false, reason: 'Cancelled.' };
+    }
+    if (humanSite(event) !== tab || siteStatus(event)?.origin !== status.origin)
+      return { ok: false, reason: 'Active human site changed.' };
+    const result = sitePermissions.set(status.origin, permission, state);
+    if (!result.ok) return result;
+    // Resetting or blocking also withdraws an approval given earlier in this session.
+    if (state !== 'allow') tab.adapter.revokePermissionGrant(status.origin, permission);
+    log.log('INFO', 'site permission changed', { host: status.host, permission, state });
+    return { ok: true, site: siteStatus(event) };
+  });
   handle('forge:site-clear', async (event) => {
     const tab = humanSite(event), status = siteStatus(event);
     if (!tab || !status) return { ok: false, reason: 'No active human HTTP(S) site.' };
@@ -1002,6 +1250,17 @@ function registerIpc() {
       const fieldSensitive = classifyField({ type: probe.type, name: probe.name, id: probe.id }).sensitive;
       const gate = await approveAction('CLICK_ELEMENT', { selector, tag: probe.tag, type: probe.type, formAction: probe.formAction, fieldSensitive, url: t.url });
       if (gate.verdict !== 'ALLOW') return gate;
+      // This demo acts on the human's own page, outside the isolated agent
+      // tab, so even a click the policy allows is confirmed by the human.
+      if (!chromeWin || chromeWin.isDestroyed()) return { verdict: 'DENY', reason: 'no browser window to confirm' };
+      const confirmation = await dialog.showMessageBox(chromeWin, {
+        type: 'question', title: 'ForgeOS Browser — demo click',
+        message: 'Click this element on the current page?',
+        detail: `Element: ${String(selector).slice(0, 200)}\nPage: ${String(t.url).slice(0, 200)}`,
+        buttons: ['Cancel', 'Click'], defaultId: 0, cancelId: 0, noLink: true,
+      });
+      if (confirmation.response !== 1 || activeTab() !== t || t.wc.isDestroyed())
+        return { verdict: 'DENY', reason: 'click not confirmed by the human' };
       t.wc.sendInputEvent({ type: 'mouseDown', x: Math.round(probe.x), y: Math.round(probe.y), button: 'left', clickCount: 1 });
       t.wc.sendInputEvent({ type: 'mouseUp', x: Math.round(probe.x), y: Math.round(probe.y), button: 'left', clickCount: 1 });
       log.log('ALLOW', 'agent click dispatched', { selector, url: t.url.slice(0, 200) });
@@ -1063,6 +1322,8 @@ function registerIpc() {
     if (res.ok) log.log('INFO', 'settings updated', { keys: Object.keys(patch || {}).join(',') });
     return res;
   });
+  handle('forge:print', () => printActiveTab());
+  handle('forge:save-pdf', () => savePageAsPdf());
   handle('forge:version', () => app.getVersion());
   /* ---- agent inference key (v0.11): the user's own, never the project's ----
    * The key is written to its own 0600 file, never to settings.json, and it is
@@ -1195,8 +1456,17 @@ function createChromeWindow() {
     winOpts.titleBarStyle = 'hidden';
   }
 
+  // Linux and Windows take the window icon from here; macOS uses the bundle's.
+  if (process.platform !== 'darwin') winOpts.icon = path.join(APP_ROOT, '..', 'assets', 'icon.png');
+
   chromeWin = new BrowserWindow(winOpts);
   chromeWin.setMenuBarVisibility(false);
+  // The same shortcuts while the toolbar or address bar has focus. Find keys
+  // are handled by the toolbar renderer itself.
+  chromeWin.webContents.on('before-input-event', (event, input) => {
+    const action = shortcutAction(input);
+    if (action) { event.preventDefault(); runShortcut(action); }
+  });
   // Debug: forward renderer console to the event log when FORGE_DEBUG_CONSOLE=1.
   if (process.env.FORGE_DEBUG_CONSOLE) {
     chromeWin.webContents.on('console-message', (_e, level, message, line, sourceId) => {
@@ -1208,7 +1478,24 @@ function createChromeWindow() {
   chromeWin.on('closed', () => { chromeWin = null; });
   // Attach the loader handler BEFORE loadFile: file:// may finish loading
   // near-instantly, so the listener must exist before the request starts.
-  chromeWin.webContents.once('did-finish-load', () => {
+  chromeWin.webContents.once('did-finish-load', async () => {
+    // Learn the engine's client-hint brands from this trusted renderer before
+    // any page loads, so request headers repeat what pages read in JavaScript.
+    try {
+      const reported = await Promise.race([
+        chromeWin.webContents.executeJavaScript(`navigator.userAgentData
+          ? navigator.userAgentData.getHighEntropyValues(['fullVersionList']).then((v) => ({
+              brands: navigator.userAgentData.brands.map((b) => ({ brand: b.brand, version: b.version })),
+              fullVersionList: (v.fullVersionList || []).map((b) => ({ brand: b.brand, version: b.version })),
+            }))
+          : null`),
+        new Promise((resolve) => setTimeout(() => resolve(null), 2000)),
+      ]);
+      log.log('INFO', 'engine client-hint brands ' + (setEngineBrands(reported) ? 'learned' : 'unavailable; brand hints omitted'));
+    } catch {
+      log.log('WARN', 'engine client-hint brands unavailable; brand hints omitted');
+    }
+    if (!chromeWin || chromeWin.isDestroyed()) return;
     // Session restore (crash recovery): reopen tabs from the last session.
     // Named persistent containers are a Standard-mode feature. A later strict
     // startup must not fail while reading an older Standard session file.
@@ -1224,6 +1511,8 @@ function createChromeWindow() {
       const t = createTab('about:blank');
       switchTab(t.id, { focus: false });
     }
+    // Links given on the command line ("open with ForgeOS Browser").
+    if (!process.argv.includes('--smoke')) openExternalUrls(externalUrls(process.argv));
     sendState();
   });
   chromeWin.webContents.on('will-navigate', (e, url) => {
@@ -1253,7 +1542,17 @@ function createChromeWindow() {
   chromeWin.loadFile(RENDERER);
 }
 
+app.on('second-instance', (_event, argv) => {
+  // Another launch of the browser: open its links here, or just come forward.
+  if (!openExternalUrls(externalUrls(argv)) && chromeWin && !chromeWin.isDestroyed()) {
+    if (chromeWin.isMinimized()) chromeWin.restore();
+    chromeWin.show();
+    chromeWin.focus();
+  }
+});
+
 app.whenReady().then(() => {
+  if (!HAS_INSTANCE_LOCK) return; // a running browser already took over
   // Crash recovery: never die silently. Log the error, show it, and keep the
   // app alive where possible (a renderer/tab crash must not kill the shell).
   process.on('uncaughtException', (err) => {

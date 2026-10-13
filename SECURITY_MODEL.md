@@ -108,13 +108,30 @@ browser cookies or credentials to bypass YouTube login, age, or bot gates.
 ## Sandboxing and boundaries (Phase 17)
 
 - Page WebContentsViews: `sandbox:true`, `contextIsolation:true`,
-  `nodeIntegration:false`, and no preload; `setWindowOpenHandler` denies.
+  `nodeIntegration:false`, and no preload. `setWindowOpenHandler` always denies
+  a native child window. In a human tab, a link that asks for a new window is
+  reopened as an ordinary ForgeOS tab with no opener relationship, only for an
+  http(s) destination and only right after user input on that tab; agent tabs
+  never open tabs.
   Gate K verifies that remote pages cannot reach Node, Electron,
   `window.forge`, the filesystem, or other tabs.
 - Page-world fingerprint shims are not injected. The previous preload-based
   implementation required disabling sandbox and context isolation, while
   post-load injection interfered with later Chromium navigations. ForgeOS keeps
   the stronger trust boundary and documents engine-dependent entropy honestly.
+- HTTPS-only mode (default on) retries a main-frame `http://` navigation over
+  `https://` before anything is sent in the clear. The browser never downgrades
+  by itself: when the secure attempt fails, a native dialog asks the human,
+  defaulting to "Stay secure", and an allowance covers that exact host until
+  the browser closes. An agent tab is never offered the downgrade. Loopback,
+  private and link-local addresses and local-network names are exempt because
+  they cannot hold a public certificate.
+- One browser process owns a profile. A second launch hands over only complete
+  http(s) links from its command line, which open as ordinary human tabs,
+  never in the agent tab; switches, paths, `file:` URLs and URLs carrying
+  credentials are ignored.
+- Browser keyboard shortcuts are taken only for chords that need Ctrl/Cmd, Alt
+  or a function key. Ordinary typing is never intercepted.
 - Permission *checks* follow the same defaults as permission requests. Electron
   answers every check with "granted" when no check handler is installed, so
   `navigator.permissions.query` and check-only APIs are answered explicitly:
@@ -122,6 +139,13 @@ browser cookies or credentials to bypass YouTube login, age, or bot gates.
   origin the user approved in the current session. Because the check is
   boolean, pages see `denied` rather than `prompt` before approval. Serial, HID
   and USB devices are never pre-granted.
+- The user can remember Allow or Block per site for camera and microphone,
+  location, notifications, and clipboard read. A remembered choice is keyed to
+  the exact origin, applies only when that site is the top-level page, never
+  overrides a mode that denies the permission, and is neither read nor written
+  by agent-owned sessions. "Always allow" set from the site panel requires a
+  native confirmation; the origin always comes from the live tab, never from
+  the renderer.
 - The toolbar and Control Center run in their own session, separate from web
   content, under a CSP with no inline script. Every IPC channel refuses any
   sender other than the main frame of one of those two windows.
@@ -131,8 +155,11 @@ browser cookies or credentials to bypass YouTube login, age, or bot gates.
 - The User-Agent and `Sec-CH-UA-Platform` name the real operating system, so
   request headers agree with `navigator.platform` and
   `navigator.userAgentData`, which no sandbox-safe mechanism can change. The
-  `Sec-CH-UA` brand list still names Google Chrome while JavaScript reports
-  Chromium; that remaining difference is documented, not hidden.
+  `Sec-CH-UA` brand list repeats the engine's own list (Chromium), learned at
+  startup from the trusted toolbar renderer, and is sent only to secure
+  origins. ForgeOS does not claim to be Google Chrome. Setting
+  `identifyAsChrome: true` in the settings file restores that claim for sites
+  that demand it, at the cost of contradicting `navigator.userAgentData`.
 - TLS validation is never weakened (certificate errors are blocked and logged).
 - `document.cookie`/local storage are not exported by the extraction layer.
 

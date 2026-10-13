@@ -51,6 +51,53 @@ function clientHintPlatform(platform = process.platform) {
 
 const GENERIC_UA = genericUserAgent();
 
+/*
+ * Client-hint brands. Electron sends no Sec-CH-UA headers by itself, while
+ * navigator.userAgentData reports the engine's own brand list to every page.
+ * Headers that name a different browser are a contradiction a page can read,
+ * so the headers repeat exactly what the engine reports. The list is learned
+ * once from the trusted toolbar renderer, which runs the same engine.
+ */
+let engineBrands = null;
+
+function cleanBrandList(list) {
+  if (!Array.isArray(list) || !list.length || list.length > 8) return null;
+  const out = [];
+  for (const item of list) {
+    const brand = item && item.brand, version = item && item.version;
+    // Structured-header strings: printable ASCII without quote or backslash.
+    if (typeof brand !== 'string' || !/^[\x20\x21\x23-\x5b\x5d-\x7e]{1,40}$/.test(brand)) return null;
+    if (typeof version !== 'string' || !/^\d{1,5}(?:\.\d{1,6}){0,3}$/.test(version)) return null;
+    out.push({ brand, version });
+  }
+  return out;
+}
+
+const formatBrandList = (list) => list.map((b) => `"${b.brand}";v="${b.version}"`).join(', ');
+
+/** Record the engine's brand lists. Returns false, changing nothing, if malformed. */
+function setEngineBrands(reported) {
+  const brands = cleanBrandList(reported && reported.brands);
+  const full = cleanBrandList(reported && reported.fullVersionList);
+  if (!brands) return false;
+  engineBrands = { brands: formatBrandList(brands), fullVersionList: full ? formatBrandList(full) : null };
+  return true;
+}
+
+/** { brands, fullVersionList } header values, or null until the engine reported them. */
+function engineClientHints() { return engineBrands; }
+
+/** Client hints are sent only to secure origins, as browsers do. */
+function sendsClientHints(url) {
+  try {
+    const u = new URL(String(url));
+    return u.protocol === 'https:' || (u.protocol === 'http:' &&
+      (u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '[::1]' || u.hostname.endsWith('.localhost')));
+  } catch {
+    return false;
+  }
+}
+
 function applyAppLevelHardening(app) {
   // Generic UA for every request + navigator.userAgent in pages. Client hints
   // stay enabled: the session adapter sends headers that agree with the
@@ -58,4 +105,7 @@ function applyAppLevelHardening(app) {
   app.userAgentFallback = GENERIC_UA;
 }
 
-module.exports = { GENERIC_UA, applyAppLevelHardening, clientHintPlatform, genericUserAgent, platformIdentity };
+module.exports = {
+  GENERIC_UA, applyAppLevelHardening, clientHintPlatform, genericUserAgent, platformIdentity,
+  engineClientHints, sendsClientHints, setEngineBrands,
+};

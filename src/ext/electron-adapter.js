@@ -29,8 +29,9 @@ const { permissionFor, permissionGrantKey, permissionCheckAllowed } = require('.
 const { MODES } = require('../engine/privacy-modes');
 const settings = require('../engine/settings');
 const allowlist = require('../engine/site-allowlist');
-const { GENERIC_UA, clientHintPlatform } = require('../engine/fingerprint-hardening');
+const { GENERIC_UA, clientHintPlatform, engineClientHints, sendsClientHints } = require('../engine/fingerprint-hardening');
 const { progressPercent } = require('../engine/download-center');
+const { httpsUpgradeTarget, createHttpsOnlyState } = require('../engine/https-only');
 
 const DOWNLOADS_DIR = path.join(path.dirname(path.dirname(__dirname)), 'downloads');
 
@@ -59,9 +60,60 @@ function safeFileName(name) {
 // allowlist in download-center.js, never by this list.
 const EXECUTABLE_RE = /\.(exe|msi|msix|appx|bat|cmd|com|scr|ps1|vbs|vbe|js|jse|wsf|wsh|hta|cpl|msc|scf|lnk|url|jar|apk|dmg|pkg|app|command|sh|run|bin|desktop|appimage|deb|rpm|py|pl|rb|pif|reg|cer|iso|svg)$/i;
 
+const CLIENT_HINT_RE = /^sec-ch-ua(?:-mobile|-platform|-full-version-list)?$/i;
+
+/**
+ * Rewrite the identity headers of one request.
+ *
+ * Default: the brand list is the engine's own, learned at startup. Until it is
+ * known, no brand hint is sent rather than a guessed one.
+ *
+ * settings.identifyAsChrome === true is an explicit compatibility switch: it
+ * names Google Chrome in the brand list, which some sign-in pages require.
+ * That contradicts navigator.userAgentData and is off by default.
+ */
+function rewriteIdentityHeaders(requestHeaders, url, currentSettings = {}, chromeVersion = process.versions.chrome || '') {
+  const headers = {};
+  const hadFullList = Object.keys(requestHeaders || {}).some((key) => /^sec-ch-ua-full-version-list$/i.test(key));
+  for (const [key, value] of Object.entries(requestHeaders || {})) {
+    if (CLIENT_HINT_RE.test(key)) continue; // rebuilt below, or deliberately omitted
+    headers[key] = /^user-agent$/i.test(key) ? GENERIC_UA : value;
+  }
+  if (!sendsClientHints(url)) return headers;
+
+  if (currentSettings.identifyAsChrome === true) {
+    const major = chromeVersion.split('.')[0];
+    headers['Sec-CH-UA'] = `"Chromium";v="${major}", "Google Chrome";v="${major}", "Not?A_Brand";v="99"`;
+    headers['Sec-CH-UA-Full-Version-List'] =
+      `"Chromium";v="${chromeVersion}", "Google Chrome";v="${chromeVersion}", "Not?A_Brand";v="99.0.0.0"`;
+  } else {
+    const engine = engineClientHints();
+    if (!engine) return headers;
+    headers['Sec-CH-UA'] = engine.brands;
+    // A high-entropy hint: only answered when the site asked for it.
+    if (hadFullList && engine.fullVersionList) headers['Sec-CH-UA-Full-Version-List'] = engine.fullVersionList;
+  }
+  headers['Sec-CH-UA-Mobile'] = '?0';
+  // The real operating system: it must agree with what JavaScript exposes.
+  headers['Sec-CH-UA-Platform'] = clientHintPlatform();
+  return headers;
+}
+
 /** Electron's synchronous message box returns the selected button index. */
 function permissionDialogAllowed(buttonIndex) {
-  return buttonIndex === 1;
+  // 1 = allow (this session), 2 = always allow on this site.
+  return buttonIndex === 1 || buttonIndex === 2;
+}
+
+/** Human-readable name for the approval dialog. */
+function permissionLabel(permission, details = {}) {
+  if (permission === 'media') {
+    const types = Array.isArray(details.mediaTypes) ? details.mediaTypes : [];
+    const wants = [types.includes('video') && 'Camera', types.includes('audio') && 'Microphone'].filter(Boolean);
+    return wants.length ? wants.join(' and ') + ' access' : 'Camera or microphone access';
+  }
+  const names = { geolocation: 'Location access', notifications: 'Notifications', 'clipboard-read': 'Clipboard read access' };
+  return names[permission] || `“${permission}” permission`;
 }
 
 class SessionAdapter {
@@ -86,8 +138,14 @@ class SessionAdapter {
     this.downloadsDir = opts.downloadsDir || DOWNLOADS_DIR;
     this.downloadItems = new Map();
     this.downloadSeq = 0;
+    // HTTPS-only: upgrades in flight and hosts the human allowed over HTTP.
+    this.httpsOnly = createHttpsOnlyState();
+    this.treatHostAsPublic = opts.treatHostAsPublic || null; // tests only
     // Origins the user approved through the ASK dialog, for this session only.
     this.permissionGrants = new Set();
+    // Remembered per-site decisions. Null for agent-owned sessions: an agent
+    // tab never inherits, and never records, the human's site permissions.
+    this.sitePermissions = opts.sitePermissions || null;
     this.counters = { ads: 0, trackers: 0, analytics: 0, thirdParty: 0, params: 0, cookies: 0, allowed: 0 };
     this.snapshot = { ...this.counters };
     this.installed = false;
@@ -98,38 +156,13 @@ class SessionAdapter {
     const { session, engine, log } = this;
     const self = this;
 
-    // Google sign-in anti-bot: rewrite Sec-CH-UA client hints to match our
-    // generic Chrome UA (Electron injects 'Electron/<ver>' into these headers,
-    // which triggers "This browser or app may not be secure").
+    // Request identity. Electron sends no Sec-CH-UA client hints, and puts
+    // "Electron/<ver>" in the User-Agent. Every request gets the generic UA;
+    // secure origins also get client hints that repeat what the engine reports
+    // to JavaScript (navigator.userAgentData), so headers and page-visible
+    // values never disagree.
     session.webRequest.onBeforeSendHeaders({ urls: ['*://*/*'] }, (details, cb2) => {
-      const h = details.requestHeaders;
-      const chromeVer = process.versions.chrome || '';
-      // Real Chrome ALWAYS sends Sec-CH-UA hints on navigations; Electron 43
-      // omits them entirely (verified by header capture). Their ABSENCE is as
-      // suspicious to Google as a wrong value — inject them explicitly.
-      const uaFull = `"Chromium";v="${chromeVer}", "Google Chrome";v="${chromeVer}", "Not?A_Brand";v="99"`;
-      const uaBrand = `"Not?A_Brand";v="99", "Chromium";v="${chromeVer}"`;
-      // The real operating system: it must agree with what JavaScript exposes.
-      const uaPlatform = clientHintPlatform();
-      let foundUA = false, foundMobile = false, foundPlatform = false;
-      for (const key of Object.keys(h)) {
-        if (/^sec-ch-ua$/i.test(key)) {
-          h[key] = uaFull; foundUA = true;
-        } else if (/^sec-ch-ua-platform$/i.test(key)) {
-          h[key] = uaPlatform; foundPlatform = true;
-        } else if (/^sec-ch-ua-mobile$/i.test(key)) {
-          h[key] = '?0'; foundMobile = true;
-        } else if (/^user-agent$/i.test(key)) {
-          h[key] = GENERIC_UA; // enforce on every request, not just fallback
-        }
-      }
-      if (!foundUA) h['Sec-CH-UA'] = uaFull;
-      if (!foundMobile) h['Sec-CH-UA-Mobile'] = '?0';
-      if (!foundPlatform) h['Sec-CH-UA-Platform'] = uaPlatform;
-      // Sec-CH-UA-Full-Version-List is checked for consistency too.
-      const major = chromeVer.split('.')[0];
-      h['Sec-CH-UA-Full-Version-List'] = `"Chromium";v="${chromeVer}", "Google Chrome";v="${chromeVer}", "Not?A_Brand";v="99.0.${major}.5"`;
-      cb2({ requestHeaders: h });
+      cb2({ requestHeaders: rewriteIdentityHeaders(details.requestHeaders, details.url, settings.all()) });
     });
 
     session.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, callback) => {
@@ -137,6 +170,22 @@ class SessionAdapter {
       const tabUrl = self.pageUrl(details);
       const resourceType = details.resourceType || 'other';
       const S = settings.all();
+
+      // HTTPS-only: retry a plain-HTTP navigation over HTTPS before anything
+      // is sent in the clear. A failed secure attempt is handled in main.js,
+      // which asks the human before any fallback.
+      if (resourceType === 'mainFrame' && S.httpsOnly !== false) {
+        const secure = httpsUpgradeTarget(url, {
+          allowedHosts: self.httpsOnly.allowedHosts, treatAsPublic: self.treatHostAsPublic,
+        });
+        if (secure) {
+          self.httpsOnly.noteUpgrade(url, secure);
+          self.counters.httpsUpgrades = (self.counters.httpsUpgrades || 0) + 1;
+          log.log('CLEAN', 'navigation upgraded to HTTPS', { from: url.slice(0, 200) });
+          callback({ redirectURL: secure });
+          return;
+        }
+      }
 
       // Phase 6: strip tracking parameters on main-frame navigations.
       if (resourceType === 'mainFrame') {
@@ -230,6 +279,7 @@ class SessionAdapter {
 
     session.setPermissionRequestHandler((webContents, permission, callback, details) => {
       if (!permission) { callback(false); return; }
+      details = details || {};
       const decision = permissionFor(permission, self.modeId);
       if (decision === 'DENY') {
         log.log('DENY', 'permission denied', { permission, from: details.requestingUrl || '' });
@@ -237,27 +287,52 @@ class SessionAdapter {
         return;
       }
       if (decision === 'ASK') {
+        let requester = details.requestingUrl;
+        try { requester = requester || webContents.getURL(); } catch {}
+        const grant = permissionGrantKey(requester, permission);
+        // A remembered decision belongs to the site the user is visiting. An
+        // embedded frame never inherits it and can never create one.
+        const store = details.isMainFrame === true ? self.sitePermissions : null;
+        const remembered = store ? store.get(requester, permission) : null;
+        if (remembered === 'allow' || remembered === 'deny') {
+          const allowed = remembered === 'allow';
+          log.log(allowed ? 'ALLOW' : 'DENY', `${permission} permission ${allowed ? 'granted' : 'denied'} by remembered site decision`, {
+            permission, from: requester || '',
+          });
+          callback(allowed);
+          return;
+        }
         const win = self.getChromeWindow();
         if (win) {
+          const rememberable = !!store && store.isManaged(permission) && !!store.siteOrigin(requester);
           const selectedButton = dialog.showMessageBoxSync(win, {
             type: 'question',
             title: 'Forge Browser Lab — permission request',
-            message: `“${permission}” permission requested by ${details.requestingUrl || 'a page'}`,
-            detail: 'Granting exposes this capability to the website. Recommendation: Deny unless you trust the site.',
-            buttons: ['Deny', 'Allow'],
+            message: `${permissionLabel(permission, details)} requested by ${details.requestingUrl || 'a page'}`,
+            detail: 'Granting exposes this capability to the website. Recommendation: Deny unless you trust the site.' +
+              (rememberable ? ' A remembered choice can be changed from the site badge.' : ''),
+            buttons: rememberable
+              ? ['Deny', 'Allow this session', 'Always allow on this site', 'Never allow on this site']
+              : ['Deny', 'Allow'],
             defaultId: 0,
             cancelId: 0,
+            noLink: true,
           });
-          const allowed = permissionDialogAllowed(selectedButton);
+          // The two-button dialog has no "always" choice: only index 1 allows.
+          const allowed = rememberable ? permissionDialogAllowed(selectedButton) : selectedButton === 1;
           log.log(allowed ? 'ALLOW' : 'DENY', `${permission} permission ${allowed ? 'granted' : 'denied'}`, {
             permission, from: details.requestingUrl || '',
           });
-          let requester = details.requestingUrl;
-          try { requester = requester || webContents.getURL(); } catch {}
-          const grant = permissionGrantKey(requester, permission);
           if (grant) {
             if (allowed) self.permissionGrants.add(grant);
             else self.permissionGrants.delete(grant);
+          }
+          if (rememberable && (selectedButton === 2 || selectedButton === 3)) {
+            const saved = store.set(requester, permission, selectedButton === 2 ? 'allow' : 'deny');
+            // An unsaved choice still holds for this request; it is simply not remembered.
+            log.log(saved.ok ? 'INFO' : 'ERROR', 'site permission ' + (saved.ok ? 'remembered' : 'not saved'), {
+              permission, state: selectedButton === 2 ? 'allow' : 'deny', from: requester || '',
+            });
           }
           callback(allowed);
           return;
@@ -271,10 +346,18 @@ class SessionAdapter {
     // Without a check handler Electron answers every permission check with
     // "granted", so navigator.permissions.query and check-only APIs (sensors,
     // idle detection, local fonts, Notification.permission) bypass the policy
-    // above. Checks follow the same defaults; ASK is true only after approval.
-    session.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) =>
-      permissionCheckAllowed(permission, self.modeId,
-        requestingOrigin || (details && details.requestingUrl) || '', self.permissionGrants));
+    // above. Checks follow the same defaults; ASK is true only after approval
+    // in this session or a remembered "allow" for the top-level site.
+    session.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) => {
+      const origin = requestingOrigin || (details && details.requestingUrl) || '';
+      if (permissionFor(permission, self.modeId) === 'ASK' && self.sitePermissions &&
+          details && details.isMainFrame === true) {
+        const remembered = self.sitePermissions.get(origin, permission);
+        if (remembered === 'allow') return true;
+        if (remembered === 'deny') return false;
+      }
+      return permissionCheckAllowed(permission, self.modeId, origin, self.permissionGrants);
+    });
     // Serial, HID and USB devices are never granted without a chooser.
     session.setDevicePermissionHandler(() => false);
 
@@ -391,6 +474,12 @@ class SessionAdapter {
 
   clearPermissionGrants() { this.permissionGrants.clear(); }
 
+  /** Forget this session's approval for one site, when the user resets or blocks it. */
+  revokePermissionGrant(urlOrOrigin, permission) {
+    const key = permissionGrantKey(urlOrOrigin, permission);
+    return !!key && this.permissionGrants.delete(key);
+  }
+
   resetCounters() { this.counters = { ads: 0, trackers: 0, analytics: 0, thirdParty: 0, params: 0, cookies: 0, allowed: 0 }; }
 
   /** Session totals (never reset until clear session). */
@@ -412,4 +501,5 @@ class SessionAdapter {
   }
 }
 
-module.exports = { SessionAdapter, safeFileName, permissionDialogAllowed, EXECUTABLE_RE, DOWNLOADS_DIR };
+module.exports = { SessionAdapter, safeFileName, permissionDialogAllowed, permissionLabel, EXECUTABLE_RE, DOWNLOADS_DIR };
+module.exports.rewriteIdentityHeaders = rewriteIdentityHeaders;
