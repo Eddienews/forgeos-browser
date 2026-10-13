@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-12
+
+The first release since 0.15.0. It includes everything prepared as 0.16.0,
+which was never published.
+
+### Upgrading from 0.15.0
+- **Update soon.** 0.15.0 answers every permission query with "granted" and ships an older Chromium. It has no update notice, so it will not tell you about this release.
+- Installed (non-portable) builds move settings, history, bookmarks and site exceptions from the application folder to the per-user data directory on first start. Portable builds keep them next to the executable.
+- Sites now see permissions as `denied` until you allow them. If a video-call site says the camera is blocked, set it to Allow from the security badge.
+- HTTPS-only mode is on. A site without HTTPS asks once per session before loading.
+- The browser no longer identifies as Google Chrome. If a sign-in page refuses it, set `identifyAsChrome: true` in the settings file.
+
 ### Added
 - Per-site permission controls in the site panel: Ask, Allow, or Block for camera and microphone, location, notifications, and clipboard read. The permission prompt can also remember "Always allow" or "Never allow" for the site.
 - A link that asks for a new window (`target="_blank"`, `window.open`) now opens as a ForgeOS tab in a human tab, right after user input. Previously it did nothing.
@@ -33,8 +45,13 @@
 - A site that checks a permission before requesting it still sees `denied` until you choose Allow, because the engine offers no "prompt" answer.
 - Sites that require a Google Chrome identity, such as some Google sign-in pages, may refuse the browser unless `identifyAsChrome` is set.
 - New tabs from links are refused without recent user input on that tab, and in agent tabs.
+- Verified by running the application: Linux x64 only. Windows x64 runs the automated suites in CI. macOS (Intel and Apple Silicon) and Linux arm64 builds are packaged and checked by CI but have not been launched on hardware.
+- Builds are unsigned. On macOS, open the app the first time with right-click → Open.
+- The update notice tells you a newer release exists; installing it is still a manual download.
 
-## [0.16.0] - 2026-09-24
+## [0.16.0] - not published
+
+Prepared on 2026-09-24 and released as part of 0.17.0.
 
 ### Added
 - Native find in page with Ctrl+F, F3, Shift+F3, match count, and chrome-owned UI.
@@ -59,5 +76,4 @@
 - Notebook credentials are blocked by recognized patterns, not a general-purpose secret detector. It does not send captured content to the agent by default.
 - Shared-session origin clearing preserves cookies and cache where removal could affect other sites.
 - Portable builds are unsigned; macOS signing/notarization and installed auto-updates are not included.
-- The `Sec-CH-UA` brand list still names Google Chrome while JavaScript reports Chromium.
 - The re-signed Apple Silicon bundle is packaged and verified in CI but has not been launched on a Mac.

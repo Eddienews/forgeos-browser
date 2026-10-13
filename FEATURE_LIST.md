@@ -16,22 +16,21 @@ increments. Status legend: `[x]` shipped, `[~]` in progress, `[ ]` planned.
 
 ## Next — Browser essentials
 
-- [~] Update notification (merged into main; release pending); automatic installation and an About ForgeOS page remain planned.
-- [~] Advanced tabs: reopen closed (Ctrl+Shift+T, merged into main; release
-  pending) and restore the previous session are done; pin, duplicate, mute and
+- [~] Update notification (shipped in v0.17.0); automatic installation and an About ForgeOS page remain planned.
+- [~] Advanced tabs: reopen closed (Ctrl+Shift+T, shipped in v0.17.0) and restore the previous session are done; pin, duplicate, mute and
   group remain planned.
-- [~] Find in page with result count, Ctrl+F/F3 navigation and a chrome-owned search bar (merged into main; release pending).
+- [~] Find in page with result count, Ctrl+F/F3 navigation and a chrome-owned search bar (shipped in v0.17.0).
 - [~] Site permission controls for camera, microphone, location, notifications,
   and clipboard access: per-site Ask/Allow/Block in the site panel and
-  remember choices in the prompt (merged into main; release pending).
+  remember choices in the prompt (shipped in v0.17.0).
 - [ ] Complete keyboard shortcut reference and command palette.
-- [~] Print and save as PDF (merged into main; release pending); reader mode and full-page screenshots remain planned.
+- [~] Print and save as PDF (shipped in v0.17.0); reader mode and full-page screenshots remain planned.
 - [ ] Side-by-side browsing and vertical tabs.
 
 ## Privacy and security
 
-- [~] Per-site protection panel with live-origin counters and reversible host exceptions (merged into main; release pending).
-- [~] HTTPS-only mode with a human-approved fallback (merged into main; release pending); certificate details remain planned.
+- [~] Per-site protection panel with live-origin counters and reversible host exceptions (shipped in v0.17.0).
+- [~] HTTPS-only mode with a human-approved fallback (shipped in v0.17.0); certificate details remain planned.
 - [~] Clear current-origin storage; clear host-only cookies/cache only when the session is dedicated. Shared sessions preserve cookies/cache to avoid deleting another origin's data.
 - [~] Named persistent Work, Personal and Research containers with distinct Electron sessions; banking/social names remain planned.
 - [ ] Privacy-preserving phishing and lookalike-domain warnings.
@@ -42,7 +41,7 @@ increments. Status legend: `[x]` shipped, `[~]` in progress, `[ ]` planned.
 - [ ] Ask questions about the current page with source references.
 - [ ] Page summaries with short, detailed, outline, and plain-language modes.
 - [~] Local human-curated research notebook with selected excerpts, URL/title/date provenance, comparison and text export; AI synthesis remains planned.
-- [~] Browser-owned agent action preview before one-time approval, invalidated on changed observation, target or effect (merged into main; release pending).
+- [~] Browser-owned agent action preview before one-time approval, invalidated on changed observation, target or effect (shipped in v0.17.0).
 - [ ] Agent permission levels: read only, navigate, and act with approval.
 - [ ] Local model support through user-controlled providers such as Ollama or
   LM Studio; no cloud API required.
