@@ -25,6 +25,7 @@ Mainstream browsers treat AI as a surface feature. ForgeOS Browser treats the ag
 - 🍪 **Cookie policy** — third-party cookies blocked, per-mode storage isolation (Standard/Strict/Ephemeral)
 - 🚫 **Prompt-injection scanner + observation filter** — the scanner reports; the filter acts, neutralising planted instructions before any model reads the page (the page itself is never modified)
 - 🔌 **Agent API** — localhost-only, capability-token-gated HTTP surface (read/navigate/control/full scopes, TTL, rotation, private token storage, rate limits, bounded private request audit) for external agents
+- 🧩 **MCP server** — `mcp/forgeos-mcp.js` lets Claude Code, Claude Desktop, Cursor or any MCP client use the Agent API as tools. Same rules: the agent reads only its own tab, and opening a page or acting with consequences waits for you in the browser
 - 🤖 **Agent capabilities** — `GET /snapshot` (page text + a numbered table of interactive elements), `POST /act` (click/type/select/scroll by index), `POST /task` (bounded observe → decide → act loop). Reading is automatic; acting stops at a native dialog when it commits you
 - 🔑 **Bring your own inference key** (Settings → AI Agent) — the `/task` loop runs on a built-in offline decider with no key at all; paste a [TypeSafe (Jev)](https://console.typesafe.ai/settings/keys) key and each step is instead decided by the model (`jev-latest`), one request per step, with the answer chosen from the page rather than generated. Stored in its own file, never in settings; never logged, never returned by any endpoint. A provider failure degrades to the offline decider instead of failing the run
 - ⚙️ **Trust presets** — one decision releases a whole provider ecosystem (Google, Microsoft, Apple, Social), reversible
@@ -53,7 +54,7 @@ Measured vs Brave/Chrome/Edge on the same machine (see [results/BENCHMARK.md](re
 ```bash
 npm install
 npm start                 # dev
-npm test                  # 455 unit tests
+npm test                  # 466 unit tests
 npm run package           # electron-packager for host platform
 node scripts/make-portable.js   # portable zip
 # cross-platform: node scripts/package.js --platform=linux,darwin --arch=x64,arm64
@@ -83,6 +84,41 @@ and editing. Video jobs require H.264 video and AAC audio so the resulting MP4
 plays in QuickTime and broadly compatible players; an unavailable compatible
 format is reported instead of producing a misleading audio-only MP4. Download
 only content you are authorized to save.
+
+### Use ForgeOS from an MCP client
+
+`mcp/forgeos-mcp.js` is a Model Context Protocol server for Claude Code,
+Claude Desktop, Cursor and other MCP clients. It needs Node 18+ and a checkout
+of this repository; it has no dependencies. With ForgeOS Browser running:
+
+```bash
+claude mcp add forgeos -- node /path/to/forgeos-browser/mcp/forgeos-mcp.js
+```
+
+For Claude Desktop or another client that takes a JSON configuration:
+
+```json
+{ "mcpServers": { "forgeos": { "command": "node", "args": ["/path/to/forgeos-browser/mcp/forgeos-mcp.js"] } } }
+```
+
+| Tool | What it does |
+| --- | --- |
+| `browser_status` | Checks that the browser is reachable: privacy mode and number of tabs, never their titles or addresses |
+| `read_page` | Text and numbered links, buttons and fields of the agent tab, with planted instructions removed |
+| `open_url` | Opens an address in the agent tab after you approve it in the browser |
+| `act_on_page` | Click, type, choose, scroll or wait; actions with consequences ask you first |
+| `run_task` | Runs the built-in agent loop toward a goal |
+
+`--read-only` offers only `browser_status` and `read_page`. This limits what the
+model is shown; the bridge still reads the browser's full-scope token, so the
+approval dialogs remain the boundary. The bridge reads that token from the
+per-user data folder (or the repository root for `npm start`) and follows it
+when the browser restarts or renews it; `--token-file` and `--port` override
+the defaults. The packaged browser cannot run the bridge itself, because its
+Node mode is disabled.
+
+The agent tab is readable only while it is the tab on screen. If you switch to
+one of your own tabs, the tools refuse until you switch back.
 
 ### Run on each platform
 
@@ -190,6 +226,8 @@ src/
 │   ├── plugins.js           approval-gated yt-dlp jobs
 │   └── ytdlp-tools.js       discovery, commands, output conversion
 └── renderer/              single-bar walnut-glass UI
+mcp/
+└── forgeos-mcp.js        MCP server over the Agent API (plain Node)
 ```
 
 The prioritized product backlog lives in [`FEATURE_LIST.md`](FEATURE_LIST.md).

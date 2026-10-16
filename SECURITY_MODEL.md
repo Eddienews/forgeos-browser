@@ -60,6 +60,20 @@ directory. Token rotation requires the current `full` capability, persists the
 replacement before revoking every older token, clears pending navigation
 approvals, and rolls back if secure persistence fails.
 
+Tokens live for 60 minutes. Every 50 minutes the browser writes a fresh token
+to the file without revoking anything, so a client that reads the file always
+finds a live token and a client holding the previous one has ten minutes to
+pick up the new one. Before 0.19.0 the file held an expired token an hour after
+start and nothing could mint another until the browser restarted. A failed
+renewal keeps the current file and token.
+
+The MCP bridge (`mcp/forgeos-mcp.js`) is a client of this API, not a second
+surface: it holds no authority of its own, reads the token file, and turns each
+tool call into one API request. It never calls the token routes and always asks
+for the filtered page. Its `--read-only` flag narrows the tools offered to the
+model; it is not a security boundary, because the bridge still holds the
+full-scope token.
+
 Authenticated command bodies must use `application/json`, must decode to an
 object, and are capped at 64 KiB for both declared and streamed payloads.
 Malformed requests receive explicit `400`, `413`, or `415` responses. API

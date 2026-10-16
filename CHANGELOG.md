@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-16
+
+### Added
+- MCP server (`mcp/forgeos-mcp.js`): Claude Code, Claude Desktop, Cursor and other MCP clients can use ForgeOS through five tools (`browser_status`, `read_page`, `open_url`, `act_on_page`, `run_task`). Each call goes through the Agent API, so the agent still reads only its own tab and waits for your approval before opening a page or acting with consequences. `--read-only` offers only the reading tools. Plain Node, no dependencies; see the README.
+
+### Fixed
+- The Agent API token file stayed usable for only an hour. The token in it expired after 60 minutes and nothing could mint another, so every agent client was locked out until the browser restarted. The browser now writes a fresh token every 50 minutes; tokens already handed out run to their own expiry.
+
 ## [0.18.2] - 2026-10-13
 
 ### Fixed
