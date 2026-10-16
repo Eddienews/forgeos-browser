@@ -468,6 +468,49 @@ module.exports = [
     }),
   },
   {
+    name: 'the token file is renewed before it expires without revoking tokens in use',
+    gate: 'H',
+    fn: (assert) => withApi(async ({ api, baseDir, get, advance }) => {
+      const first = api.bootstrapToken;
+      const reader = api.issueToken('read');
+      advance(50 * 60 * 1000);
+      const renewed = api.renewBootstrapToken();
+      assert.match(renewed, /^fgb\./);
+      assert.notStrictEqual(renewed, first);
+      const stored = fs.readFileSync(path.join(baseDir, 'forge-agent-token'), 'utf8');
+      assert.strictEqual(stored, `scope=full\ntoken=${renewed}\n`);
+      if (process.platform !== 'win32') assert.strictEqual(fs.statSync(api.tokenFile).mode & 0o777, 0o600);
+      // Tokens already handed out run to their own expiry.
+      assert.strictEqual((await get('/status', first)).status, 200);
+      assert.strictEqual((await get('/status', reader)).status, 200);
+      advance(10 * 60 * 1000);
+      assert.strictEqual((await get('/status', first)).status, 401);
+      // An hour after start the file still holds a working token.
+      assert.strictEqual((await get('/status', renewed)).status, 200);
+      await api.stop();
+      assert.strictEqual(fs.existsSync(api.tokenFile), false, 'shutdown removes the renewed token');
+      assert.strictEqual(api.renewBootstrapToken(), null, 'a stopped API writes no token');
+      assert.strictEqual(fs.existsSync(api.tokenFile), false);
+    }),
+  },
+  {
+    name: 'a failed renewal keeps the current token file and token',
+    gate: 'H',
+    fn: (assert) => {
+      let writes = 0;
+      const tokenWriter = (...args) => {
+        writes += 1;
+        if (writes === 2) throw new Error('simulated storage failure');
+        return writePrivateTokenFile(...args);
+      };
+      return withApi(async ({ api, get }) => {
+        assert.strictEqual(api.renewBootstrapToken(), null);
+        assert.strictEqual(fs.readFileSync(api.tokenFile, 'utf8').includes(api.bootstrapToken), true);
+        assert.strictEqual((await get('/status', api.bootstrapToken)).status, 200);
+      }, { apiOptions: { tokenWriter } });
+    },
+  },
+  {
     name: 'POST endpoints require JSON content type',
     gate: 'H',
     fn: (assert) => withApi(async ({ api, request, get }) => {

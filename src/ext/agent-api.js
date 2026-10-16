@@ -29,6 +29,9 @@
  *      permissions on POSIX systems; the API stays offline if storage fails.
  *  10. The port is reserved before credentials are created; shutdown revokes
  *      capabilities and removes only the token still owned by this instance.
+ *  11. The token file is renewed every 50 minutes, so a client that reads it
+ *      always finds a live token. Without this the file held an expired token
+ *      an hour after start, and nothing could mint another until a restart.
  *
  * Endpoints:
  *   GET  /status                      cap: read
@@ -52,6 +55,9 @@ const agentProvider = require('../engine/agent-provider');
 const { createTypeSafeDecider } = require('../engine/typesafe-decider');
 
 const TOKEN_TTL_MS = 60 * 60 * 1000;          // 60 minutes
+// The token file is renewed before its token expires; the old token stays
+// valid for the remaining minutes so a client mid-request is not cut off.
+const BOOTSTRAP_RENEW_MS = TOKEN_TTL_MS - 10 * 60 * 1000;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;       // 1 minute
 const RATE_LIMIT_MAX = 120;                   // requests per window
 const CONFIRM_TTL_MS = 30 * 1000;             // navigate confirmation window
@@ -154,6 +160,7 @@ function startAgentApi({
   observe, act, approveAction, requireAgentTab,
   log, baseDir, confirmationNow = Date.now, tokenNow = Date.now,
   rateNow = Date.now, auditNow = Date.now, tokenWriter = writePrivateTokenFile,
+  renewEveryMs = BOOTSTRAP_RENEW_MS,
 }) {
   if (activeAgentServer) {
     return Promise.reject(new Error('agent api already running in this process'));
@@ -224,6 +231,26 @@ function startAgentApi({
   let bootstrapToken = null;
   let currentBootstrapToken = null;
   let stopPromise = null;
+  let renewTimer = null;
+
+  /**
+   * Replace the token in the file with a fresh one. Unlike rotation, nothing
+   * is revoked: tokens already handed out run to their own expiry.
+   */
+  function renewBootstrapToken() {
+    if (stopPromise || !currentBootstrapToken) return null;
+    const nextToken = issueToken('full');
+    try {
+      tokenProtection = tokenWriter(tokenFile, `scope=full\ntoken=${nextToken}\n`);
+    } catch (error) {
+      issued.delete(nextToken.split('.')[1]);
+      if (log) log.log('ERROR', 'agent api token renewal failed', { error: String(error).slice(0, 160) });
+      return null;
+    }
+    currentBootstrapToken = nextToken;
+    if (log) log.log('INFO', 'agent api token renewed', { ttlMinutes: TOKEN_TTL_MS / 60000 });
+    return nextToken;
+  }
 
   function rotateCredentials() {
     const priorIds = [...issued.keys()];
@@ -769,6 +796,7 @@ function startAgentApi({
 
   function stop() {
     if (stopPromise) return stopPromise;
+    clearInterval(renewTimer);
     for (const id of issued.keys()) revoked.add(id);
     issued.clear();
     pendingConfirms.clear();
@@ -792,6 +820,7 @@ function startAgentApi({
   activeAgentServer = server;
   server.once('close', () => {
     if (activeAgentServer === server) activeAgentServer = null;
+    clearInterval(renewTimer);
     removeOwnedTokenFile(tokenFile, currentBootstrapToken);
     currentBootstrapToken = null;
   });
@@ -825,6 +854,8 @@ function startAgentApi({
           return;
         }
         settled = true;
+        renewTimer = setInterval(renewBootstrapToken, renewEveryMs);
+        renewTimer.unref();
         server.on('error', (error) => {
           if (log) log.log('ERROR', 'agent api server error', { error: String(error).slice(0, 160) });
         });
@@ -842,6 +873,7 @@ function startAgentApi({
           bootstrapToken,
           issueToken,
           verifyToken,
+          renewBootstrapToken,
           stop,
         });
       });
