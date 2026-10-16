@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-10-16
+
+### Fixed
+- The Windows release build passes its tests again. A new MCP test compared token-file paths written with `/`, which Windows builds with `\`. The browser itself is unchanged from 0.19.0, which was tagged but never published because of this failure.
+
 ## [0.19.0] - 2026-10-16
 
 ### Added
