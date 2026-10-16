@@ -1,6 +1,6 @@
-# Handoff: verify ForgeOS Browser v0.18.2 on macOS Intel and Windows
+# Handoff: verify ForgeOS Browser v0.19.1 on macOS Intel and Windows
 
-Written on 2026-10-12 and updated for v0.18.2 on 2026-10-13 by a Claude Code session on the maintainer's Linux
+Written on 2026-10-12 and updated for v0.19.1 on 2026-10-16 by a Claude Code session on the maintainer's Linux
 machine, for whoever sits at the Mac or the Windows machine next: Eddie, or a
 Claude Code session there. That session had neither machine, so every macOS and
 Windows command below is unverified until it is run.
@@ -14,7 +14,7 @@ Delete this file in the pull request that records the results.
   same checklist applies with the arm64 archive.
 - Linux x64 is already verified by execution on the maintainer's machine.
 
-v0.18.2 is published. The thing under test is the **published archive**, because
+v0.19.1 is published. The thing under test is the **published archive**, because
 that is what a user downloads. Building from source (last section) is a second,
 smaller check.
 
@@ -40,7 +40,7 @@ macOS (Intel):
 
 ```bash
 mkdir -p ~/forge-verify && cd ~/forge-verify
-gh release download v0.18.2 -R Eddienews/forgeos-browser \
+gh release download v0.19.1 -R Eddienews/forgeos-browser \
   -p 'ForgeBrowserLab-portable-darwin-x64.zip' -p SHA256SUMS
 shasum -a 256 -c SHA256SUMS --ignore-missing     # expect: ...darwin-x64.zip: OK
 ditto -x -k ForgeBrowserLab-portable-darwin-x64.zip .
@@ -50,19 +50,19 @@ Windows (PowerShell):
 
 ```powershell
 mkdir $HOME\forge-verify; cd $HOME\forge-verify
-gh release download v0.18.2 -R Eddienews/forgeos-browser `
+gh release download v0.19.1 -R Eddienews/forgeos-browser `
   -p 'ForgeBrowserLab-portable-win32-x64.zip' -p SHA256SUMS
 (Get-FileHash ForgeBrowserLab-portable-win32-x64.zip -Algorithm SHA256).Hash.ToLower()
 Select-String win32-x64 SHA256SUMS               # the two hashes must match
 Expand-Archive ForgeBrowserLab-portable-win32-x64.zip -DestinationPath .
 ```
 
-Expected hashes for v0.18.2:
+Expected hashes for v0.19.1:
 
 | Archive | SHA-256 |
 | --- | --- |
-| `ForgeBrowserLab-portable-darwin-x64.zip` | `5ed6e551cd006be80b3b52fe190f340382fb21c9cb9dd15322d9446272ef92a7` |
-| `ForgeBrowserLab-portable-win32-x64.zip` | `fb815e9d26ae9bf87aaaf176540342d912871359e61cf4977e8464f58a9e9746` |
+| `ForgeBrowserLab-portable-darwin-x64.zip` | `c5c7c600ebac767fd5690ad16c504dd9e67cd4b565728ca272ee149d3cab64b6` |
+| `ForgeBrowserLab-portable-win32-x64.zip` | `d1cb3675659c49042a6c8cc8315fd4e193db996214ac279d2088702ccb98943f` |
 
 Note the exact path the archive unpacks to; the commands below call it `<app>`
 (macOS, the `.app` bundle) or `<dir>` (Windows, the folder holding
@@ -117,7 +117,7 @@ to Ctrl, to Cmd, or to both: the changelog documents them as Ctrl only.
 
 | # | Check | Expected |
 | --- | --- | --- |
-| 1 | App opens; toolbar version | `v0.18.2` |
+| 1 | App opens; toolbar version | `v0.19.1` |
 | 2 | Load `https://example.com` | Page renders; security badge reads `HTTPS` |
 | 3 | Click the security badge | Site panel opens fully inside the window and has a "Permissions for this site" section |
 | 4 | Open a site that asks for camera or location | A prompt appears; before allowing, the site sees `denied` |
@@ -151,7 +151,7 @@ Notes on individual checks:
 - **13.** macOS: `ELECTRON_RUN_AS_NODE=1 "<app>/Contents/MacOS/ForgeBrowserLab" -e "console.log(1)"`.
   Windows: `$env:ELECTRON_RUN_AS_NODE=1; & "<dir>\ForgeBrowserLab.exe" -e "console.log(1)"`,
   then `Remove-Item Env:ELECTRON_RUN_AS_NODE`.
-- **Update notice.** v0.18.2 is the latest release, so no notice is expected.
+- **Update notice.** v0.19.1 is the latest release, so no notice is expected.
   Only confirm that the Settings toggle exists.
 
 ### Upgrade from the older version on the Intel Mac

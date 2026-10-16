@@ -22,7 +22,7 @@ Delete this file in the pull request that completes the work.
 
 ## State of the repository
 
-- `main` is 0.18.2 and `v0.18.2` is published as a GitHub Release with portable
+- `main` is 0.19.1 and `v0.19.1` is published as a GitHub Release with portable
   ZIPs for five targets. A `v*` tag triggers the Build workflow that does this.
 - Per-site permission controls and the maintenance automation (Dependabot,
   nightly check, `SECURITY.md`) are merged and part of 0.18.1.
@@ -53,7 +53,7 @@ Delete this file in the pull request that completes the work.
 ## Part A — verify the unsigned build on this Mac
 
 Do this first; it needs no certificate. The checklist lives in
-`docs/handoff/platform-verification.md`, which covers the published v0.18.2
+`docs/handoff/platform-verification.md`, which covers the published v0.19.1
 archive on macOS Intel and Windows, including the upgrade from the older
 version installed on the Intel Mac. Do not start Part B until it has passed.
 
