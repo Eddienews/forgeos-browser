@@ -181,9 +181,10 @@ module.exports = [
     gate: 'H',
     fn(a) {
       const linux = tokenFileCandidates({ platform: 'linux', env: {}, home: '/home/u' });
-      a.strictEqual(linux[0], '/home/u/.config/ForgeOS Browser/forge-agent-token');
+      // path.join, not literals: the paths are built with the separator of the host running the test.
+      a.strictEqual(linux[0], path.join('/home/u', '.config', 'ForgeOS Browser', 'forge-agent-token'));
       a.strictEqual(tokenFileCandidates({ platform: 'darwin', env: {}, home: '/Users/u' })[0],
-        '/Users/u/Library/Application Support/ForgeOS Browser/forge-agent-token');
+        path.join('/Users/u', 'Library', 'Application Support', 'ForgeOS Browser', 'forge-agent-token'));
       a.strictEqual(tokenFileCandidates({ platform: 'win32', env: { APPDATA: 'C:\\R' }, home: 'C:\\U' })[0],
         path.join('C:\\R', 'ForgeOS Browser', 'forge-agent-token'));
       const files = { '/a': { m: 1, t: 'scope=full\ntoken=fgb.old.full.1.x\n' }, '/b': { m: 2, t: 'scope=full\ntoken=fgb.new.full.1.y\n' } };
